@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#202C4B}h1{font-size:16px;margin:0}.muted{color:#6B7280}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:5px 6px;border-bottom:1px solid #e5e7eb;text-align:left}th{background:#F8F9FA}.r{text-align:right}
+</style></head><body>
+<h1>{{ tenant.display_name }}</h1><div class="muted">Journal voucher {{ e.number }} · {{ e.date }} · {{ e.get_type_display }} · {{ e.status|upper }}</div>
+<p>{{ e.memo }}</p>
+<table><thead><tr><th>Account</th><th>Description</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>
+{% for l in e.lines.all %}<tr><td>{{ l.account.code }} {{ l.account.name }}</td><td>{{ l.description }}</td><td class="r">{{ l.debit }}</td><td class="r">{{ l.credit }}</td></tr>{% endfor %}
+<tr><td colspan="2"><strong>Total</strong></td><td class="r"><strong>{{ e.total_debit }}</strong></td><td class="r"><strong>{{ e.total_credit }}</strong></td></tr>
+</tbody></table>
+<p class="muted" style="margin-top:30px">Prepared by: {{ e.created_by.full_name }} &nbsp;&nbsp; Posted by: {{ e.posted_by.full_name }} &nbsp;&nbsp; Approved: ____________</p>
+</body></html>

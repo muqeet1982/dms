@@ -1,0 +1,106 @@
+"""Order → confirm → trip → dispatch (stock out) → deliver → invoice → receipt; rep collection & settlement."""
+import pytest
+from decimal import Decimal
+
+from apps.core.tenancy import tenant_context
+
+from .conftest import seed_basic
+
+pytestmark = pytest.mark.django_db
+
+
+def test_order_to_invoice_via_trip(tenant):
+    from apps.accounting.services import PaymentService, ReportQueries, account_for
+    from apps.delivery.models import Driver, Vehicle
+    from apps.delivery.services import DeliveryService, TripService
+    from apps.inventory.services import StockService
+    from apps.sales.models import SalesInvoice
+    from apps.sales.services import OrderService
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("10"), "unit_price": None}], source="staff", warehouse=wh)
+        assert order.status == "submitted" and order.total == Decimal("1500")
+        OrderService.confirm(order)
+        assert order.status == "confirmed"
+        on_hand, reserved = StockService.on_hand(v, wh)
+        assert (on_hand, reserved) == (Decimal("100"), Decimal("10"))
+        driver = Driver.objects.create(name="D", phone="1")
+        vehicle = Vehicle.objects.create(reg_no="V-1")
+        trip = TripService.create(warehouse=wh, driver=driver, vehicle=vehicle, orders=[order])
+        TripService.start(trip)
+        order.refresh_from_db()
+        assert order.status == "dispatched" and trip.status == "out_for_delivery"
+        on_hand, reserved = StockService.on_hand(v, wh)
+        assert (on_hand, reserved) == (Decimal("90"), Decimal("0"))
+        dn = trip.delivery_notes.first()
+        DeliveryService.deliver(dn, receiver_name="R", cash_collected=Decimal("500"))
+        order.refresh_from_db()
+        inv = SalesInvoice.objects.get(order=order)
+        assert order.status == "invoiced" and inv.total == Decimal("1500") and inv.paid_amount == Decimal("500")
+        assert inv.journal is not None and inv.journal.status == "posted"
+        # AR = 1000 outstanding, COGS = 10 × 100
+        assert ReportQueries.account_balance(account_for("ar")) == Decimal("1000")
+        assert ReportQueries.account_balance(account_for("cogs")) == Decimal("1000")
+        TripService.close(trip)
+        assert trip.status == "closed" and trip.reconciliation["ok"] is True
+        pay = PaymentService.record(direction="in", partner_type="customer", partner_id=str(cust.id), amount=Decimal("1000"), method="cash")
+        inv.refresh_from_db()
+        assert inv.status == "paid" and pay.unallocated == 0
+        assert ReportQueries.account_balance(account_for("ar")) == Decimal("0")
+
+
+def test_mark_delivered_without_trip_and_rep_collection(tenant):
+    from apps.accounting.services import ReportQueries, account_for
+    from apps.partners.models import SupplierRep
+    from apps.sales.models import SalesInvoice
+    from apps.sales.services import OrderService, RepCollectionService
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        rep = SupplierRep.objects.create(supplier=sup, code="R1", name="Rep")
+        cust.assigned_reps.add(rep)
+        order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("4"), "unit_price": None}], source="rep_app", rep=rep, supplier=sup, warehouse=wh)
+        OrderService.confirm(order)
+        OrderService.mark_delivered(order, receiver_name="Owner")
+        order.refresh_from_db()
+        inv = SalesInvoice.objects.get(order=order)
+        assert order.status == "invoiced" and inv.total == Decimal("600")
+        col = RepCollectionService.record(rep=rep, customer=cust, amount=Decimal("600"))
+        inv.refresh_from_db()
+        assert inv.status == "paid" and col.status == "held_by_rep"
+        assert ReportQueries.account_balance(account_for("rep_clearing")) == Decimal("600")
+        st = RepCollectionService.settle(rep=rep, collections=[col])
+        col.refresh_from_db()
+        assert col.status == "settled" and st.amount == Decimal("600")
+        assert ReportQueries.account_balance(account_for("rep_clearing")) == Decimal("0")
+        assert ReportQueries.account_balance(account_for("cash")) == Decimal("600")
+
+
+def test_insufficient_stock_puts_order_on_hold(tenant):
+    from apps.sales.services import OrderService
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("500"), "unit_price": None}], source="staff", warehouse=wh)
+        OrderService.confirm(order)
+        assert order.status == "on_hold_stock"
+
+
+def test_external_order_api_by_barcode(api, tenant):
+    wh, sup, v, cust = seed_basic(tenant)
+    r = api.post("/ext/v1/orders", {"external_ref": "X-1", "customer": {"code": "C-1"}, "lines": [{"barcode": "1234567890123", "qty": 3}]}, format="json", HTTP_IDEMPOTENCY_KEY="k1")
+    assert r.status_code == 201, r.content
+    assert r.data["status"] == "submitted" and r.data["lines"][0]["qty_ordered"] == "3.000"
+    r2 = api.post("/ext/v1/orders", {"external_ref": "X-1", "customer": {"code": "C-1"}, "lines": [{"barcode": "1234567890123", "qty": 3}]}, format="json", HTTP_IDEMPOTENCY_KEY="k1")
+    assert r2["Idempotent-Replayed"] == "true" and r2.data["number"] == r.data["number"]
+
+
+def test_mark_delivered_via_api_moves_order_to_invoiced(api, tenant):
+    """Regression: the view prefetches lines; the service must still see fresh quantities."""
+    wh, sup, v, cust = seed_basic(tenant)
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
+    assert r.status_code == 201 and r.data["status"] == "confirmed", r.content
+    r2 = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {"receiver_name": "Owner", "cash_collected": "0"}, format="json")
+    assert r2.status_code == 200, r2.content
+    assert r2.data["status"] == "invoiced" and r2.data["invoices"][0]["total"] == "750.0000"

@@ -1,0 +1,10 @@
+{% extends "purchasing/_doc_base.html" %}
+{% block doc_title %}Goods Receipt {{ grn.number }}{% endblock %}
+{% block doc_meta %}Date {{ grn.date }} · PO {{ grn.po.number|default:"—" }} · Challan {{ grn.supplier_challan_no|default:"—" }} · <span class="badge">{{ grn.get_status_display }}</span>{% endblock %}
+{% block body %}
+<div class="box"><strong>{{ grn.supplier.name }}</strong> → {{ grn.warehouse.name }} · Received by {{ grn.received_by.full_name }}</div>
+<table><thead><tr><th>#</th><th>Item</th><th>Batch</th><th>Expiry</th><th class="r">Accepted</th><th class="r">Damaged</th><th class="r">Short</th><th class="r">Unit cost</th><th class="r">Value</th></tr></thead><tbody>
+{% for l in grn.lines.all %}<tr><td>{{ forloop.counter }}</td><td>{{ l.variant.name }}<br><span class="muted">{{ l.variant.sku }}</span></td><td>{{ l.batch_no }}</td><td>{{ l.expiry_date|default:"" }}</td><td class="r">{{ l.qty_accepted }}</td><td class="r">{{ l.qty_damaged }}</td><td class="r">{{ l.qty_short }}</td><td class="r">{{ l.unit_cost }}</td><td class="r">{% widthratio l.qty_accepted 1 l.unit_cost %}</td></tr>{% endfor %}
+<tr class="tot"><td colspan="8" class="r">Total value (incl. landed cost)</td><td class="r">{{ grn.total_value }}</td></tr>
+</tbody></table>
+{% endblock %}

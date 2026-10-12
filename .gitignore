@@ -1,0 +1,13 @@
+backend/.venv/
+backend/.env
+backend/media/
+backend/staticfiles/
+backend/celerybeat-schedule*
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+
+# Firebase service-account key and app config (secrets)
+firebase/

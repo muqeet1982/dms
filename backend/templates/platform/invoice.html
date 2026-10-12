@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#202C4B}h1{font-size:22px;margin:0 0 4px}.muted{color:#6B7280}
+table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:8px;border-bottom:1px solid #e5e7eb;text-align:left}th{background:#F8F9FA}.r{text-align:right}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;background:#F26522;color:#fff;font-size:11px}
+</style></head><body>
+<h1>{{ inv.number }} <span class="badge">{{ inv.status|upper }}</span></h1>
+<div class="muted">{% if inv.is_credit_note %}Credit note{% else %}Platform invoice{% endif %} · Period {{ inv.period_start }} → {{ inv.period_end }} · Due {{ inv.due_date }}</div>
+<p style="margin-top:16px"><strong>Bill to:</strong> {{ tenant.legal_name }}<br>{{ tenant.address }}<br>{{ tenant.email }} {{ tenant.phone }}</p>
+<table><thead><tr><th>Description</th><th class="r">Amount ({{ inv.currency }})</th></tr></thead><tbody>
+{% for l in inv.lines %}<tr><td>{{ l.description }}</td><td class="r">{{ l.amount }}</td></tr>{% endfor %}
+<tr><td class="r"><strong>Subtotal</strong></td><td class="r">{{ inv.subtotal }}</td></tr>
+{% if inv.discount %}<tr><td class="r">Discount</td><td class="r">-{{ inv.discount }}</td></tr>{% endif %}
+<tr><td class="r"><strong>Total</strong></td><td class="r"><strong>{{ inv.total }}</strong></td></tr>
+<tr><td class="r">Paid</td><td class="r">{{ inv.paid_amount }}</td></tr>
+<tr><td class="r"><strong>Balance</strong></td><td class="r"><strong>{{ inv.balance }}</strong></td></tr>
+</tbody></table></body></html>

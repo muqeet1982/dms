@@ -1,0 +1,10 @@
+{% extends "purchasing/_doc_base.html" %}
+{% block doc_title %}Delivery Challan {{ dn.number }}{% endblock %}
+{% block doc_meta %}Order {{ dn.order.number }} · Trip {{ dn.trip.number|default:"—" }} · <span class="badge">{{ dn.get_status_display }}</span>{% endblock %}
+{% block body %}
+<div class="box"><strong>{{ dn.customer.name }}</strong> ({{ dn.customer.code }})<br>{{ dn.customer.address }}<br>{{ dn.customer.phone }}</div>
+<table><thead><tr><th>#</th><th>Item</th><th>Batch</th><th class="r">Qty</th><th class="r">Delivered</th><th class="r">Returned</th></tr></thead><tbody>
+{% for l in dn.lines.all %}<tr><td>{{ forloop.counter }}</td><td>{{ l.variant.name }} <span class="muted">{{ l.variant.sku }}</span></td><td>{{ l.batch.batch_no|default:"" }}</td><td class="r">{{ l.qty_loaded }}</td><td class="r">{{ l.qty_delivered }}</td><td class="r">{{ l.qty_returned }}</td></tr>{% endfor %}
+</tbody></table>
+<p class="muted" style="margin-top:20px">Received by: {{ dn.receiver_name|default:"____________" }} &nbsp; Date: {{ dn.delivered_at|date:"d/m/Y H:i"|default:"________" }} &nbsp; Driver: {{ dn.trip.driver.name|default:"________" }}</p>
+{% endblock %}

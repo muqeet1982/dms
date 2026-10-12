@@ -1,0 +1,28 @@
+{% extends "_doc.html" %}{% load docs %}
+{% comment %}
+Every report, printed in the same house style as the invoice and the order — a trial balance a bank manager
+reads should not look like a different company's paperwork from the invoice beside it.
+
+Reports are generic (`columns` and `rows` of whatever the query returned), so the shaping here is modest and
+mechanical: numbers right, the figures a statement turns on shown as a panel rather than a trailing line, and
+landscape when there are more columns than a portrait page can hold.
+{% endcomment %}
+{% block doc_title %}{{ title }}{% endblock %}
+{% block doc_ref %}{% endblock %}
+{% block status %}{% if params %}<div class="muted" style="font-size:9px">{% for k, v in params.items %}{{ k|label }}: {{ v }}{% if not forloop.last %} · {% endif %}{% endfor %}</div>{% endif %}{% endblock %}
+
+{% block lines %}
+<table class="lines">
+  <thead><tr>{% for c in cols %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in rows %}<tr>{% for v in r %}{% if forloop.counter > 2 and v|isnumber %}<td class="r">{{ v|num }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+  {% if not rows %}<tr><td colspan="{{ cols|length }}" style="text-align:center;color:#6B7280;padding:14px">Nothing in this range.</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block totals %}
+{% if totals %}<table class="totals">
+  {% for k, v in totals.items %}<tr{% if forloop.last %} class="sum"{% endif %}><td class="l">{{ k|label }}</td><td class="r">{{ v|figure }}</td></tr>{% endfor %}
+</table>{% endif %}
+{% endblock %}

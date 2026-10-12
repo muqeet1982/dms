@@ -1,0 +1,101 @@
+{% comment %}
+The house style for a printed document: invoice, order, and anything added later.
+
+Written for A4 and for a laser printer in an office, which decides most of it — hairline rules instead of
+filled blocks so a draft does not drink toner, 10.5px text that survives a photocopy, a table header that
+repeats when the lines run over a page, rows that never split across one, and a page number in the margin so a
+customer can tell when a sheet is missing. The totals never break away from the lines they belong to.
+
+Blocks a document fills in: `doc_title`, `doc_ref` (the number), `status`, `meta` (the key/value strip),
+`parties`, `lines`, `totals`, `words`, `notes`, `signatures`. Everything else is shared so that two documents
+from this company look like two documents from this company.
+{% endcomment %}<!doctype html>
+<html><head><meta charset="utf-8"><title>{{ doc_title|default:"Document" }}{% if doc_ref %} {{ doc_ref }}{% endif %}</title><style>
+@page{size:A4{% if landscape %} landscape{% endif %};margin:12mm 11mm 15mm;@bottom-right{content:"Page " counter(page) " of " counter(pages);font:9px Helvetica,Arial,sans-serif;color:#6B7280}}
+body{font-family:Helvetica,Arial,sans-serif;font-size:10.5px;color:#202C4B;margin:0}
+h1{font-size:17px;margin:0;letter-spacing:.3px}
+h2{font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.4px;color:#6B7280}
+.muted{color:#6B7280}.r{text-align:right}.c{text-align:center}.b{font-weight:bold}.nowrap{white-space:nowrap}
+
+/* letterhead */
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #202C4B;padding-bottom:8px}
+.head img{max-height:48px;max-width:170px;margin-bottom:5px}
+.head .co{font-size:15px;font-weight:bold}
+.head .doc{text-align:right}
+.head .doc .no{font-size:13px;font-weight:bold;margin-top:2px}
+.badge{display:inline-block;padding:2px 8px;border-radius:3px;background:#F26522;color:#fff;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}
+.badge.q{background:#6B7280}.badge.ok{background:#03C95A}.badge.no{background:#E70D0D}
+
+/* the key/value strip under the letterhead: dates, references, terms */
+table.grid{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:9px}
+table.grid td{border:1px solid #e5e7eb;padding:4px 6px;overflow-wrap:anywhere}
+table.grid .k{display:block;color:#6B7280;text-transform:uppercase;font-size:8.5px;letter-spacing:.2px}
+
+/* who it is for */
+.parties{display:flex;gap:8px;margin-top:9px}
+.party{flex:1;border:1px solid #e5e7eb;border-radius:3px;padding:6px 8px}
+.party .who{font-size:12px;font-weight:bold}
+
+/* the lines */
+table.lines{width:100%;border-collapse:collapse;margin-top:10px}
+table.lines thead{display:table-header-group}
+table.lines th{background:#F8F9FA;font-size:8.5px;text-transform:uppercase;letter-spacing:.2px;padding:5px 6px;border-top:1px solid #e5e7eb;border-bottom:1px solid #d7dbe3;text-align:left}
+table.lines td{padding:4px 6px;border-bottom:1px solid #eef0f3;vertical-align:top}
+table.lines tr{break-inside:avoid;page-break-inside:avoid}
+table.lines .sku{display:block;color:#6B7280;font-size:9px}
+
+/* the money, in its own panel on the right so it is never read as another line */
+.foot{display:flex;gap:10px;margin-top:10px;break-inside:avoid;page-break-inside:avoid}
+.foot .left{flex:1}
+table.totals{border-collapse:collapse;min-width:58mm}
+table.totals td{padding:3px 8px;border-bottom:1px solid #eef0f3}
+table.totals td.l{color:#6B7280}
+table.totals tr.sum td{font-weight:bold;font-size:12px;border-top:1px solid #202C4B;border-bottom:1px solid #202C4B}
+table.totals tr.due td{font-weight:bold;background:#FFF4EE;border-bottom:0}
+.words{margin-top:6px;padding:5px 7px;border:1px solid #e5e7eb;border-left:3px solid #F26522;border-radius:2px;font-size:10px}
+.note{margin-top:7px;font-size:9.5px;color:#4b5563;white-space:pre-line}
+
+/* signatures and the closing line */
+.signs{display:flex;gap:10px;margin-top:16px;break-inside:avoid;page-break-inside:avoid}
+.signs div{flex:1;border-top:1px solid #9aa3b2;padding-top:3px;font-size:9px;color:#6B7280}
+.tail{margin-top:10px;padding-top:6px;border-top:1px solid #e5e7eb;font-size:8.5px;color:#6B7280;display:flex;justify-content:space-between}
+
+/* a draft or a cancelled document must never be mistaken for the real thing */
+.mark{position:fixed;top:40%;left:12%;font-size:92px;font-weight:bold;color:#202C4B;opacity:.07;transform:rotate(-24deg);letter-spacing:6px}
+</style></head><body>
+{% block watermark %}{% endblock %}
+
+<div class="head">
+  <div>
+    {% if logo_url %}<img src="{{ logo_url }}" alt="{{ tenant.display_name }}">{% endif %}
+    <div class="co">{{ tenant.display_name }}</div>
+    <div class="muted">{% if tenant.address %}{{ tenant.address|linebreaksbr }}{% endif %}
+      {% if tenant.phone %}<br>Tel {{ tenant.phone }}{% endif %}{% if tenant.email %} · {{ tenant.email }}{% endif %}
+      {% block company_tax %}{% for k, v in tenant.tax_numbers.items %}{% if v and k|lower != "strn" %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}{% endblock %}</div>
+  </div>
+  <div class="doc">
+    <h1>{% block doc_title %}{{ doc_title|default:"Document" }}{% endblock %}</h1>
+    <div class="no">{% block doc_ref %}{{ doc_ref|default:"" }}{% endblock %}</div>
+    <div style="margin-top:4px">{% block status %}{% endblock %}</div>
+  </div>
+</div>
+
+{% block meta %}{% endblock %}
+{% block parties %}{% endblock %}
+{% block lines %}{% endblock %}
+
+<div class="foot">
+  <div class="left">
+    {% block words %}{% endblock %}
+    {% block notes %}{% endblock %}
+  </div>
+  {% block totals %}{% endblock %}
+</div>
+
+{% block signatures %}{% endblock %}
+
+<div class="tail">
+  <span>{% if tenant.settings.invoice_footer %}{{ tenant.settings.invoice_footer }}{% endif %}</span>
+  <span class="nowrap">{{ printed_at|default_if_none:"" }}</span>
+</div>
+</body></html>

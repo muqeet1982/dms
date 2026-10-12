@@ -1,0 +1,113 @@
+/* App-level overrides on top of the SmartHR template (kept small; template classes do the work). */
+.sidebar .sidebar-menu > ul > li > a { gap: 10px; }
+.sidebar .sidebar-menu > ul > li > ul > li > a.active { background: rgba(242, 101, 34, 0.08); color: #F26522; border-radius: 5px; }
+.sidebar .sidebar-menu > ul > li > ul > li > a.active i, .sidebar .sidebar-menu > ul > li > ul > li > a.active span { color: #F26522; }
+.sidebar .sidebar-menu > ul > li > ul > li.submenu > a.subdrop { background: rgba(242, 101, 34, 0.08); border-radius: 5px; }
+.sidebar .sidebar-menu > ul > li > ul > li.submenu > a.subdrop i, .sidebar .sidebar-menu > ul > li > ul > li.submenu > a.subdrop > span:first-of-type { color: #F26522; }
+.sidebar .sidebar-menu ul li.submenu > ul { display: none; }
+.sidebar .sidebar-menu ul li.submenu.open > ul { display: block; }
+/* The chevron follows the group that is *open*, not the page you are on. The template rotates it from
+   `.subdrop`, which we also use for the "you are here" highlight — so with one group open at a time an
+   active group is usually collapsed, and a down-pointing arrow over a closed list reads as broken. */
+.sidebar .sidebar-menu li.submenu > a.subdrop .menu-arrow { transform: translateY(-50%); }
+.sidebar .sidebar-menu li.submenu.open > a .menu-arrow { transform: translateY(-50%) rotate(180deg); }
+.sidebar .sidebar-menu ul li.submenu > ul > li > a { cursor: pointer; }
+.sidebar-inner { overflow-y: auto; height: calc(100vh - 60px); }
+.page-title { font-size: 20px; }
+.fs-10 { font-size: 10px !important; } .fs-11 { font-size: 11px !important; } .fs-12 { font-size: 12px !important; } .fs-13 { font-size: 13px !important; }
+.fs-14 { font-size: 14px !important; } .fs-16 { font-size: 16px !important; } .fs-18 { font-size: 18px !important; } .fs-20 { font-size: 20px !important; } .fs-22 { font-size: 22px !important; }
+.bg-primary-light { background: rgba(242, 101, 34, 0.1) !important; } .bg-success-light { background: rgba(3, 201, 90, 0.1) !important; } .bg-info-light { background: rgba(27, 132, 255, 0.1) !important; }
+.bg-warning-light { background: rgba(255, 193, 7, 0.15) !important; } .bg-danger-light { background: rgba(231, 13, 13, 0.1) !important; } .bg-secondary-light { background: rgba(59, 112, 128, 0.1) !important; }
+.bg-purple-light { background: rgba(171, 71, 188, 0.1) !important; } .bg-dark-light { background: rgba(33, 37, 41, 0.08) !important; }
+.text-purple { color: #AB47BC !important; }
+.stat-card .avatar-lg { width: 48px; height: 48px; border-radius: 10px; }
+.stat-card .avatar-lg i { font-size: 20px; }
+.table th { white-space: nowrap; }
+.table td { vertical-align: middle; }
+.table .num, th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cursor-pointer { cursor: pointer; }
+.toast-stack { position: fixed; top: 16px; right: 16px; z-index: 20000; display: flex; flex-direction: column; gap: 8px; }
+.toast-item { min-width: 260px; max-width: 380px; padding: 10px 14px; border-radius: 8px; color: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.15); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.toast-item.success { background: #03C95A; } .toast-item.error { background: #E70D0D; } .toast-item.info { background: #1B84FF; } .toast-item.warning { background: #d99a00; }
+.dropdown-menu.show { display: block; }
+.line-editor input.form-control, .line-editor select.form-select { min-width: 70px; }
+.entity-select { position: relative; }
+.entity-select .es-menu { position: absolute; z-index: 1060; left: 0; right: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.entity-select .es-item { padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.entity-select .es-item:hover, .entity-select .es-item.active { background: rgba(242, 101, 34, 0.08); }
+.status-timeline { list-style: none; padding-left: 0; }
+.status-timeline li { position: relative; padding-left: 22px; padding-bottom: 12px; border-left: 2px solid #e5e7eb; margin-left: 6px; }
+.status-timeline li::before { content: ""; position: absolute; left: -7px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #F26522; }
+.scanner-mode .form-control { font-size: 22px; height: 56px; }
+.scanner-mode .btn { min-height: 52px; font-size: 16px; }
+.kpi-value { font-size: 22px; font-weight: 700; color: #202C4B; }
+.login-background { background: #202C4B; }
+.auth-panel { min-height: 100vh; }
+.report-table td, .report-table th { font-size: 12px; padding: 5px 8px; }
+.tree-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #f1f1f1; }
+.tree-row:hover { background: #fafafa; }
+.perm-grid label { font-weight: 400; font-size: 13px; }
+.sidebar-overlay { display: none; }
+.sidebar-overlay.opened { display: block; }
+body.mini-sidebar .sidebar .sidebar-menu ul li.submenu.open > ul { display: none; }
+body.mini-sidebar.expand-menu .sidebar .sidebar-menu ul li.submenu.open > ul { display: block; }
+@media print { .sidebar, .header, .no-print { display: none !important; } .page-wrapper { margin: 0 !important; } }
+.modal-dialog-scrollable .modal-body { overflow-y: auto; }
+.table-responsive { overflow-x: auto; }
+
+/* Sidebar: the template pins the logo with position:fixed and no background, so menu items scrolled underneath
+   and showed through it. Lay the sidebar out as a column instead — a solid logo strip on top, the menu
+   scrolling in its own area below it. */
+.sidebar { flex-direction: column; overflow: hidden; }
+.sidebar .sidebar-logo {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  width: 100%;
+  height: auto;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  background: #FFF;
+  border-bottom: 1px solid #E5E7EB;
+  padding: 10px 16px;
+  flex: 0 0 auto;
+}
+.sidebar .modern-profile { flex: 0 0 auto; }
+.sidebar .sidebar-inner { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; width: 100%; }
+.sidebar .sidebar-inner::-webkit-scrollbar { width: 6px; }
+.sidebar .sidebar-inner::-webkit-scrollbar-thumb { background: #d9dbdf; border-radius: 3px; }
+.sidebar .sidebar-menu { margin-top: 12px; padding-bottom: 24px; }
+body.mini-sidebar .sidebar .sidebar-logo { justify-content: center; padding: 10px 4px; }
+
+/* A long document's lines scroll inside their own table instead of pushing the whole page down: the column
+   headings stay at the top of the box and the totals row at the bottom. Screens apply `table-scroll` only once
+   there are enough lines to be worth it; `--table-scroll-h` tunes the height where a screen needs it. */
+.table-scroll { overflow: auto; max-height: var(--table-scroll-h, 60vh); }
+.table-scroll > table { margin-bottom: 0; }
+.table-scroll > table > thead th {
+  position: sticky; top: 0; z-index: 3; background: #F8F9FA;
+  /* collapsed table borders do not follow a sticky cell, so draw the line with a shadow */
+  box-shadow: inset 0 -1px 0 #E5E7EB;
+}
+/* only the last footer row is pinned — several sticky rows would stack on the same line */
+.table-scroll > table > tfoot > tr:last-child > td, .table-scroll > table > tfoot > tr:last-child > th {
+  position: sticky; bottom: 0; z-index: 3; background: #FFF; box-shadow: inset 0 1px 0 #E5E7EB;
+}
+.table-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #D9DBDF; border-radius: 4px; }
+
+/* Map handles: drawn in CSS so no packaged marker images are needed (bundlers break Leaflet's own). */
+.fence-handle span { display: block; width: 18px; height: 18px; border-radius: 50%; background: #F26522; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: move; }
+.fence-handle-edge span { width: 14px; height: 14px; margin: 2px; background: #fff; border-color: #F26522; cursor: ew-resize; }
+.fence-handle-corner span { width: 13px; height: 13px; margin: 3px; background: #fff; border-color: #F26522; }
+.fence-map {
+  background: #EAEAEA;
+  /* Leaflet puts its controls at z-index 1000 and the top bar sits at 999, so the zoom buttons used to float
+     over the header when the page scrolled. Giving the map its own stacking context keeps everything inside it. */
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+}
+.fence-map .leaflet-container { font: inherit; }
+.fence-handle-side span { width: 22px; height: 10px; margin: 5px -1px; border-radius: 5px; background: #fff; border-color: #F26522; cursor: grab; }

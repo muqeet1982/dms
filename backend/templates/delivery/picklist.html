@@ -1,0 +1,8 @@
+{% extends "purchasing/_doc_base.html" %}
+{% block doc_title %}Pick List {{ pl.number }}{% endblock %}
+{% block doc_meta %}{{ pl.warehouse.name }} · Orders: {% for o in pl.orders.all %}{{ o.number }} {% endfor %} · <span class="badge">{{ pl.get_status_display }}</span>{% endblock %}
+{% block body %}
+<table><thead><tr><th>Bin</th><th>Item</th><th>Batch</th><th>Order</th><th class="r">To pick</th><th class="r">Picked</th></tr></thead><tbody>
+{% for l in pl.lines.all %}<tr><td>{{ l.bin.code|default:"" }}</td><td>{{ l.variant.name }} <span class="muted">{{ l.variant.sku }}</span></td><td>{{ l.batch.batch_no|default:"" }}</td><td>{{ l.order_line.order.number }}</td><td class="r">{{ l.qty_to_pick }}</td><td class="r">{{ l.qty_picked }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

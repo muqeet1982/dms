@@ -1,0 +1,15 @@
+[Unit]
+Description=Celery Worker (DMS)
+After=network.target redis-server.service postgresql.service
+
+[Service]
+User=django
+Group=www-data
+WorkingDirectory=/var/www/dms/backend
+Environment="PATH=/var/www/dms/backend/.venv/bin"
+ExecStart=/var/www/dms/backend/.venv/bin/celery -A config worker -l info --concurrency 2 -n dms@%%h
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

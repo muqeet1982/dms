@@ -1,0 +1,25 @@
+[Unit]
+Description=gunicorn dms (dms.invoiceflow.pk)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service
+
+[Service]
+User=django
+Group=www-data
+WorkingDirectory=/var/www/dms/backend
+RuntimeDirectory=gunicorn
+RuntimeDirectoryPreserve=yes
+Environment="PATH=/var/www/dms/backend/.venv/bin"
+ExecStart=/var/www/dms/backend/.venv/bin/gunicorn \
+  --access-logfile - \
+  --error-logfile - \
+  --workers 3 \
+  --threads 2 \
+  --timeout 120 \
+  --bind unix:/run/gunicorn/dms.sock \
+  config.wsgi:application
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

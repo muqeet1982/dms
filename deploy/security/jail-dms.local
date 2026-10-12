@@ -1,0 +1,76 @@
+# DMS hardening — /etc/fail2ban/jail.d/dms.local
+# Bans are permanent ("ban for good"); lift one from Admin → Security → Bans (or trust the IP).
+[DEFAULT]
+bantime   = -1
+findtime  = 600
+maxretry  = 5
+# Most of these jails read log *files* (nginx's and fail2ban's own), so the default backend has to be the file
+# one — this box's existing jail.local sets `systemd` globally, which is why its nginx jails watch nothing today.
+# Only sshd reads the journal, and it says so below.
+backend   = auto
+banaction = ufw
+banaction_allports = ufw
+# ignoreip lives in dms-ignoreip.local, which the Trust button rewrites.
+
+# ---------------------------------------------------------------- SSH
+[sshd]
+enabled  = true
+port     = ssh
+mode     = aggressive
+maxretry = 4
+backend  = systemd
+
+# ------------------------------------------------- web server / app abuse
+[nginx-http-auth]
+enabled  = true
+logpath  = /var/log/nginx/*error.log
+
+[nginx-limit-req]
+enabled  = true
+filter   = nginx-limit-req
+logpath  = /var/log/nginx/*error.log
+findtime = 600
+maxretry = 10
+
+[nginx-botsearch]
+enabled  = true
+logpath  = /var/log/nginx/*access.log
+maxretry = 3
+
+[nginx-bad-request]
+enabled  = true
+logpath  = /var/log/nginx/*access.log
+maxretry = 10
+
+# ------------------------------------------------------------ DMS specific
+# Repeated failed logins / OTP / QR-login attempts against the API.
+[dms-auth]
+enabled  = true
+filter   = dms-auth
+logpath  = /var/log/nginx/dms_access.log
+findtime = 600
+maxretry = 8
+
+# Vulnerability scanners: /.env, /wp-login.php, phpMyAdmin… (nginx answers 444/403/404 to those).
+[dms-probe]
+enabled  = true
+filter   = dms-probe
+logpath  = /var/log/nginx/*access.log
+findtime = 300
+maxretry = 4
+
+# Anything that keeps coming back after a ban.
+[recidive]
+enabled   = true
+logpath   = /var/log/fail2ban.log
+banaction = %(banaction_allports)s
+findtime  = 86400
+maxretry  = 2
+
+# Empty jail used by the admin UI's "Block this IP" button.
+[dms-manual]
+enabled   = true
+filter    = dms-manual
+logpath   = /var/log/fail2ban.log
+banaction = %(banaction_allports)s
+maxretry  = 100000

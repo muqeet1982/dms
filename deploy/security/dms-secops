@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+Root helper behind the admin's Security pages (fail2ban bans + ufw firewall).
+
+The Django app runs as `django` and may only reach root through this one script, via a narrow sudoers rule:
+
+    django ALL=(root) NOPASSWD: /usr/local/bin/dms-secops
+
+Every argument is re-validated here — the caller is never trusted. All output is JSON on stdout.
+Install with deploy/security/install-security.sh (see the README in this folder).
+
+Commands:
+  status                      firewall + fail2ban overview, listening ports and their verdicts
+  bans [--jail J] [--q TEXT]  currently banned IPs across all jails
+  ban IP [--jail J]           ban an IP for good (manual jail by default)
+  unban IP                    remove an IP from every jail
+  trust IP [--note T] [--by U]  permanently allow: unban, add to fail2ban ignoreip, allow through ufw
+  untrust IP                  undo a trust
+  trusted                     list trusted IPs
+  jails                       per-jail counters
+  fw-rules                    numbered ufw rules
+  fw-allow IP [--port P] [--proto tcp|udp] [--note T]
+  fw-deny IP
+  fw-delete NUM
+  fw-port-allow PORT [--proto tcp|udp] [--note T]
+  fw-port-deny PORT [--proto tcp|udp]
+  ports                       listening sockets + whether the firewall exposes them
+"""
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+IGNORE_FILE = "/etc/fail2ban/jail.d/dms-ignoreip.local"
+TRUST_DB = "/etc/dms-secops/trusted.json"
+MANUAL_JAIL = "dms-manual"
+FAIL2BAN = "/usr/bin/fail2ban-client"
+UFW = "/usr/sbin/ufw"
+
+# Ports this server legitimately exposes; everything else should stay closed to the internet.
+EXPECTED_PUBLIC = {
+    22: "SSH administration (rate-limited by ufw + fail2ban)",
+    80: "HTTP — Let's Encrypt renewals and the redirect to HTTPS",
+    443: "HTTPS — the web app and the API",
+    8081: "ZKTeco attendance device push (the device cannot do TLS)",
+}
+NEVER_PUBLIC = {
+    5432: "PostgreSQL", 3306: "MySQL/MariaDB", 6379: "Redis", 11211: "Memcached", 27017: "MongoDB",
+    9200: "Elasticsearch", 25: "SMTP", 587: "SMTP submission", 631: "CUPS printing", 5900: "VNC",
+    3389: "RDP", 8000: "Django dev server", 5555: "Celery Flower", 9090: "Prometheus", 3000: "Grafana/dev server",
+}
+
+
+def run(cmd, check=False):
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if check and p.returncode != 0:
+        fail(f"{os.path.basename(cmd[0])}: {(p.stderr or p.stdout).strip()}")
+    return p.stdout.strip()
+
+
+def fail(msg, code=2):
+    print(json.dumps({"ok": False, "error": msg}))
+    sys.exit(code)
+
+
+def valid_ip(value):
+    """A single address or a CIDR network — this is the injection guard for every ufw/fail2ban call."""
+    try:
+        return str(ipaddress.ip_network(value, strict=False)) if "/" in str(value) else str(ipaddress.ip_address(value))
+    except ValueError:
+        fail(f"'{value}' is not a valid IP address or network")
+
+
+def valid_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        fail(f"'{value}' is not a port number")
+    if not 1 <= port <= 65535:
+        fail("Port must be between 1 and 65535")
+    return port
+
+
+def clean_note(text):
+    return re.sub(r"[^A-Za-z0-9 ._@:/-]", "", str(text or ""))[:60]
+
+
+def read_json(path, default):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def write_trusted(rows):
+    os.makedirs("/etc/dms-secops", exist_ok=True)
+    with open(TRUST_DB, "w") as fh:
+        json.dump(rows, fh, indent=1)
+    ips = " ".join(["127.0.0.1/8", "::1"] + [r["ip"] for r in rows])
+    with open(IGNORE_FILE, "w") as fh:
+        fh.write("# Managed by dms-secops (Admin → Security → Bans → Trust). Do not edit by hand.\n[DEFAULT]\nignoreip = " + ips + "\n")
+    run([FAIL2BAN, "reload"])
+
+
+def jail_names():
+    m = re.search(r"Jail list:\s*(.*)", run([FAIL2BAN, "status"]))
+    return [j.strip() for j in m.group(1).split(",") if j.strip()] if m else []
+
+
+def jail_bans(jail):
+    rows = []
+    for line in run([FAIL2BAN, "get", jail, "banip", "--with-time"]).splitlines():
+        parts = [p.strip() for p in line.split("\t") if p.strip()]
+        if not parts:
+            continue
+        banned_at = expires = None
+        if len(parts) > 1:
+            m = re.match(r"(.+?)\s*\+\s*(-?\d+)\s*=\s*(.+)", parts[1])
+            if m:
+                banned_at, secs, ends = m.group(1).strip(), int(m.group(2)), m.group(3).strip()
+                expires = None if secs < 0 else ends
+        rows.append((parts[0], banned_at, expires))
+    return rows
+
+
+def cmd_bans(args):
+    trusted = {r["ip"] for r in read_json(TRUST_DB, [])}
+    rows = []
+    for jail in jail_names():
+        if args.jail and jail != args.jail:
+            continue
+        for ip, at, exp in jail_bans(jail):
+            if args.q and args.q not in ip:
+                continue
+            rows.append({"ip": ip, "jail": jail, "banned_at": at, "expires_at": exp, "permanent": exp is None, "trusted": ip in trusted})
+    rows.sort(key=lambda r: (r["banned_at"] or ""), reverse=True)
+    return {"ok": True, "count": len(rows), "results": rows}
+
+
+def cmd_unban(args):
+    ip = valid_ip(args.ip)
+    freed = [jail for jail in jail_names() if "not banned" not in (run([FAIL2BAN, "set", jail, "unbanip", ip]) or "not banned").lower()]
+    run([FAIL2BAN, "unban", ip])
+    return {"ok": True, "ip": ip, "unbanned_from": freed}
+
+
+def cmd_ban(args):
+    ip = valid_ip(args.ip)
+    jail = args.jail or MANUAL_JAIL
+    if jail not in jail_names():
+        fail(f"Jail '{jail}' is not running")
+    run([FAIL2BAN, "set", jail, "banip", ip], check=True)
+    return {"ok": True, "ip": ip, "jail": jail}
+
+
+def cmd_trust(args):
+    ip = valid_ip(args.ip)
+    rows = [r for r in read_json(TRUST_DB, []) if r["ip"] != ip]
+    rows.append({"ip": ip, "note": clean_note(args.note), "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "added_by": clean_note(args.by)})
+    write_trusted(rows)
+    cmd_unban(argparse.Namespace(ip=ip))
+    run([UFW, "allow", "from", ip, "comment", "dms-secops trusted"])
+    return {"ok": True, "ip": ip, "trusted": rows}
+
+
+def cmd_untrust(args):
+    ip = valid_ip(args.ip)
+    rows = [r for r in read_json(TRUST_DB, []) if r["ip"] != ip]
+    write_trusted(rows)
+    subprocess.run([UFW, "--force", "delete", "allow", "from", ip], capture_output=True, text=True, timeout=30)
+    return {"ok": True, "ip": ip, "trusted": rows}
+
+
+def cmd_trusted(args):
+    return {"ok": True, "results": read_json(TRUST_DB, [])}
+
+
+def cmd_jails(args):
+    out = []
+    for jail in jail_names():
+        text = run([FAIL2BAN, "status", jail])
+
+        def num(label):
+            m = re.search(label + r":\s*(\d+)", text)
+            return int(m.group(1)) if m else 0
+
+        out.append({"jail": jail, "currently_failed": num("Currently failed"), "total_failed": num("Total failed"), "currently_banned": num("Currently banned"), "total_banned": num("Total banned")})
+    return {"ok": True, "results": out}
+
+
+def ufw_rules():
+    rows = []
+    for line in run([UFW, "status", "numbered"]).splitlines():
+        m = re.match(r"\[\s*(\d+)\]\s+(.*?)\s{2,}(ALLOW IN|DENY IN|REJECT IN|LIMIT IN|ALLOW OUT|DENY OUT|ALLOW FWD|DENY FWD)\s+(.*)", line.strip())
+        if m:
+            rows.append({"num": int(m.group(1)), "to": m.group(2).strip(), "action": m.group(3).strip(), "from": m.group(4).strip(), "raw": line.strip()})
+    return rows
+
+
+def cmd_fw_rules(args):
+    return {"ok": True, "results": ufw_rules()}
+
+
+def cmd_fw_allow(args):
+    ip = valid_ip(args.ip)
+    cmd = [UFW, "allow", "from", ip]
+    if args.port:
+        cmd += ["to", "any", "port", str(valid_port(args.port)), "proto", args.proto if args.proto in ("tcp", "udp") else "tcp"]
+    cmd += ["comment", clean_note(args.note) or "dms-secops"]
+    return {"ok": True, "result": run(cmd, check=True), "rules": ufw_rules()}
+
+
+def cmd_fw_deny(args):
+    ip = valid_ip(args.ip)
+    return {"ok": True, "result": run([UFW, "deny", "from", ip, "comment", "dms-secops blocked"], check=True), "rules": ufw_rules()}
+
+
+def cmd_fw_delete(args):
+    try:
+        num = int(args.num)
+    except (TypeError, ValueError):
+        fail("Rule number must be a number")
+    p = subprocess.run([UFW, "--force", "delete", str(num)], capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        fail((p.stderr or p.stdout).strip())
+    return {"ok": True, "result": p.stdout.strip(), "rules": ufw_rules()}
+
+
+def cmd_fw_port_allow(args):
+    port, proto = valid_port(args.port), (args.proto if args.proto in ("tcp", "udp") else "tcp")
+    return {"ok": True, "result": run([UFW, "allow", f"{port}/{proto}", "comment", clean_note(args.note) or "dms-secops"], check=True), "rules": ufw_rules()}
+
+
+def cmd_fw_port_deny(args):
+    port, proto = valid_port(args.port), (args.proto if args.proto in ("tcp", "udp") else "tcp")
+    p = subprocess.run([UFW, "--force", "delete", "allow", f"{port}/{proto}"], capture_output=True, text=True, timeout=30)
+    return {"ok": True, "result": (p.stdout or p.stderr).strip(), "rules": ufw_rules()}
+
+
+def listening_ports():
+    rows = {}
+    for line in run(["/usr/bin/ss", "-tulnp"]).splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        proto, local = parts[0], parts[4]
+        addr, _, port = local.rpartition(":")
+        if not port.isdigit():
+            continue
+        proc = re.search(r'\("([^"]+)"', line)
+        public_bind = not (addr.startswith("127.") or addr.startswith("[::1"))
+        row = rows.setdefault(int(port), {"port": int(port), "proto": proto, "process": proc.group(1) if proc else "", "bound_public": False})
+        row["bound_public"] = row["bound_public"] or public_bind
+    return sorted(rows.values(), key=lambda r: r["port"])
+
+
+def cmd_ports(args):
+    open_ports = set()
+    for r in ufw_rules():
+        if "ALLOW" in r["action"] and r["from"].lower().startswith("anywhere"):
+            m = re.match(r"^(\d+)", r["to"])
+            if m:
+                open_ports.add(int(m.group(1)))
+    rows = []
+    for row in listening_ports():
+        port, exposed = row["port"], row["port"] in open_ports and row["bound_public"]
+        if port in NEVER_PUBLIC and exposed:
+            verdict, note = "danger", f"{NEVER_PUBLIC[port]} must never be reachable from the internet — close this port."
+        elif port in NEVER_PUBLIC:
+            verdict, note = "ok", f"{NEVER_PUBLIC[port]} — local only, closed at the firewall."
+        elif port in EXPECTED_PUBLIC:
+            verdict, note = ("ok", EXPECTED_PUBLIC[port]) if exposed else ("warning", f"{EXPECTED_PUBLIC[port]} — currently NOT open.")
+        elif exposed:
+            verdict, note = "warning", "Open to the internet and not part of the expected set — review it."
+        else:
+            verdict, note = "ok", "Not reachable from the internet."
+        rows.append({**row, "exposed": exposed, "verdict": verdict, "note": note})
+    return {"ok": True, "results": rows, "expected_public": EXPECTED_PUBLIC, "never_public": NEVER_PUBLIC,
+            "not_open": [{"port": p, "note": n} for p, n in EXPECTED_PUBLIC.items() if p not in open_ports]}
+
+
+def cmd_status(args):
+    ufw_raw = run([UFW, "status", "verbose"])
+    jails = cmd_jails(args)["results"]
+    return {
+        "ok": True,
+        "firewall": {"active": ufw_raw.startswith("Status: active"), "defaults": next((l for l in ufw_raw.splitlines() if l.startswith("Default:")), ""), "rules": len(ufw_rules()), "raw": ufw_raw},
+        "fail2ban": {"running": run([FAIL2BAN, "ping"]).endswith("pong"), "jails": jails,
+                     "banned_now": sum(j["currently_banned"] for j in jails), "banned_total": sum(j["total_banned"] for j in jails)},
+        "trusted": read_json(TRUST_DB, []),
+        "ports": cmd_ports(args)["results"],
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status")
+    p = sub.add_parser("bans"); p.add_argument("--jail"); p.add_argument("--q")
+    p = sub.add_parser("ban"); p.add_argument("ip"); p.add_argument("--jail")
+    p = sub.add_parser("unban"); p.add_argument("ip")
+    p = sub.add_parser("trust"); p.add_argument("ip"); p.add_argument("--note"); p.add_argument("--by")
+    p = sub.add_parser("untrust"); p.add_argument("ip")
+    sub.add_parser("trusted")
+    sub.add_parser("jails")
+    sub.add_parser("fw-rules")
+    p = sub.add_parser("fw-allow"); p.add_argument("ip"); p.add_argument("--port"); p.add_argument("--proto"); p.add_argument("--note")
+    p = sub.add_parser("fw-deny"); p.add_argument("ip")
+    p = sub.add_parser("fw-delete"); p.add_argument("num")
+    p = sub.add_parser("fw-port-allow"); p.add_argument("port"); p.add_argument("--proto"); p.add_argument("--note")
+    p = sub.add_parser("fw-port-deny"); p.add_argument("port"); p.add_argument("--proto")
+    sub.add_parser("ports")
+    args = ap.parse_args()
+    handlers = {
+        "status": cmd_status, "bans": cmd_bans, "ban": cmd_ban, "unban": cmd_unban, "trust": cmd_trust, "untrust": cmd_untrust,
+        "trusted": cmd_trusted, "jails": cmd_jails, "fw-rules": cmd_fw_rules, "fw-allow": cmd_fw_allow, "fw-deny": cmd_fw_deny,
+        "fw-delete": cmd_fw_delete, "fw-port-allow": cmd_fw_port_allow, "fw-port-deny": cmd_fw_port_deny, "ports": cmd_ports,
+    }
+    try:
+        print(json.dumps(handlers[args.cmd](args)))
+    except subprocess.TimeoutExpired:
+        fail("The command timed out")
+    except Exception as e:  # noqa: BLE001 — the API turns this into a clean error message
+        fail(f"{type(e).__name__}: {e}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,109 @@
+import csv
+import datetime
+import io
+import re
+from decimal import Decimal
+
+from django.utils import timezone
+
+_ISO_HEAD = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]|$)")
+
+
+def cell(v):
+    """
+    A date in an export reads the way it reads on screen: 12/10/2026.
+
+    Report rows arrive as the API serialised them, so a date is usually an ISO string by the time it gets here —
+    which is why the downloaded file used to disagree with the page the person was looking at. A datetime is
+    moved into the local day first: a receipt entered at nine in the evening in Karachi is stored as the next
+    day in UTC, and exporting it under tomorrow's date is how a day's takings stop adding up.
+    """
+    if v is None or isinstance(v, (bool, int, float, Decimal)):
+        return v
+    if isinstance(v, datetime.datetime):
+        return timezone.localtime(v).strftime("%d/%m/%Y %H:%M") if timezone.is_aware(v) else v.strftime("%d/%m/%Y %H:%M")
+    if isinstance(v, datetime.date):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, str):
+        m = _ISO_HEAD.match(v)
+        if m is None:
+            return v
+        from django.utils.dateparse import parse_date, parse_datetime
+
+        # A plain day has no time to print: `parse_datetime` would happily read "2026-10-12" as midnight and
+        # hang a 00:00 on every order date in the file.
+        try:
+            if not m.group(1):
+                d = parse_date(v)
+                return d.strftime("%d/%m/%Y") if d is not None else v
+            dt = parse_datetime(v)
+            if dt is not None:
+                return (timezone.localtime(dt) if timezone.is_aware(dt) else dt).strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            return v  # shaped like a date but is not one (a code, a bad row): print it as it came
+    return v
+
+
+def to_csv(result, title=""):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    w.writerow(cols)
+    for r in result["rows"]:
+        w.writerow([cell(r.get(c, "")) for c in cols])
+    if result.get("totals"):
+        w.writerow([])
+        for k, v in result["totals"].items():
+            w.writerow([k, v])
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def to_xlsx(result, title=""):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (title or "Report")[:30]
+    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    ws.append([c.replace("_", " ").title() for c in cols])
+    for head in ws[1]:  # not `cell`: that is the function above, and shadowing it broke every xlsx export
+        head.font = Font(bold=True, color="FFFFFF")
+        head.fill = PatternFill("solid", fgColor="F26522")
+    for r in result["rows"]:
+        row = []
+        for c in cols:
+            v = cell(r.get(c, ""))
+            if isinstance(v, str):
+                try:
+                    if v and (v.replace(".", "", 1).replace("-", "", 1).isdigit()):
+                        v = float(Decimal(v))
+                except Exception:
+                    pass
+            row.append(v)
+        ws.append(row)
+    if result.get("totals"):
+        ws.append([])
+        for k, v in result["totals"].items():
+            ws.append([k, float(v) if isinstance(v, str) and v.replace(".", "", 1).replace("-", "", 1).isdigit() else v])
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 18
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def to_pdf(result, title="", tenant=None, params=None):
+    from django.template.loader import render_to_string
+    from weasyprint import HTML
+
+    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    rows = [[cell(r.get(c, "")) for c in cols] for r in result["rows"]]
+    from apps.core.documents import logo_url
+
+    html = render_to_string("reports/report.html", {
+        "title": title, "cols": cols, "rows": rows, "totals": result.get("totals", {}), "tenant": tenant,
+        "params": params or {}, "landscape": len(cols) > 7,
+        "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
+    })
+    return HTML(string=html).write_pdf()

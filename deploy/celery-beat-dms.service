@@ -1,0 +1,15 @@
+[Unit]
+Description=Celery Beat Scheduler (DMS)
+After=network.target redis-server.service postgresql.service
+
+[Service]
+User=django
+Group=www-data
+WorkingDirectory=/var/www/dms/backend
+Environment="PATH=/var/www/dms/backend/.venv/bin"
+ExecStart=/var/www/dms/backend/.venv/bin/celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@page{margin:12mm}body{font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#202C4B}h1{font-size:18px;margin:0}h2{font-size:14px;margin:12px 0 4px}.muted{color:#6B7280}
+table{width:100%;border-collapse:collapse;margin-top:10px}th,td{padding:5px 6px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}th{background:#F8F9FA;font-size:10px;text-transform:uppercase}.r{text-align:right}
+.head{display:flex;justify-content:space-between}.box{border:1px solid #e5e7eb;padding:8px;border-radius:4px}.badge{display:inline-block;padding:2px 8px;border-radius:4px;background:#F26522;color:#fff;font-size:10px}.tot td{font-weight:bold}
+</style></head><body>
+<div class="head"><div><h1>{{ tenant.display_name }}</h1><div class="muted">{{ tenant.address }}<br>{{ tenant.phone }} {{ tenant.email }}{% for k, v in tenant.tax_numbers.items %}{% if k|lower != "strn" %} · {{ k }}: {{ v }}{% endif %}{% endfor %}</div></div>
+<div style="text-align:right"><h1>{% block doc_title %}{% endblock %}</h1><div class="muted">{% block doc_meta %}{% endblock %}</div></div></div>
+{% block body %}{% endblock %}
+{% if tenant.settings.invoice_footer %}<p class="muted" style="margin-top:24px">{{ tenant.settings.invoice_footer }}</p>{% endif %}
+</body></html>

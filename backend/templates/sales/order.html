@@ -1,0 +1,93 @@
+{% extends "_doc.html" %}{% load docs %}
+{% comment %}
+The order confirmation the customer is sent and the sheet the office works from. The delivery columns appear
+only once something has actually moved, so a fresh order prints as a clean order rather than as a report with
+empty columns.
+{% endcomment %}
+{% block doc_title %}SALES ORDER{% endblock %}
+{% block doc_ref %}{{ o.number }}{% endblock %}
+{% block status %}<span class="badge{% if o.status == 'delivered' %} ok{% elif o.status == 'cancelled' or o.status == 'rejected' %} no{% elif o.status == 'draft' %} q{% endif %}">{{ o.get_status_display }}</span>{% endblock %}
+{% block watermark %}{% if o.status == 'draft' %}<div class="mark">DRAFT</div>{% elif o.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% elif o.status == 'rejected' %}<div class="mark">REJECTED</div>{% endif %}{% endblock %}
+
+{% block meta %}
+<table class="grid"><tr>
+  <td><span class="k">Order date</span>{{ o.order_date }}</td>
+  <td><span class="k">Delivery wanted</span>{{ o.requested_delivery_date|default:"—" }}</td>
+  <td><span class="k">Warehouse</span>{{ o.warehouse.name|default:"—" }}</td>
+  <td><span class="k">Salesman</span>{{ o.rep.name|default:"—" }}</td>
+  <td><span class="k">{% if o.external_ref %}Their reference{% else %}Taken{% endif %}</span>{{ o.external_ref|default:o.get_source_display }}</td>
+</tr></table>
+{% endblock %}
+
+{% block parties %}
+<div class="parties">
+  <div class="party">
+    <h2>Customer</h2>
+    <div class="who">{{ o.customer.business_name|default:o.customer.name }}</div>
+    <div class="muted">Code {{ o.customer.code }}{% if o.customer.business_name %} · {{ o.customer.name }}{% endif %}</div>
+    {% if o.customer.address %}<div>{{ o.customer.address|linebreaksbr }}</div>{% endif %}
+    {% if o.customer.city %}<div>{{ o.customer.city }}</div>{% endif %}
+    <div class="muted">{% if o.customer.phone %}Tel {{ o.customer.phone }}{% endif %}{% if o.customer.contact_person %} · {{ o.customer.contact_person }}{% endif %}</div>
+  </div>
+  <div class="party">
+    <h2>Terms</h2>
+    <div>{% if o.customer.credit_days %}Payment within {{ o.customer.credit_days }} days{% else %}Payment on delivery{% endif %}</div>
+    {% if o.customer.territory %}<div class="muted">Area: {{ o.customer.territory.name }}</div>{% endif %}
+    {% if o.price_list %}<div class="muted">Prices: {{ o.price_list.name }}</div>{% endif %}
+    {% if o.customer.ntn %}<div class="muted">NTN: {{ o.customer.ntn }}</div>{% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block lines %}
+<table class="lines">
+  <thead><tr>
+    <th style="width:6mm">#</th><th>Item</th><th style="width:18mm">Pack</th>
+    <th class="r" style="width:15mm">Ordered</th><th class="r" style="width:11mm">Free</th>
+    {% if show_progress %}<th class="r" style="width:16mm">Delivered</th><th class="r" style="width:14mm">Pending</th>{% endif %}
+    <th class="r" style="width:19mm">Rate</th><th class="r" style="width:17mm">Discount</th>
+    <th class="r" style="width:23mm">Amount</th>
+  </tr></thead>
+  <tbody>
+  {% for l in lines %}<tr>
+    <td>{{ forloop.counter }}</td>
+    <td>{{ l.variant.name }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.scheme_names %} · {{ l.scheme_names|join:", " }}{% endif %}</span></td>
+    <td>{{ l.packaging.name|default:"unit" }}{% if l.variant.product.packing > 1 %}<span class="sku">{{ l.variant.product.packing }}/carton</span>{% endif %}</td>
+    <td class="r">{{ l.qty_ordered|qty }}</td>
+    <td class="r">{% if l.free_qty %}{{ l.free_qty|qty }}{% else %}—{% endif %}</td>
+    {% if show_progress %}
+      <td class="r">{{ l.qty_delivered|qty }}</td>
+      <td class="r">{% if l.pending %}<strong>{{ l.pending|qty }}</strong>{% else %}—{% endif %}</td>
+    {% endif %}
+    <td class="r">{{ l.unit_price|num }}</td>
+    <td class="r">{% if l.discount_amount or l.scheme_discount %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
+    <td class="r b">{{ l.line_total|num }}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block words %}{% if o.total %}<div class="words"><strong>Amount in words:</strong> {{ o.total|in_words }}</div>{% endif %}{% endblock %}
+
+{% block notes %}
+{% if o.notes %}<div class="note"><strong>Notes:</strong> {{ o.notes }}</div>{% endif %}
+{% if o.hold_reason %}<div class="note"><strong>On hold:</strong> {{ o.hold_reason }}</div>{% endif %}
+{% if o.rejection_reason %}<div class="note"><strong>Rejected:</strong> {{ o.rejection_reason }}</div>{% endif %}
+{% endblock %}
+
+{% block totals %}
+<table class="totals">
+  <tr><td class="l">Subtotal</td><td class="r">{{ o.subtotal|num }}</td></tr>
+  {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
+  {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
+  <tr class="sum"><td>Order total</td><td class="r">{{ o.total|num }}</td></tr>
+</table>
+{% endblock %}
+
+{% block signatures %}
+<div class="signs">
+  <div>Taken by{% if o.rep %} — {{ o.rep.name }}{% elif o.created_by %} — {{ o.created_by.full_name }}{% endif %}</div>
+  <div>Approved by{% if o.confirmed_by %} — {{ o.confirmed_by.full_name }}{% endif %}</div>
+  <div>Customer confirmation (name, signature &amp; date)</div>
+</div>
+{% endblock %}
