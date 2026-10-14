@@ -376,6 +376,10 @@ def narrow(codenames):
 
     A caller that sends *only* coarse codenames — role seeding, or an API client written against them — is
     untouched, because none of the expansion is present to contradict.
+
+    Turning *every* switch of a coarse codename off cannot be told apart here from that bare coarse-only
+    payload — both carry the codename and none of its grants — so the editor does the all-off drop itself,
+    where it knows a switch was clicked (see `legacy_map` on the permission-pages endpoint and the matrix).
     """
     chosen = set(codenames)
     kept = set(chosen)
@@ -451,11 +455,26 @@ def resolve_pages(codenames, is_owner=False):
 
 def pages_as_json():
     """The matrix for the role editor: groups → pages → the switches each page has."""
+    implies = implied_by_legacy()
+    # Codenames the matrix shows a control for — every page switch and every extra button. A coarse codename
+    # that is one of these is toggled directly by its own control, and its partial-deselect is handled by
+    # narrow(), so it must NOT be in the legacy list: pruning it when a sibling switch goes off would turn its
+    # own button off too (e.g. sales.cancel_sales_order is both the Delete legacy and the "Hold / reject" extra).
+    visible = set(all_page_codenames())
+    for p in PAGES:
+        for e in p["extras"]:
+            visible.update(e["perm"] if isinstance(e["perm"], list) else [e["perm"]])
     groups = OrderedDict()
     for p in PAGES:
+        page_codes = set(p["actions"].values())
+        # The *invisible* coarse codenames an old role may still hold that grant this page's switches. The editor
+        # needs them so that switching every grant off drops the coarse one too — it rides along unseen otherwise
+        # and re-grants the lot on the next expansion (the Taxes "turn all off, it comes back" bug).
+        legacy = [{"code": old, "grants": sorted(grants)} for old, grants in implies.items()
+                  if old not in visible and page_codes & set(grants)]
         groups.setdefault(p["group"], []).append({
             "key": p["key"], "label": p["label"], "path": p["path"], "note": p["note"],
             "actions": [{"action": a, "label": ACTION_LABELS[a], "codename": c} for a, c in p["actions"].items()],
-            "extras": p["extras"],
+            "extras": p["extras"], "legacy": legacy,
         })
     return [{"group": g, "pages": pages} for g, pages in groups.items()]

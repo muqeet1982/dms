@@ -5,7 +5,8 @@ import { Spinner } from "@/components/ui/Bits";
 
 type Action = { action: string; label: string; codename: string };
 type Extra = { key: string; label: string; perm: string | string[] };
-type Page = { key: string; label: string; path: string; note: string; actions: Action[]; extras: Extra[] };
+type Legacy = { code: string; grants: string[] };
+type Page = { key: string; label: string; path: string; note: string; actions: Action[]; extras: Extra[]; legacy?: Legacy[] };
 type Group = { group: string; pages: Page[] };
 
 const COLUMNS = ["view", "add", "edit", "delete"] as const;
@@ -22,13 +23,26 @@ export function PermissionMatrix({ value, onChange }: { value: string[]; onChang
   const q = useQuery<Group[]>({ queryKey: ["permission-pages"], queryFn: () => api.get("/api/v1/permission-pages"), staleTime: 600_000 });
   const [filter, setFilter] = useState("");
   const held = useMemo(() => new Set(value), [value]);
+  // Old roles may still hold a coarse codename that grants several page switches. It is invisible in the matrix,
+  // so turning every one of its switches off would leave it behind to re-grant the lot on the next save (the
+  // Taxes "turn all off, it comes back" bug). The backend cannot tell that all-off deselect apart from a
+  // deliberate coarse-only payload, but the editor can — so it is dropped here, where a switch was clicked.
+  const legacyMap = useMemo(() => {
+    const m = new Map<string, string[]>();
+    (q.data || []).forEach((g) => g.pages.forEach((p) => (p.legacy || []).forEach((l) => { if (!m.has(l.code)) m.set(l.code, l.grants); })));
+    return m;
+  }, [q.data]);
   if (q.isLoading) return <Spinner />;
   const groups = q.data || [];
 
+  const commit = (next: Set<string>) => {
+    legacyMap.forEach((grants, code) => { if (next.has(code) && !grants.some((g) => next.has(g))) next.delete(code); });
+    onChange([...next]);
+  };
   const set = (codes: string[], on: boolean) => {
     const next = new Set(held);
     codes.forEach((c) => (on ? next.add(c) : next.delete(c)));
-    onChange([...next]);
+    commit(next);
   };
   const setCell = (p: Page, action: string, on: boolean) => {
     const next = new Set(held);
@@ -45,7 +59,7 @@ export function PermissionMatrix({ value, onChange }: { value: string[]; onChang
         p.extras.forEach((e) => allOf(e.perm).forEach((c) => next.delete(c)));
       }
     }
-    onChange([...next]);
+    commit(next);
   };
   const pageCodes = (p: Page) => [...p.actions.map((a) => a.codename), ...p.extras.map((e) => first(e.perm))];
   const rowOn = (p: Page) => p.actions.every((a) => held.has(a.codename));
@@ -53,7 +67,7 @@ export function PermissionMatrix({ value, onChange }: { value: string[]; onChang
     const next = new Set(held);
     pageCodes(p).forEach((c) => (on ? next.add(c) : next.delete(c)));
     if (!on) p.extras.forEach((e) => allOf(e.perm).forEach((c) => next.delete(c)));
-    onChange([...next]);
+    commit(next);
   };
   const setColumn = (g: Group, action: string, on: boolean) => {
     const next = new Set(held);
@@ -72,7 +86,7 @@ export function PermissionMatrix({ value, onChange }: { value: string[]; onChang
         }
       }
     });
-    onChange([...next]);
+    commit(next);
   };
 
   const needle = filter.trim().toLowerCase();

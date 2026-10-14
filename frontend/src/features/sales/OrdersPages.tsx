@@ -157,7 +157,7 @@ export function OrderFormPage() {
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
-    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "" });
+    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: o.apply_customer_discount } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: false });
     if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
     return <Spinner />;
   }
@@ -187,7 +187,7 @@ export function OrderFormPage() {
         </div>
         <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} />
         <Field label="Customer discount" col="col-md-4" hint="the customer's standing discount is applied to lines with no discount of their own">
-          <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="ocd" checked={form.apply_customer_discount !== false} onChange={(e) => setForm({ ...form, apply_customer_discount: e.target.checked })} /><label className="form-check-label fs-13" htmlFor="ocd">{form.apply_customer_discount === false ? "Not applied on this order" : "Apply on this order"}</label></div>
+          <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="ocd" checked={Boolean(form.apply_customer_discount)} onChange={(e) => setForm({ ...form, apply_customer_discount: e.target.checked })} /><label className="form-check-label fs-13" htmlFor="ocd">{form.apply_customer_discount === false ? "Not applied on this order" : "Apply on this order"}</label></div>
         </Field>
         <Field label="Notes"><textarea className="form-control" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
         {!page.can("override_price") && <div className="form-text">Prices you enter are advisory — the price list applies unless you have the price-override permission.</div>}

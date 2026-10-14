@@ -396,7 +396,7 @@ def test_a_made_up_shop_kind_is_refused_and_the_list_is_published(rep_app):
     assert "retailer" in r.data["detail"]
 
     areas = rep_app["phone"].get("/ext/v1/my-areas")
-    assert [t["value"] for t in areas.data["customer_types"]] == ["retailer", "salon", "wholesaler", "other"]
+    assert [t["value"] for t in areas.data["customer_types"]] == ["retailer", "salon", "wholesaler", "lmt", "other"]
 
 
 def test_a_missing_name_is_reported_even_when_the_fix_is_missing_too(rep_app):

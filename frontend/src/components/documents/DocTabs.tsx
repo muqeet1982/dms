@@ -60,9 +60,33 @@ export function AttachmentsTab({ model, id, kind }: { model: string; id: string;
  * tab a goods receipt opens on — the page was mostly history before anybody had scrolled. Each day is one line
  * you click to open, the most recent already open, so the document itself stays on screen.
  */
+/**
+ * What changed in one history entry, read as fields rather than a wall of JSON. Only the fields that actually
+ * differ are shown, each as "field: old → new"; a create or delete shows just the values it has.
+ */
+function HistoryChanges({ before, after }: { before: any; after: any }) {
+  const b = before || {};
+  const a = after || {};
+  const fmt = (v: any) => (v === null || v === undefined || v === "" ? "—" : typeof v === "object" ? Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(", ") : String(v));
+  const keys = Array.from(new Set([...Object.keys(b), ...Object.keys(a)])).filter((k) => JSON.stringify(b[k]) !== JSON.stringify(a[k]));
+  if (!keys.length) return null;
+  return (
+    <div className="mt-1 ps-2 border-start border-2">
+      {keys.map((k) => (
+        <div key={k} className="fs-11">
+          <span className="text-muted">{k.replace(/_/g, " ")}: </span>
+          {k in b && b[k] !== null && b[k] !== "" && <span className="text-danger text-decoration-line-through">{fmt(b[k])}</span>}
+          {k in b && b[k] !== null && b[k] !== "" && k in a ? <span className="text-muted"> → </span> : null}
+          {k in a && <span className="fw-medium">{fmt(a[k])}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function HistoryTab({ model, id }: { model: string; id: string }) {
   const q = useQuery({ queryKey: ["history", model, id], queryFn: () => api.get(`/api/v1/history/${model}/${id}`) });
-  const [shut, setShut] = useState<Record<string, boolean>>({});
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
   if (q.isLoading) return <Spinner />;
   if (!q.data?.length) return <EmptyState icon="ti-history" text="No history yet" />;
 
@@ -74,7 +98,7 @@ export function HistoryTab({ model, id }: { model: string; id: string }) {
     else days.push({ day, items: [h] });
   }
   // the newest day is open unless it has been clicked shut; older days open on a click
-  const isOpen = (day: string, i: number) => (day in shut ? !shut[day] : i === 0);
+  const isOpen = (day: string) => Boolean(opened[day]);
   const who = (items: any[]) => {
     const names = [...new Set(items.map((h) => h.actor_name || "system"))];
     return names.length <= 2 ? names.join(" and ") : `${names[0]} and ${names.length - 1} others`;
@@ -83,13 +107,13 @@ export function HistoryTab({ model, id }: { model: string; id: string }) {
   return (
     <div>
       {days.map((g, i) => {
-        const open = isOpen(g.day, i);
+        const open = isOpen(g.day);
         return (
           <div key={g.day} className="border rounded mb-2">
             <button
               type="button"
               className="btn w-100 text-start d-flex align-items-center justify-content-between px-3 py-2"
-              onClick={() => setShut((o) => ({ ...o, [g.day]: open }))}
+              onClick={() => setOpened((o) => ({ ...o, [g.day]: !open }))}
               aria-expanded={open}
             >
               <span className="fw-medium fs-13"><i className={`ti ti-chevron-${open ? "down" : "right"} me-1 text-muted`} />{g.day}</span>
@@ -101,7 +125,7 @@ export function HistoryTab({ model, id }: { model: string; id: string }) {
                   <li key={h.id}>
                     <div className="fw-medium fs-13">{h.action.replace(/[._]/g, " ")} <span className="text-muted fw-normal">by {h.actor_name || "system"}</span></div>
                     <div className="fs-12 text-muted">{time(h.at)}</div>
-                    {(h.before || h.after) && <details className="fs-12 mt-1"><summary className="text-muted cursor-pointer">details</summary><pre className="bg-light p-2 rounded fs-11 mb-0">{JSON.stringify({ before: h.before, after: h.after }, null, 1)}</pre></details>}
+                    {(h.before || h.after) && <HistoryChanges before={h.before} after={h.after} />}
                   </li>
                 ))}
               </ul>

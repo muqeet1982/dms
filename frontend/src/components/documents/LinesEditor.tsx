@@ -97,7 +97,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
             <span className="input-group-text"><i className="ti ti-scan" /></span>
             <input className="form-control" placeholder="Scan or type barcode / SKU and press Enter" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && scan.trim()) { e.preventDefault(); handleScan(scan.trim()); } }} />
           </div>
-          <button type="button" className="btn btn-outline-primary" onClick={() => onChange([...lines, newLine()])}><i className="ti ti-plus me-1" />Add line</button>
+          <button type="button" className="btn btn-outline-primary" onClick={() => onChange([newLine(), ...lines])}><i className="ti ti-plus me-1" />Add line</button>
           {onToggleDiscount && (
             <div className="form-check form-switch ms-1 mb-0">
               <input className="form-check-input" type="checkbox" id="disc-toggle" checked={Boolean(discountShown || showDiscount)} onChange={onToggleDiscount} />

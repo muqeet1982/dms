@@ -126,7 +126,7 @@ class StockLevelViewSet(viewsets.ReadOnlyModelViewSet):
     perm_map = page_perms("stock", {"summary": "inventory.view_stock", "lookup": "inventory.view_stock", "fefo": "inventory.view_stock"})
     filterset_fields = ["warehouse", "variant", "batch", "bin", "variant__product", "variant__product__brand", "variant__product__category", "variant__product__supplier"]
     search_fields = ["variant__name", "variant__sku", "batch__batch_no", "variant__barcodes__code"]
-    ordering_fields = ["qty_on_hand", "variant__name", "updated_at"]
+    ordering_fields = ["qty_on_hand", "variant__name", "updated_at", "warehouse__name", "batch__batch_no", "qty_reserved", "avg_cost"]
 
     def get_queryset(self):
         qs = StockLevel.objects.select_related("warehouse", "bin", "variant", "variant__product", "variant__product__brand", "variant__product__category", "variant__product__base_uom", "batch")

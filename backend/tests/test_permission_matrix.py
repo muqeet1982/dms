@@ -392,6 +392,44 @@ def test_turning_one_right_off_stays_off(api, tenant):
         assert "customers.delete_territory" not in rights and "customers.view_territory" in rights
 
 
+def test_turning_a_whole_page_off_stays_off(api, tenant):
+    """
+    Turning *every* switch of a page off must stick too — reported for Taxes: "turn all off, it comes back".
+
+    A page like Taxes carries no visible button for its old coarse codename (`accounting.manage_tax`), so when
+    all its switches go off the codename rides along unseen and re-grants the lot on the next expansion. The
+    matrix payload hands that invisible codename to the editor so it can drop it when the last grant goes off;
+    this test replays what the editor then sends.
+    """
+    from apps.accounts.services import RoleService
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        role = RoleService.create_role(tenant, "Tax clerk", ["accounting.manage_tax"])
+
+    shown = api.get(f"/api/v1/roles/{role.id}")
+    effective = set(shown.data["permissions_effective"])
+    assert "settings.view_tax" in effective and "settings.delete_tax" in effective
+
+    # the matrix hands the editor the invisible coarse codename for Taxes, but not for a page whose coarse
+    # codename has its own button (Sales orders' "Hold / reject" is sales.cancel_sales_order)
+    pages = api.get("/api/v1/permission-pages").data
+    by_key = {p["key"]: p for g in pages for p in g["pages"]}
+    tax_legacy = {l["code"] for l in by_key["settings_taxes"]["legacy"]}
+    assert tax_legacy == {"accounting.manage_tax"}
+    assert by_key["sales_orders"]["legacy"] == []
+
+    # the editor turns off every tax switch; because the page's legacy codename has no grant left, it drops it
+    tax_grants = set(by_key["settings_taxes"]["legacy"][0]["grants"])
+    kept = effective - tax_grants - {"accounting.manage_tax"}
+    saved = api.patch(f"/api/v1/roles/{role.id}", {"permissions": sorted(kept)}, format="json")
+    assert saved.status_code == 200, saved.content
+
+    again = api.get(f"/api/v1/roles/{role.id}")
+    assert not (tax_grants & set(again.data["permissions_effective"])), "a tax switch came back"
+    assert "accounting.manage_tax" not in again.data["permissions"], "the coarse codename had to go"
+
+
 def test_a_role_given_only_the_old_codename_keeps_working(api, tenant):
     """
     Dropping a coarse codename is only right when the sender enumerated the switches and left some out. A caller

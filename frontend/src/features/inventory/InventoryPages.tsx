@@ -23,12 +23,12 @@ export function StockPage() {
   const [view, setView] = useState<"levels" | "summary">("levels");
   const summary = useQuery({ queryKey: ["stock-summary"], queryFn: () => api.get("/api/v1/inventory/stock/summary"), enabled: view === "summary" });
   const cols: Column<any>[] = [
-    { key: "variant_name", header: "Item", sortKey: "variant__name", render: (s) => <><span className="fw-semibold text-dark">{s.variant_name}</span><div className="text-muted fs-11 font-monospace">{s.variant_sku}</div></> }, { key: "warehouse_name", header: "Warehouse", render: (s) => <>{s.warehouse_name}{s.bin_code && <div className="text-muted fs-11">bin {s.bin_code}</div>}</> },
-    { key: "batch_no", header: "Batch / expiry", render: (s) => (s.batch_no ? <>{s.batch_no}<div className={`fs-11 ${s.expiry_date && new Date(s.expiry_date) < new Date() ? "text-danger" : "text-muted"}`}>{date(s.expiry_date)}</div></> : "—") },
+    { key: "variant_name", header: "Item", sortKey: "variant__name", render: (s) => <><span className="fw-semibold text-dark">{s.variant_name}</span><div className="text-muted fs-11 font-monospace">{s.variant_sku}</div></> }, { key: "warehouse_name", header: "Warehouse", sortKey: "warehouse__name", render: (s) => <>{s.warehouse_name}{s.bin_code && <div className="text-muted fs-11">bin {s.bin_code}</div>}</> },
+    { key: "batch_no", header: "Batch / expiry", sortKey: "batch__batch_no", render: (s) => (s.batch_no ? <>{s.batch_no}<div className={`fs-11 ${s.expiry_date && new Date(s.expiry_date) < new Date() ? "text-danger" : "text-muted"}`}>{date(s.expiry_date)}</div></> : "—") },
     { key: "qty_on_hand", header: "On hand", num: true, sortKey: "qty_on_hand", render: (s) => <span className={Number(s.qty_on_hand) < 0 ? "text-danger fw-bold" : Number(s.qty_on_hand) < Number(s.min_stock) ? "text-warning fw-semibold" : "fw-medium"}>{qty(s.qty_on_hand)} <span className="text-muted fs-11">{s.uom}</span></span> },
     // a storeman thinks in boxes: 1 box = `packing` units, the remainder is loose
     { key: "boxes", header: "Boxes + loose", num: true, render: (s) => (Number(s.packing) > 1 ? <>{boxes(s.qty_on_hand, s.packing)}<div className="text-muted fs-11">{s.packing} per box</div></> : <span className="text-muted">loose</span>) },
-    { key: "qty_reserved", header: "Reserved", num: true, render: (s) => qty(s.qty_reserved) }, { key: "qty_available", header: "Available", num: true, render: (s) => qty(s.qty_available) }, { key: "avg_cost", header: "Avg cost", num: true, render: (s) => money(s.avg_cost) }, { key: "value", header: "Value", num: true, render: (s) => money(s.value, 0) },
+    { key: "qty_reserved", header: "Reserved", num: true, sortKey: "qty_reserved", render: (s) => qty(s.qty_reserved) }, { key: "qty_available", header: "Available", num: true, render: (s) => qty(s.qty_available) }, { key: "avg_cost", header: "Avg cost", num: true, sortKey: "avg_cost", render: (s) => money(s.avg_cost) }, { key: "value", header: "Value", num: true, render: (s) => money(s.value, 0) },
   ];
   return (
     <>
