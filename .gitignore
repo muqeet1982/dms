@@ -11,3 +11,7 @@ frontend/dist/
 
 # Firebase service-account key and app config (secrets)
 firebase/
+
+# Root env (contains the GitHub token and other secrets)
+/.env
+.env
