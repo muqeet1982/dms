@@ -45,7 +45,7 @@ thead{display:table-header-group}
     {% if logo_url %}<img src="{{ logo_url }}" alt="{{ tenant.display_name }}">{% endif %}
     <h1>{{ tenant.display_name }}</h1>
     <div class="muted">{{ tenant.address }}<br>
-      {{ tenant.phone }} {{ tenant.email }}{% for k, v in tenant.tax_numbers.items %} &middot; {{ k }}: {{ v }}{% endfor %}</div>
+      {{ tenant.phone }} {{ tenant.email }}{% for k, v in tenant.tax_numbers.items %}{% if k|lower != "strn" %} &middot; {{ k }}: {{ v }}{% endif %}{% endfor %}</div>
   </div>
   <div class="r">
     <h1>Dispatch Sheet</h1>
@@ -57,13 +57,8 @@ thead{display:table-header-group}
 <table class="grid"><tr>
   <td><span class="k">Driver</span>{{ trip.driver.name|default:"—" }}<br><span class="muted">{{ trip.driver.phone }}</span></td>
   <td><span class="k">Vehicle</span>{{ trip.vehicle.reg_no|default:"—" }}<br><span class="muted">{{ trip.vehicle.make_model }}</span></td>
-  <td><span class="k">Helper</span>{{ trip.helper.full_name|default:"—" }}</td>
-  <td><span class="k">Sales rep</span>{{ trip.rep.name|default:"—" }}</td>
-</tr><tr>
-  <td><span class="k">Delivery rep</span>{{ trip.delivery_rep.full_name|default:"—" }}</td>
-  <td><span class="k">Loaded by</span>{{ trip.loader.full_name|default:"—" }}</td>
-  <td><span class="k">Route</span>{{ trip.route.name|default:"—" }}</td>
-  <td><span class="k">Load form</span>{{ trip.picklist.number|default:"—" }}</td>
+  <td><span class="k">Sales person</span>{{ trip.rep.name|default:"—" }}</td>
+  <td><span class="k">Delivery person</span>{{ trip.delivery_rep.full_name|default:"—" }}</td>
 </tr></table>
 
 <div class="strip">

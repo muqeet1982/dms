@@ -1261,3 +1261,46 @@ Guard tests assert STRN and tax never reappear on the invoice, order or PO, even
   1–2 account (subtype, active flag, description included). The screen hides the edit pencil for these rows and
   shows a lock, while "Add an account beneath it" stays available. A no-op save is still accepted, and level
   3–4 accounts remain fully editable.
+
+## 2026-10-13 — Owner batch: ~18 fixes across receiving, inventory, sales, PO, users
+
+- **PO manual create "Please fill in warehouse"** — the select showed the default warehouse but never stored it;
+  validation now honours the effective default, so a PO saves without re-picking it.
+- **Piece/carton pricing** — changing a line's packaging now re-prices (piece price × box size, or the customer's
+  price-list carton price); before, switching to carton kept the piece price.
+- **Product Movements tab showed every movement** — `?variant__product=` was ignored by the filter; now applied.
+- **Stock ledger** — the item column shows the UPC, and a Batch / expiry column was added (serializer gained
+  `upc`, `item_code`, `expiry_date`).
+- **Product active/inactive toggle** added on the product page.
+- **Goods receipt corrections** — "Correct a quantity" is now "Edit received quantities" and splits the saved
+  quantity back into **boxes + loose** instead of dumping it all in the loose field; the receive quantity inputs
+  are blank-when-zero with select-on-focus so they are easy to overtype.
+- **Receiving** — matched order lines drop off the "Against PO" list once fully received (a count shows they
+  moved up).
+- **PO view** — removed the duplicate PDF button, removed the line-count line duplicated above the table, cards
+  truncate long values to stay uniform. **PO print** hides the supplier code.
+- **GRN view** — removed the stray "units" label before the total.
+- **Products page** — Print / PDF / Excel / Export buttons hidden.
+- **Owner can log in as a user** — `POST /users/{id}/login-as` + `exit-impersonation`, with a banner and a back
+  button; reuses the impersonation session, so the owner sees that user's pages and rights and actions stay
+  audited to the owner. Never as another owner.
+- **User cannot be saved without a role** — confirmed enforced (API + form).
+
+## 2026-10-14 — An invoiced order could not be dispatched (SO-00004)
+
+The invoice-before-dispatch flow (order → load form → issue → invoice → dispatch) left an order at status
+`invoiced`, but `TripService.from_picklist` and `assign_orders` only allowed `confirmed / issued /
+partially_delivered` — so the goods were issued and invoiced yet "create dispatch" failed with *"The orders on
+this loader form are already dispatched or cancelled."* `invoiced` is now an eligible status in both paths, so
+an invoiced order can be put on a vehicle. Covered by a new test.
+
+## 2026-10-14 — Invoice PDF tidy; sale-order delete
+
+- **Sales invoice PDF/print**: removed the status badge (no "Posted") and the Status field from the meta grid.
+  The **Delivery person** now shows the person who delivered it (`delivery_note.delivered_by`, falling back to
+  the trip's driver or delivery rep) instead of being blank when there is no trip. The draft/cancelled
+  watermark stays.
+- **Sale order delete** — a draft-stage order (draft / submitted / under review / rejected, with no delivery
+  note, invoice or trip) can now be **deleted**; a confirmed or processed order is still **cancelled**, never
+  deleted. The Delete button and the API are both gated on the sales-orders **delete** permission, so it shows
+  or hides per the user's role.

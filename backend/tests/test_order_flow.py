@@ -104,3 +104,47 @@ def test_mark_delivered_via_api_moves_order_to_invoiced(api, tenant):
     r2 = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {"receiver_name": "Owner", "cash_collected": "0"}, format="json")
     assert r2.status_code == 200, r2.content
     assert r2.data["status"] == "invoiced" and r2.data["invoices"][0]["total"] == "750.0000"
+
+
+def test_a_draft_order_can_be_deleted_but_a_processed_one_cannot(api, tenant):
+    """Delete is for an order that never went anywhere; a confirmed/invoiced order is cancelled, not deleted."""
+    from .conftest import seed_basic
+
+    wh, _sup, variant, customer = seed_basic(tenant)
+
+    draft = api.post("/api/v1/sales-orders", {"customer": str(customer.id), "warehouse": str(wh.id),
+                                              "lines": [{"variant": str(variant.id), "qty": "2"}]}, format="json")
+    assert draft.status_code == 201 and draft.data["status"] in ("draft", "submitted"), draft.content
+    gone = api.delete(f"/api/v1/sales-orders/{draft.data['id']}")
+    assert gone.status_code == 204, gone.content
+    assert api.get(f"/api/v1/sales-orders/{draft.data['id']}").status_code == 404
+
+    confirmed = api.post("/api/v1/sales-orders", {"customer": str(customer.id), "warehouse": str(wh.id), "confirm": True,
+                                                  "lines": [{"variant": str(variant.id), "qty": "2"}]}, format="json")
+    assert confirmed.status_code == 201 and confirmed.data["status"] == "confirmed"
+    refused = api.delete(f"/api/v1/sales-orders/{confirmed.data['id']}")
+    assert refused.status_code == 400 and "cancel it instead" in str(refused.data)
+
+
+def test_deleting_an_order_needs_the_delete_right(tenant):
+    """The Delete button is gated on the sales-orders delete permission, on the server too."""
+    from apps.core.tenancy import tenant_context
+
+    from .test_permission_matrix import _client
+
+    with tenant_context(tenant, tenant.owner):
+        from .conftest import seed_basic
+
+        wh, _sup, variant, customer = seed_basic(tenant)
+        # `_client` re-points one shared probe role, so grant the rights in sequence on the same client
+        client = _client(tenant, ["sales.view_sales_order", "sales.add_sales_order"])
+
+    made = client.post("/api/v1/sales-orders", {"customer": str(customer.id), "warehouse": str(wh.id),
+                                                "lines": [{"variant": str(variant.id), "qty": "1"}]}, format="json")
+    assert made.status_code == 201, made.content
+    # without the delete right the button is hidden and the API refuses
+    assert client.delete(f"/api/v1/sales-orders/{made.data['id']}").status_code == 403
+    # grant it (re-points the same role) and it goes through
+    with tenant_context(tenant, tenant.owner):
+        client = _client(tenant, ["sales.view_sales_order", "sales.add_sales_order", "sales.delete_sales_order"])
+    assert client.delete(f"/api/v1/sales-orders/{made.data['id']}").status_code == 204

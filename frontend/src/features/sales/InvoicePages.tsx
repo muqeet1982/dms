@@ -22,7 +22,7 @@ export function InvoicesPage() {
     { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}<div className="text-muted fs-11">due {date(i.due_date)}</div></> },
     { key: "customer_name", header: "Customer", render: (i) => <>{i.customer_name}<div className="text-muted fs-11">{i.customer_code}</div></> },
     { key: "order_number", header: "Order / DN", render: (i) => <>{i.order_number}<div className="text-muted fs-11">{i.delivery_note_number}</div></> },
-    { key: "rep_name", header: "Rep" },
+    { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
     { key: "total", header: "Total", num: true, sortKey: "total", render: (i) => money(i.total) },
     { key: "paid_amount", header: "Paid", num: true, render: (i) => money(i.paid_amount) },
     { key: "balance", header: "Balance", num: true, render: (i) => <span className={Number(i.balance) > 0 ? "fw-semibold text-danger" : "text-success"}>{money(i.balance)}</span> },
@@ -77,9 +77,9 @@ export function InvoiceDetailPage() {
       </div>
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem></div>
-        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th>Batch</th><th className="num">Qty</th><th className="num">Free</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Amount</th></tr></thead>
-          <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td className="num">{qty(l.qty)}</td><td className="num">{qty(l.free_qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(l.discount_amount)}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
-          <tfoot>{Number(inv.discount) > 0 && <tr><td colSpan={7} className="text-end">Discount given</td><td className="num">{money(inv.discount)}</td></tr>}<tr className="fw-bold"><td colSpan={7} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>
+        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th>Batch</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Amount</th></tr></thead>
+          <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(l.discount_amount)}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
+          <tfoot>{Number(inv.discount) > 0 && <tr><td colSpan={6} className="text-end">Discount given</td><td className="num">{money(inv.discount)}</td></tr>}<tr className="fw-bold"><td colSpan={6} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>
       </div></div>
       <DocTabs model="SalesInvoice" id={inv.id} showMovements extra={[{ key: "payments", label: "Payments", render: () => (
         <div>{!pays.data?.payments?.length && !pays.data?.rep_collections?.length && <p className="text-muted fs-13">No payments yet</p>}
@@ -224,7 +224,7 @@ export function RepCollectionsPage() {
   const [form, setForm] = useState<any>({ rep: null, customer: null, amount: "", method: "cash", reference: "", notes: "" });
   const unsettled = useQuery({ queryKey: ["rep-unsettled"], queryFn: () => api.get("/api/v1/rep-collections/unsettled"), enabled: collectionsPage.can("settle") });
   const cols: Column<any>[] = [
-    { key: "number", header: "#", render: (c) => <span className="fw-semibold text-dark">{c.number}</span> }, { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "rep_name", header: "Rep" }, { key: "customer_name", header: "Customer" },
+    { key: "number", header: "#", render: (c) => <span className="fw-semibold text-dark">{c.number}</span> }, { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "customer_name", header: "Customer" },
     { key: "method", header: "Method", render: (c) => <>{c.method}{c.reference ? <div className="text-muted fs-11">{c.reference}</div> : null}</> }, { key: "allocations", header: "Invoices", render: (c) => c.allocations.map((a: any) => a.number).join(", ") || "advance" },
     { key: "amount", header: "Amount", num: true, render: (c) => money(c.amount) }, { key: "status", header: "Status", render: (c) => <><StatusBadge status={c.status} />{c.settlement_number && <div className="fs-11 text-muted">{c.settlement_number}</div>}</> },
   ];
@@ -255,7 +255,7 @@ export function RepSettlementsPage() {
   const cashAccounts = useOptions("/api/v1/accounting/cash-accounts");
   const unsettled = useQuery({ queryKey: ["rep-unsettled", rep], queryFn: () => api.get("/api/v1/rep-collections/unsettled", { rep: rep || undefined }), enabled: open });
   const cols: Column<any>[] = [
-    { key: "number", header: "#", render: (s) => <span className="fw-semibold text-dark">{s.number}</span> }, { key: "date", header: "Date", render: (s) => date(s.date) }, { key: "rep_name", header: "Rep" }, { key: "received_by_name", header: "Received by" },
+    { key: "number", header: "#", render: (s) => <span className="fw-semibold text-dark">{s.number}</span> }, { key: "date", header: "Date", render: (s) => date(s.date) }, { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "received_by_name", header: "Received by" },
     { key: "collection_numbers", header: "Collections", render: (s) => s.collection_numbers?.map((c: any) => `${c.number} (${c.customer})`).join(", ") }, { key: "amount", header: "Amount", num: true, render: (s) => money(s.amount) }, { key: "journal_number", header: "Journal" },
   ];
   const total = (unsettled.data?.collections || []).filter((c: any) => selected.includes(c.id)).reduce((s: number, c: any) => s + Number(c.amount), 0);

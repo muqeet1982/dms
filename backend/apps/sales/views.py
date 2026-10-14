@@ -60,7 +60,7 @@ class SalesOrderViewSet(DocumentViewSet):
     filterset_fields = ["status", "customer", "rep", "supplier", "source", "warehouse", "trip", "order_date"]
     search_fields = ["number", "customer__name", "customer__code", "external_ref", "rep__name", "notes"]
     ordering_fields = ["order_date", "number", "total", "created_at", "status"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_serializer_class(self):
         return SalesOrderListSerializer if self.action == "list" else SalesOrderSerializer
@@ -233,6 +233,22 @@ class SalesOrderViewSet(DocumentViewSet):
             "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
             "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
         }, o.number, title="SALES ORDER", ref=o.number)
+
+
+    def perform_destroy(self, instance):
+        """
+        Delete only an order that never went anywhere — draft, submitted, under review or rejected, and with no
+        delivery note, invoice or trip behind it. A confirmed order has reserved stock and a processed one has a
+        ledger entry; those are **cancelled** (which reverses them and keeps the record), never deleted.
+        """
+        if instance.status not in ("draft", "submitted", "under_review", "rejected"):
+            raise DomainError(f"{instance.number} is {instance.get_status_display().lower()} and cannot be deleted — cancel it instead.",
+                              code="not_deletable", status_code=400)
+        if instance.delivery_notes.exists() or instance.invoices.exists() or instance.trip_id:
+            raise DomainError(f"{instance.number} has deliveries or invoices and cannot be deleted — cancel it instead.",
+                              code="not_deletable", status_code=400)
+        AuditService.log("order.deleted", instance, before={"number": instance.number, "status": instance.status}, tenant_id=self.request.tenant.id)
+        instance.delete()
 
 
 class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):

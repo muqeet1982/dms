@@ -50,6 +50,15 @@ export function AppShell({ sections, notificationsTo }: { sections: MenuSection[
           </Link>
         </div>
       )}
+      {(me as any)?.impersonating_as && (
+        <div className="d-flex align-items-center justify-content-between bg-warning-subtle border-bottom px-3 py-1" style={{ marginLeft: "var(--sidebar-width, 0)" }}>
+          <span className="fs-12"><i className="ti ti-eye me-1 text-warning" />You are viewing the app as <strong>{(me as any).impersonating_as}</strong> — actions you take are recorded as the owner.</span>
+          <button className="btn btn-sm btn-dark py-0 fs-12" onClick={async () => {
+            try { await api.post("/api/v1/users/exit-impersonation", {}); } catch { /* ignore */ }
+            window.location.assign("/app");
+          }}><i className="ti ti-arrow-back-up me-1" />Back to owner</button>
+        </div>
+      )}
       {announcements.data?.filter((a: any) => !dismissed.includes(a.id)).map((a: any) => (
         <div key={a.id} className={`alert alert-${a.level === "danger" ? "danger" : a.level === "warning" ? "warning" : "info"} border-0 rounded-0 mb-0 d-flex align-items-center justify-content-between py-2`} style={{ marginLeft: "var(--sidebar-width, 0)" }}>
           <div className="fs-13"><strong>{a.title}</strong> — {a.body}</div>

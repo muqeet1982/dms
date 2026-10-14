@@ -34,10 +34,19 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True, default="")
     trip_number = serializers.CharField(source="trip.number", read_only=True, default="")
     lines_count = serializers.IntegerField(source="lines.count", read_only=True)
+    sales_person = serializers.SerializerMethodField()
+
+    def get_sales_person(self, obj):
+        # the rep who took it, or the sales rep on its trip — never created_by (whoever imported it)
+        if obj.rep_id:
+            return obj.rep.name
+        if obj.trip_id and obj.trip.rep_id:
+            return obj.trip.rep.name
+        return ""
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):
@@ -49,11 +58,17 @@ class SalesOrderSerializer(SalesOrderListSerializer):
     customer_address = serializers.CharField(source="customer.address", read_only=True)
     driver_name = serializers.CharField(source="trip.driver.name", read_only=True, default="")
     vehicle_reg = serializers.CharField(source="trip.vehicle.reg_no", read_only=True, default="")
+    delivery_person = serializers.CharField(source="trip.delivery_rep.full_name", read_only=True, default="")
+    payment_terms = serializers.SerializerMethodField()
     invoices = serializers.SerializerMethodField()
     delivery_notes = serializers.SerializerMethodField()
 
+    def get_payment_terms(self, obj):
+        days = getattr(obj.customer, "credit_days", 0) or 0
+        return f"{days} days credit" if days else "Cash on delivery"
+
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
         read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
@@ -127,14 +142,30 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     trip = serializers.UUIDField(source="delivery_note.trip_id", read_only=True, default=None)
     trip_number = serializers.CharField(source="delivery_note.trip.number", read_only=True, default="")
     rep_name = serializers.CharField(source="rep.name", read_only=True, default="")
+    sales_person = serializers.SerializerMethodField()
     balance = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
     journal_number = serializers.CharField(source="journal.number", read_only=True, default="")
     tax1_name = serializers.CharField(source="tax1_type.name", read_only=True, default="")
     tax2_name = serializers.CharField(source="tax2_type.name", read_only=True, default="")
 
+    
+    def get_sales_person(self, obj):
+        if obj.rep_id:
+            return obj.rep.name
+        order = obj.order
+        if order:
+            if order.rep_id:
+                return order.rep.name
+            if order.trip_id and order.trip.rep_id:
+                return order.trip.rep.name
+        dn = obj.delivery_note
+        if dn and dn.trip_id and dn.trip.rep_id:
+            return dn.trip.rep.name
+        return ""
+
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "date", "due_date", "subtotal", "discount", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 

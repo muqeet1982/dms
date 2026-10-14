@@ -16,7 +16,7 @@ import { FieldDef, ResourceForm } from "@/components/ui/ResourceForm";
 import { AttachmentsTab, HistoryTab } from "@/components/documents/DocTabs";
 import { StorePinPicker } from "./StorePinPicker";
 
-const TYPES = [{ value: "retailer", label: "Retailer" }, { value: "salon", label: "Salon" }, { value: "wholesaler", label: "Wholesaler" }, { value: "other", label: "Other" }];
+const TYPES = [{ value: "retailer", label: "Retailer" }, { value: "salon", label: "Salon" }, { value: "wholesaler", label: "Wholesaler" }, { value: "lmt", label: "LMT" }, { value: "other", label: "Other" }];
 
 export function CustomersPage() {
   const stats = useQuery({ queryKey: ["customer-stats"], queryFn: () => api.get("/api/v1/customers/stats") });

@@ -91,7 +91,7 @@ class SupplierRep(TenantModel):
 
 
 class Customer(TenantModel):
-    TYPES = [("retailer", "Retailer"), ("salon", "Salon"), ("wholesaler", "Wholesaler"), ("other", "Other")]
+    TYPES = [("retailer", "Retailer"), ("salon", "Salon"), ("wholesaler", "Wholesaler"), ("lmt", "LMT"), ("other", "Other")]
     STATUS = [("active", "Active"), ("pending", "Pending approval"), ("blocked", "Blocked"), ("inactive", "Inactive")]
     code = models.CharField(max_length=30)
     name = models.CharField(max_length=200)

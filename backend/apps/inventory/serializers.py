@@ -101,12 +101,15 @@ class StockMovementSerializer(serializers.ModelSerializer):
     variant_name = serializers.CharField(source="variant.name", read_only=True)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     batch_no = serializers.CharField(source="batch.batch_no", read_only=True, default="")
+    expiry_date = serializers.DateField(source="batch.expiry_date", read_only=True, default=None)
+    upc = serializers.CharField(source="variant.product.upc", read_only=True, default="")
+    item_code = serializers.CharField(source="variant.product.item_code", read_only=True, default="")
     performed_by_name = serializers.CharField(source="performed_by.full_name", read_only=True, default="")
     value = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
 
     class Meta:
         model = StockMovement
-        fields = ["id", "warehouse", "warehouse_name", "bin", "variant", "variant_name", "variant_sku", "batch", "batch_no", "qty", "unit_cost", "value", "movement_type", "reference_type", "reference_id", "reference_number", "occurred_at", "performed_by", "performed_by_name", "note"]
+        fields = ["id", "warehouse", "warehouse_name", "bin", "variant", "variant_name", "variant_sku", "upc", "item_code", "batch", "batch_no", "expiry_date", "qty", "unit_cost", "value", "movement_type", "reference_type", "reference_id", "reference_number", "occurred_at", "performed_by", "performed_by_name", "note"]
 
 
 class ReasonCodeSerializer(serializers.ModelSerializer):

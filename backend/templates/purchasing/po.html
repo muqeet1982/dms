@@ -23,7 +23,7 @@ tax-inclusive and the column sums to the Total, so the page can be checked with 
   <div class="party">
     <h2>Supplier</h2>
     <div class="who">{{ po.supplier.business_name|default:po.supplier.name }}</div>
-    <div class="muted">Code {{ po.supplier.code }}{% if po.supplier.business_name %} · {{ po.supplier.name }}{% endif %}</div>
+    {% if po.supplier.business_name %}<div class="muted">{{ po.supplier.name }}</div>{% endif %}
     {% if po.supplier.address %}<div>{{ po.supplier.address|linebreaksbr }}</div>{% endif %}
     {% if po.supplier.city %}<div>{{ po.supplier.city }}</div>{% endif %}
     <div class="muted">{% if po.supplier.phone %}Tel {{ po.supplier.phone }}{% endif %}{% if po.supplier.email %} · {{ po.supplier.email }}{% endif %}</div>
@@ -69,10 +69,3 @@ tax-inclusive and the column sums to the Total, so the page can be checked with 
 </table>
 {% endblock %}
 
-{% block signatures %}
-<div class="signs">
-  <div>Prepared by{% if po.created_by %} — {{ po.created_by.full_name }}{% endif %}</div>
-  <div>Approved by{% if po.approved_by %} — {{ po.approved_by.full_name }}{% endif %}</div>
-  <div>Supplier acknowledgement (name, signature &amp; date)</div>
-</div>
-{% endblock %}

@@ -309,6 +309,9 @@ class MeView(APIView):
             "is_owner": False,
             "impersonating": getattr(request, "impersonating", False),
             "impersonation_expires_at": getattr(getattr(request, "impersonation", None), "expires_at", None),
+            # who the owner is acting as (owner login-as-user); the platform-admin flow leaves this blank
+            "impersonating_as": (getattr(getattr(request, "impersonation", None), "target", None).full_name
+                                 if getattr(request, "impersonating", False) and not getattr(user, "is_platform_admin", False) else None),
             "platform_permissions": sorted(user.platform_perms()),
             "warehouses": [],
             "supplier_rep": None,
@@ -460,6 +463,9 @@ class TenantUserViewSet(viewsets.ModelViewSet):
         "transfer_ownership": "users.change_user",
         "access": "users.view_user",
         "preview_access": "users.view_user",
+        "login_as": "users.change_user_access",
+        # no perm entry for exit: while acting as a user the owner may hold none of these rights, and they must
+        # always be able to come back. The method only ends the real user's own session.
     })
     search_fields = ["user__full_name", "user__email", "user__phone"]
     filterset_fields = ["status", "is_owner", "user__user_type"]
@@ -560,6 +566,47 @@ class TenantUserViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         UserService.update_membership(instance, status="suspended")
+
+    @action(detail=True, methods=["post"], url_path="login-as")
+    def login_as(self, request, pk=None):
+        """
+        The owner starts acting as this user, to see the app with that user's roles and pages. Only the owner,
+        only within their own company, and never as another owner. It reuses the impersonation session the
+        platform admin flow uses, so the same expiry and audit apply; `exit-impersonation` ends it.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.core.plan_limits import platform_setting
+        from .models import ImpersonationSession
+
+        me = getattr(request, "membership", None)
+        if me is None or not me.is_owner or getattr(request, "impersonating", False):
+            raise DomainError("Only the company owner can log in as a user.", code="forbidden", status_code=403)
+        target_membership = self.get_object()
+        if target_membership.is_owner:
+            raise DomainError("You cannot log in as another owner.", status_code=400)
+        if target_membership.status != "active":
+            raise DomainError("That login is not active.", status_code=400)
+        minutes = int(platform_setting("impersonation_minutes", 60) or 60)
+        ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).update(ended_at=timezone.now())
+        ImpersonationSession.objects.create(
+            admin=request.user, target=target_membership.user, tenant=request.tenant,
+            expires_at=timezone.now() + timedelta(minutes=minutes), reason="owner login-as-user",
+        )
+        AuditService.log("user.login_as", target_membership, after={"as": target_membership.user.full_name}, tenant_id=request.tenant.id)
+        return Response({"ok": True, "acting_as": target_membership.user.full_name})
+
+    @action(detail=False, methods=["post"], url_path="exit-impersonation")
+    def exit_impersonation(self, request):
+        """The owner stops acting as a user and goes back to being themselves."""
+        from django.utils import timezone
+
+        from .models import ImpersonationSession
+
+        ended = ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).update(ended_at=timezone.now())
+        return Response({"ok": True, "ended": ended})
 
     @action(detail=False, methods=["post"], url_path="preview-access")
     @require_perm("users.view_user")

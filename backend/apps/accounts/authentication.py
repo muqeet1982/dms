@@ -91,6 +91,21 @@ class TenantJWTAuthentication(JWTAuthentication):
                     raise exceptions.PermissionDenied("Your membership in this tenant is suspended.")
                 tenant = membership.tenant
                 request.membership = membership
+                # An owner can "log in as" one of their own users to see the app with that user's rights. It
+                # reuses the impersonation session (admin = owner, target = user) and swaps the effective
+                # membership, exactly as a platform admin impersonating the owner does.
+                if membership.is_owner:
+                    imp = (
+                        ImpersonationSession.objects.filter(admin=user, tenant=tenant, ended_at__isnull=True, expires_at__gt=timezone.now())
+                        .select_related("target")
+                        .first()
+                    )
+                    if imp is not None:
+                        target_m = TenantMembership.objects.filter(user=imp.target, tenant=tenant, status="active").first()
+                        if target_m is not None and not target_m.is_owner:
+                            request.membership = target_m
+                            request.impersonating = True
+                            request.impersonation = imp
         if tenant is not None:
             if tenant.status in ("cancelled", "archived") and not user.is_platform_admin:
                 raise exceptions.PermissionDenied("This company account is closed.")

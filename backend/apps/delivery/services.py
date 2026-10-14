@@ -328,7 +328,9 @@ class TripService:
         """Warehouse finished packing a loader form → open the dispatch (trip) for its orders."""
         if pl.status not in ("picked", "issued", "partially_issued"):
             raise DomainError("The warehouse has to issue the load form before it can be dispatched.")
-        orders = [o for o in pl.orders.all() if o.status in ("confirmed", "issued", "partially_delivered")]
+        # `invoiced` belongs here too: the invoice-before-dispatch flow invoices the issued goods and then
+        # still has to put them on a vehicle. Leaving it out made an invoiced order impossible to dispatch.
+        orders = [o for o in pl.orders.all() if o.status in ("confirmed", "issued", "partially_delivered", "invoiced")]
         if not orders:
             raise DomainError("The orders on this loader form are already dispatched or cancelled.")
         trip = TripService.create(warehouse=pl.warehouse, date=date, driver=driver, vehicle=vehicle, rep=rep, delivery_rep=delivery_rep, loader=loader or pl.picker, helper=helper, route=route, orders=orders, notes=notes or f"Packed on {pl.number}", picklist=pl)
@@ -342,8 +344,8 @@ class TripService:
             raise DomainError("Orders can only be assigned before the trip starts.")
         seq = trip.delivery_notes.count()
         for o in orders:
-            if o.status not in ("confirmed", "issued"):
-                raise DomainError(f"Order {o.number} is not confirmed.")
+            if o.status not in ("confirmed", "issued", "invoiced", "partially_delivered"):
+                raise DomainError(f"Order {o.number} is not ready to dispatch (status {o.get_status_display()}).")
             if o.warehouse_id != trip.warehouse_id:
                 raise DomainError(f"Order {o.number} belongs to another warehouse.")
             if o.trip_id and o.trip_id != trip.pk:

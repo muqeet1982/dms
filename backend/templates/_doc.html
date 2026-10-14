@@ -40,6 +40,7 @@ table.grid .k{display:block;color:#6B7280;text-transform:uppercase;font-size:8.5
 table.lines{width:100%;border-collapse:collapse;margin-top:10px}
 table.lines thead{display:table-header-group}
 table.lines th{background:#F8F9FA;font-size:8.5px;text-transform:uppercase;letter-spacing:.2px;padding:5px 6px;border-top:1px solid #e5e7eb;border-bottom:1px solid #d7dbe3;text-align:left}
+table.lines th.r{text-align:right}
 table.lines td{padding:4px 6px;border-bottom:1px solid #eef0f3;vertical-align:top}
 table.lines tr{break-inside:avoid;page-break-inside:avoid}
 table.lines .sku{display:block;color:#6B7280;font-size:9px}
@@ -92,7 +93,6 @@ table.totals tr.due td{font-weight:bold;background:#FFF4EE;border-bottom:0}
   {% block totals %}{% endblock %}
 </div>
 
-{% block signatures %}{% endblock %}
 
 <div class="tail">
   <span>{% if tenant.settings.invoice_footer %}{{ tenant.settings.invoice_footer }}{% endif %}</span>

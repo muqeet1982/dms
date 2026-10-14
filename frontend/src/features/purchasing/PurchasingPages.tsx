@@ -103,11 +103,14 @@ export function PurchaseOrderFormPage() {
   }
   const submit = async () => {
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
-    const missing = [!form.supplier && "supplier", !form.warehouse && "warehouse", !valid.length && "at least one line with a quantity"].filter(Boolean);
+    // the select shows warehouses.defaultId as a fallback; honour it so a PO with the default picked does not
+    // fail validation just because the user never touched the field
+    const warehouse = form.warehouse || warehouses.defaultId || "";
+    const missing = [!form.supplier && "supplier", !warehouse && "warehouse", !valid.length && "at least one line with a quantity"].filter(Boolean);
     if (missing.length) { const m = `Please fill in: ${missing.join(", ")}.`; setErr(m); return toast.error(m); }
     setErr(null);
     try {
-      const body = { ...form, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || 0, discount_pct: l.discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
+      const body = { ...form, warehouse, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || 0, discount_pct: l.discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/purchase-orders/${id}`, body) : await api.post("/api/v1/purchase-orders", body, true);
       toast.success("Saved");
       nav(`/app/purchasing/orders/${r.id}`);
@@ -147,12 +150,11 @@ export function PurchaseOrderDetailPage() {
   return (
     <>
       <PageHeader title={po.reference ? `${po.number} — ${po.reference}` : po.number} badge={<StatusBadge status={po.status} />} crumbs={[{ label: "Purchase orders", to: "/app/purchasing/orders" }, { label: po.number }]}
-        actions={<><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/purchase-orders/${po.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/purchase-orders/${po.id}/pdf`, `${po.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>{["draft", "sent"].includes(po.status) && pageRights("purchase_orders").edit && <Link to={`/app/purchasing/orders/${po.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{po.status === "draft" && pageRights("purchase_orders").extras.approve && <button className="btn btn-success" disabled={!!busy} onClick={() => run("send", {}, { success: "PO approved & sent" })}><i className="ti ti-send me-1" />Approve / send</button>}{["sent", "partially_received"].includes(po.status) && pageRights("grns").add && <Link to={`/app/purchasing/grns/new?po=${po.id}`} className="btn btn-primary"><i className="ti ti-package-import me-1" />Receive goods</Link>}{po.status === "partially_received" && pageRights("purchase_orders").edit && <button className="btn btn-outline-warning" onClick={() => setCloseRest(true)}><i className="ti ti-flag-off me-1" />Close remaining</button>}{!["received", "cancelled"].includes(po.status) && pageRights("purchase_orders").delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}<button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/purchase-orders/${po.id}/pdf`)}><i className="ti ti-printer me-1" />PDF</button></>} />
+        actions={<><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/purchase-orders/${po.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/purchase-orders/${po.id}/pdf`, `${po.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>{["draft", "sent"].includes(po.status) && pageRights("purchase_orders").edit && <Link to={`/app/purchasing/orders/${po.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{po.status === "draft" && pageRights("purchase_orders").extras.approve && <button className="btn btn-success" disabled={!!busy} onClick={() => run("send", {}, { success: "PO approved & sent" })}><i className="ti ti-send me-1" />Approve / send</button>}{["sent", "partially_received"].includes(po.status) && pageRights("grns").add && <Link to={`/app/purchasing/grns/new?po=${po.id}`} className="btn btn-primary"><i className="ti ti-package-import me-1" />Receive goods</Link>}{po.status === "partially_received" && pageRights("purchase_orders").edit && <button className="btn btn-outline-warning" onClick={() => setCloseRest(true)}><i className="ti ti-flag-off me-1" />Close remaining</button>}{!["received", "cancelled"].includes(po.status) && pageRights("purchase_orders").delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}</>} />
       {po.status !== "cancelled" && <WorkflowStepper orderId={po.id} endpoint="/api/v1/purchase-orders" title="Order to payment" onData={setFlow} />}
-      <div className="row g-3 mb-3"><div className="col-sm-6 col-xl-3"><StatCard label="Order value" value={money(po.total)} icon="ti-coins" color="primary" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Goods receipts" value={po.grns_count} icon="ti-package-import" color="success" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Supplier" value={po.supplier_name} icon="ti-building-factory-2" color="info" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Expected" value={date(po.expected_date)} icon="ti-calendar" color="secondary" sub={`ordered ${date(po.date)}`} /></div></div>
+      <div className="row g-3 mb-3"><div className="col-sm-6 col-xl-3"><StatCard label="Order value" value={money(po.total)} icon="ti-coins" color="primary" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Goods receipts" value={po.grns_count} icon="ti-package-import" color="success" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Supplier" value={<span className="d-inline-block text-truncate" style={{ maxWidth: "100%" }} title={po.supplier_name}>{po.supplier_name}</span>} icon="ti-building-factory-2" color="info" /></div><div className="col-sm-6 col-xl-3"><StatCard label="Expected" value={date(po.expected_date)} icon="ti-calendar" color="secondary" sub={`ordered ${date(po.date)}`} /></div></div>
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Warehouse">{po.warehouse_name}</InfoItem><InfoItem label="Reference">{po.reference || "—"}</InfoItem>{po.supplier_ref && <InfoItem label="Supplier ref">{po.supplier_ref}</InfoItem>}<InfoItem label="Created by">{po.created_by_name}</InfoItem><InfoItem label="Notes">{po.notes || "—"}</InfoItem></div>
-        <div className="fs-12 text-muted mb-2">{po.lines.length} lines · ordered {qty(po.lines.reduce((s: number, l: any) => s + Number(l.qty_ordered), 0))} units · received {qty(po.lines.reduce((s: number, l: any) => s + Number(l.qty_received), 0))} · still to come {qty(po.lines.reduce((s: number, l: any) => s + Number(l.qty_pending), 0))}</div>
         <div className={po.lines.length > LINES_SCROLL_FROM ? "table-scroll" : "table-responsive"}>
         <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Received</th><th className="num">Rejected</th><th className="num">Not received</th><th className="num">Pending</th><th>Placed in</th><th className="num">D.P (unit)</th><th className="num">Total</th></tr></thead>
           <tbody>{po.lines.map((l: any, i: number) => {
@@ -478,14 +480,22 @@ export function GrnFormPage() {
   /** Open the receipt's own rows for correction: the whole set goes back, which is what makes a mistyped quantity fixable. */
   const startFix = () => {
     setErr(null);
-    // Quantities come back in base units while the table adds `boxes * packing + loose` (see `unitsOf`): the whole
-    // figure is the loose field and the box count starts at zero, or every quantity would come back multiplied by
-    // the carton size.
-    setFixRows(heldLines.map((l: any) => ({
-      key: l.id, po_line: l.po_line || undefined, variant: l.variant, name: l.variant_name, sku: l.variant_sku, item_code: l.item_code || "", upc: "", packing: Number(l.packing || 1), ordered: 0, pending: 0, unit_price: l.unit_cost,
-      accepted: String(Number(l.qty_accepted)), accepted_boxes: "0", rejected: String(Number(l.qty_damaged)), rejected_boxes: "0", missing: String(Number(l.qty_short)), missing_boxes: "0",
-      reject_reason: l.reject_reason || "", note: l.note || "", close_line: false, batch_no: l.batch_no || "", expiry_date: l.expiry_date || "", bin: l.bin || null, default_bin_name: l.bin_name || "", default_warehouse: "", needs_expiry: Boolean(l.is_expiry_tracked),
-    })));
+    // Split each base-unit quantity back into boxes + loose so a carton-received item shows as boxes to correct,
+    // not the whole figure dumped in the loose field. `unitsOf` recombines boxes*packing + loose, so this
+    // round-trips exactly: 120 of a 12-pack -> 10 boxes, 0 loose.
+    const split = (total: number, packing: number) => {
+      const per = packing > 1 ? packing : 1;
+      return per > 1 ? { boxes: String(Math.floor(total / per)), loose: String(total % per) } : { boxes: "0", loose: String(total) };
+    };
+    setFixRows(heldLines.map((l: any) => {
+      const packing = Number(l.packing || 1);
+      const a = split(Number(l.qty_accepted), packing), d = split(Number(l.qty_damaged), packing), m = split(Number(l.qty_short), packing);
+      return {
+        key: l.id, po_line: l.po_line || undefined, variant: l.variant, name: l.variant_name, sku: l.variant_sku, item_code: l.item_code || "", upc: "", packing, ordered: 0, pending: 0, unit_price: l.unit_cost,
+        accepted: a.loose, accepted_boxes: a.boxes, rejected: d.loose, rejected_boxes: d.boxes, missing: m.loose, missing_boxes: m.boxes,
+        reject_reason: l.reject_reason || "", note: l.note || "", close_line: false, batch_no: l.batch_no || "", expiry_date: l.expiry_date || "", bin: l.bin || null, default_bin_name: l.bin_name || "", default_warehouse: "", needs_expiry: Boolean(l.is_expiry_tracked),
+      };
+    }));
   };
 
   /**
@@ -655,11 +665,11 @@ export function GrnFormPage() {
             </div>
             {fixRows
               ? <div className="d-flex gap-2"><button className="btn btn-sm btn-light" onClick={() => { setFixRows(null); setErr(null); }}>Leave as it is</button><button className="btn btn-sm btn-secondary" disabled={fixing} onClick={saveFix}><i className="ti ti-device-floppy me-1" />Save corrections</button></div>
-              : <button className="btn btn-sm btn-outline-secondary" onClick={startFix}><i className="ti ti-pencil me-1" />Correct a quantity</button>}
+              : <button className="btn btn-sm btn-outline-primary" onClick={startFix} title="Change what was already counted on this receipt — box and loose quantities, batch or expiry — before it is posted"><i className="ti ti-pencil me-1" />Edit received quantities</button>}
           </div>
           {fixRows ? (
             <>
-              <div className="px-3 pt-2 fs-11 text-muted">Correcting <strong>replaces</strong> these rows with what is shown here — a mistyped quantity is fixed by typing the right one, not by keying the difference. Scanning below <strong>adds</strong> instead.</div>
+              <div className="px-3 pt-2 fs-11 text-muted">Type the <strong>correct</strong> box and loose amounts for each item — this replaces what was counted before, so enter the right total, not the difference. Scanning below <strong>adds</strong> instead.</div>
               <ReceiveRowsTable rows={fixRows} set={setFix} drop={dropFix} warehouse={warehouseId} stat={fixStat} />
             </>
           ) : (
@@ -720,7 +730,8 @@ export function GrnFormPage() {
         <div className="card mb-3"><div className="card-header py-2 d-flex flex-wrap justify-content-between align-items-center">
           <strong className="fs-13">Against {po.data?.number}</strong>
           <span className="fs-12">
-            {shortLines.length === 0 && overLines.length === 0 ? <span className="text-success"><i className="ti ti-circle-check me-1" />everything on the order is accounted for</span> : (
+            {(() => { const done = differences.filter((d) => d.diff === 0 && d.received > 0).length; return done > 0 ? <span className="text-success me-3"><i className="ti ti-circle-check me-1" />{done} item(s) fully received</span> : null; })()}
+                  {shortLines.length === 0 && overLines.length === 0 ? <span className="text-success"><i className="ti ti-circle-check me-1" />everything on the order is accounted for</span> : (
               <>
                 {shortLines.length > 0 && <span className="text-warning me-3">{shortLines.length} item(s) short</span>}
                 {overLines.length > 0 && <span className="text-danger">{overLines.length} item(s) over</span>}
@@ -732,7 +743,7 @@ export function GrnFormPage() {
             <table className="table table-sm mb-0 fs-12">
               <thead className="table-light"><tr><th>Item</th><th className="num">Ordered (due)</th><th className="num">On this receipt</th><th className="num">Rejected / missing</th><th className="num">Difference</th></tr></thead>
               <tbody>
-                {differences.map(({ line, ordered, received, rejected, diff }) => (
+                {differences.filter(({ received, diff }) => !(diff === 0 && received > 0)).map(({ line, ordered, received, rejected, diff }) => (
                   <tr key={line.id} className={diff > 0 ? "table-danger" : received === 0 ? "" : diff < 0 ? "table-warning" : ""}>
                     <td>{line.variant_name}<div className="text-muted fs-11 font-monospace">{line.item_code || line.variant_sku}{line.packing > 1 ? ` · ${line.packing}/box` : ""}</div></td>
                     <td className="num">{boxes(ordered, line.packing)}</td>
@@ -919,15 +930,15 @@ function ReceiveRowsTable({ rows, set, drop, warehouse, askExpiry, setAskExpiry,
                 </td>
                 <td>
                   <div className="d-flex gap-1">
-                    {r.packing > 1 && <input type="number" min="0" className="form-control form-control-sm" style={{ width: 58 }} title="boxes" value={r.accepted_boxes} onChange={(e) => set(r.key, { accepted_boxes: e.target.value })} />}
-                    <input type="number" min="0" className="form-control form-control-sm" style={{ width: 58 }} title={r.packing > 1 ? "loose units" : "units"} value={r.accepted} onChange={(e) => set(r.key, { accepted: e.target.value })} />
+                    {r.packing > 1 && <input type="number" min="0" inputMode="numeric" className="form-control form-control-sm" style={{ width: 58 }} title="boxes" placeholder="0" value={r.accepted_boxes === "0" ? "" : r.accepted_boxes} onFocus={(e) => e.target.select()} onChange={(e) => set(r.key, { accepted_boxes: e.target.value || "0" })} />}
+                    <input type="number" min="0" inputMode="numeric" className="form-control form-control-sm" style={{ width: 58 }} title={r.packing > 1 ? "loose units" : "units"} placeholder="0" value={r.accepted === "0" ? "" : r.accepted} onFocus={(e) => e.target.select()} onChange={(e) => set(r.key, { accepted: e.target.value || "0" })} />
                   </div>
                   {r.packing > 1 && <div className="fs-11 text-muted">{qty(unitsOf(r, "accepted"))} units</div>}
                 </td>
                 {/* what the carton in their hands still owes: ordered, counted on this receipt, and the rest */}
                 {showStat && <td>{s ? <><div className={`fw-medium ${s.left > 0 ? "text-warning" : s.left === 0 ? "text-success" : "text-danger"}`}>{leftText(s)}</div><div className="fs-11 text-muted">{boxes(s.counted, s.packing)} of {boxes(s.ordered - s.posted, s.packing)} due{s.posted > 0 ? ` · ${boxes(s.posted, s.packing)} on earlier deliveries` : ""}</div></> : <span className="text-muted">not on the order</span>}</td>}
-                <td><input type="number" min="0" className="form-control form-control-sm" value={r.rejected} onChange={(e) => set(r.key, { rejected: e.target.value })} /></td>
-                <td><input type="number" min="0" className="form-control form-control-sm" value={r.missing} onChange={(e) => set(r.key, { missing: e.target.value })} /></td>
+                <td><input type="number" min="0" inputMode="numeric" className="form-control form-control-sm" placeholder="0" value={r.rejected === "0" ? "" : r.rejected} onFocus={(e) => e.target.select()} onChange={(e) => set(r.key, { rejected: e.target.value || "0" })} /></td>
+                <td><input type="number" min="0" inputMode="numeric" className="form-control form-control-sm" placeholder="0" value={r.missing === "0" ? "" : r.missing} onFocus={(e) => e.target.select()} onChange={(e) => set(r.key, { missing: e.target.value || "0" })} /></td>
                 <td><input className="form-control form-control-sm" placeholder={unitsOf(r, "rejected") || unitsOf(r, "missing") ? "required" : ""} value={r.reject_reason} onChange={(e) => set(r.key, { reject_reason: e.target.value })} /></td>
                 <td>
                   <input className="form-control form-control-sm mb-1" placeholder="batch" title="Leave blank unless the carton shows one — a batch-tracked item then uses the challan or receipt number" value={r.batch_no} onChange={(e) => set(r.key, { batch_no: e.target.value })} />
@@ -992,7 +1003,7 @@ export function GrnDetailPage() {
             <td className="num">{qty(sumBy(g.lines, (l: any) => l.qty_accepted))}</td>
             <td className="num text-danger">{qty(sumBy(g.lines, (l: any) => l.qty_damaged))}</td>
             <td className="num text-warning">{qty(sumBy(g.lines, (l: any) => l.qty_short))}</td>
-            <td colSpan={3} className="text-end text-muted fs-11 fw-normal">units</td>
+            <td colSpan={3} />
             <td className="text-end">Total value</td>
             <td className="num">{money(g.total_value)}</td>
           </tr>

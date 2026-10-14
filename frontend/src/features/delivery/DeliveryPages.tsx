@@ -124,7 +124,7 @@ export function TripDetailPage() {
         </>} />
       <div className="row g-3 mb-3">
         <div className="col-6 col-md-3"><StatCard label="Driver" value={t.driver_name || "—"} icon="ti-steering-wheel" color="primary" sub={t.driver_phone} /></div>
-        <div className="col-6 col-md-3"><StatCard label="Vehicle" value={t.vehicle_reg || "—"} icon="ti-truck" color="info" sub={[t.helper_name ? `helper: ${t.helper_name}` : "", t.rep_name ? `rep: ${t.rep_name}` : ""].filter(Boolean).join(" · ")} /></div>
+        <div className="col-6 col-md-3"><StatCard label="Vehicle" value={t.vehicle_reg || "—"} icon="ti-truck" color="info" sub={[t.rep_name ? `sales: ${t.rep_name}` : "", t.delivery_rep_name ? `delivery: ${t.delivery_rep_name}` : ""].filter(Boolean).join(" · ")} /></div>
         <div className="col-6 col-md-3"><StatCard label="Stops" value={`${notes.filter((n: any) => ["delivered", "partially_delivered", "failed", "returned"].includes(n.status)).length} / ${t.stops_count}`} icon="ti-map-pin" color="purple" sub={`orders value ${money(t.orders_value, 0)}`} /></div>
         <div className="col-6 col-md-3"><StatCard label="Cash collected" value={money(t.cash_collected, 0)} icon="ti-cash" color="success" sub={t.loaded_value ? `loaded value ${money(t.loaded_value, 0)}` : ""} /></div>
       </div>
@@ -277,8 +277,8 @@ export function PickListDetailPage() {
       </div></div>
       {!issued && <div className="card mb-3 scanner-mode"><div className="card-body"><label className="form-label">Scan items (each scan adds 1 base unit or one packaging)</label><input className="form-control" autoFocus placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /></div></div>}
       {p.orders?.length === 1 && <WorkflowStepper orderId={p.orders[0]} compact />}
-      <div className="card"><div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Bin</th><th>Item</th><th>Batch</th><th>Order</th><th className="num">Requested</th><th className="num">Issued</th><th /></tr></thead>
-        <tbody>{p.lines.map((l: any) => <tr key={l.id} className={Number(l.qty_picked) >= Number(l.qty_to_pick) ? "table-success" : ""}><td>{l.bin_code}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td>{l.order_number}</td><td className="num">{qty(l.qty_to_pick)}</td><td className="num">{qty(l.qty_picked)}</td><td className="text-end">{!issued && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td></tr>)}</tbody></table></div></div>
+      <div className="card"><div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Item</th><th>Batch</th><th>Order</th><th className="num">Requested</th><th className="num">Issued</th><th /></tr></thead>
+        <tbody>{p.lines.map((l: any) => <tr key={l.id} className={Number(l.qty_picked) >= Number(l.qty_to_pick) ? "table-success" : ""}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td>{l.order_number}</td><td className="num">{qty(l.qty_to_pick)}</td><td className="num">{qty(l.qty_picked)}</td><td className="text-end">{!issued && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td></tr>)}</tbody></table></div></div>
     </>
   );
 }

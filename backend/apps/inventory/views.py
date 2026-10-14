@@ -187,8 +187,12 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["variant__name", "variant__sku", "reference_number", "note"]
 
     def get_queryset(self):
-        qs = warehouse_scope(self.request, StockMovement.objects.select_related("warehouse", "variant", "batch", "performed_by"))
+        qs = warehouse_scope(self.request, StockMovement.objects.select_related("warehouse", "variant", "variant__product", "batch", "performed_by"))
         p = self.request.query_params
+        # the product page filters by variant__product; it is not a direct field, so DjangoFilter ignores it and
+        # the tab ends up showing every movement in the company. Apply it here.
+        if p.get("variant__product"):
+            qs = qs.filter(variant__product_id=p["variant__product"])
         if p.get("date_from"):
             qs = qs.filter(occurred_at__date__gte=p["date_from"])
         if p.get("date_to"):

@@ -43,8 +43,27 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     if (priceFor !== "cost" && customerId) {
       try { const p = await api.get(`/api/v1/variants/${v.id}/price`, { customer: customerId, packaging: packaging?.id }); price = p.unit_price; } catch { /* ignore */ }
     }
-    return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), extra: { ...(prev?.extra || {}), is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked } };
+    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), extra: { ...(prev?.extra || {}), is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? "") } };
   };
+  /**
+   * Re-price a line when its packaging changes. A carton is the piece price times the box size; a customer's
+   * price list can set a carton price of its own, so when there is a customer the server is asked (it applies
+   * the list and the slabs), and otherwise the piece base is multiplied locally.
+   */
+  const reprice = async (line: EditLine, packagingId: string | null) => {
+    const pk = (line.packagings || []).find((x) => x.id === packagingId);
+    const size = pk ? Number(pk.qty_in_base) || 1 : 1;
+    let price: any = null;
+    if (priceFor !== "cost" && customerId && line.variant) {
+      try { const r = await api.get(`/api/v1/variants/${line.variant}/price`, { customer: customerId, packaging: packagingId || undefined }); price = r.unit_price; } catch { /* fall through */ }
+    }
+    if (price === null || price === undefined || price === "") {
+      const base = Number(line.extra?.base_price ?? line.unit_price ?? 0);
+      price = base * size;
+    }
+    update(line.key, { packaging: packagingId, unit_price: String(price) });
+  };
+
   const applyVariant = async (key: string, v: any, packaging?: any) => {
     const row = lines.find((l) => l.key === key);
     const dup = duplicateOf(key, v.id, packaging?.id || null, row?.batch_no);
@@ -94,7 +113,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
             {lines.map((l) => (
               <tr key={l.key}>
                 <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: v.name, sub: `${v.sku}${v.stock_on_hand !== undefined && v.stock_on_hand !== null ? " · stock " + v.stock_on_hand : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
-                <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else update(l.key, { packaging: pk }); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
+                <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else reprice(l, pk); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
                 <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} readOnly={readOnly} /></td>
                 {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value })} readOnly={readOnly} /></td>}
                 {showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.discount_pct ?? "0"} onChange={(e) => update(l.key, { discount_pct: e.target.value })} readOnly={readOnly} /></td>}

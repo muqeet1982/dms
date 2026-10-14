@@ -174,3 +174,43 @@ def test_a_user_is_not_created_or_left_with_no_role(api, tenant, roles):
     # the owner holds everything by ownership, not by a role, so the rule does not apply to them
     owner_row = next(u for u in api.get("/api/v1/users").data["results"] if u["is_owner"])
     assert api.patch(f"/api/v1/users/{owner_row['id']}", {"roles": []}, format="json").status_code == 200
+
+
+def test_owner_can_log_in_as_a_user_and_come_back(api, tenant, roles):
+    """
+    The owner's ask: see the app as one of their users (that user's pages and rights), then return to themselves.
+    Reuses the impersonation session the platform-admin flow uses, so the same expiry and audit apply.
+    """
+    from apps.core.tenancy import tenant_context
+
+    made = api.post("/api/v1/users", {"full_name": "Office Staff", "email": "office.staff@probe.pk",
+                                      "password": "Abcd-1234!", "roles": [str(roles["office"].id)]}, format="json")
+    assert made.status_code == 201, made.content
+    membership_id = made.data["id"]
+
+    # as the owner, pages come back as everything (owner bypass)
+    before = api.get("/api/v1/me").data
+    assert before["is_owner"] is True and before["impersonating"] is False
+
+    started = api.post(f"/api/v1/users/{membership_id}/login-as", {}, format="json")
+    assert started.status_code == 200, started.content
+
+    now = api.get("/api/v1/me").data
+    assert now["impersonating"] is True, now
+    assert now["impersonating_as"] == "Office Staff"
+    assert now["is_owner"] is False, "while acting as a user the owner is not treated as owner"
+    # the office role does not grant the users page, so it is gone while acting as that user
+    assert now["pages"].get("users", {}).get("view") in (False, None)
+
+    exited = api.post("/api/v1/users/exit-impersonation", {}, format="json")
+    assert exited.status_code == 200
+
+    back = api.get("/api/v1/me").data
+    assert back["is_owner"] is True and back["impersonating"] is False
+
+
+def test_owner_cannot_log_in_as_another_owner(api, tenant):
+    """Impersonating another owner would be a lateral move with no point and real risk — refused."""
+    owner_membership = next(u for u in api.get("/api/v1/users").data["results"] if u["is_owner"])
+    r = api.post(f"/api/v1/users/{owner_membership['id']}/login-as", {}, format="json")
+    assert r.status_code == 400, r.content

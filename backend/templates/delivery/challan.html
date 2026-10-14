@@ -6,5 +6,23 @@
 <table><thead><tr><th>#</th><th>Item</th><th>Batch</th><th class="r">Qty</th><th class="r">Delivered</th><th class="r">Returned</th></tr></thead><tbody>
 {% for l in dn.lines.all %}<tr><td>{{ forloop.counter }}</td><td>{{ l.variant.name }} <span class="muted">{{ l.variant.sku }}</span></td><td>{{ l.batch.batch_no|default:"" }}</td><td class="r">{{ l.qty_loaded }}</td><td class="r">{{ l.qty_delivered }}</td><td class="r">{{ l.qty_returned }}</td></tr>{% endfor %}
 </tbody></table>
-<p class="muted" style="margin-top:20px">Received by: {{ dn.receiver_name|default:"____________" }} &nbsp; Date: {{ dn.delivered_at|date:"d/m/Y H:i"|default:"________" }} &nbsp; Driver: {{ dn.trip.driver.name|default:"________" }}</p>
+<table style="width:100%;margin-top:30px;border-collapse:separate;border-spacing:10px 0">
+  <tr>
+    <td style="width:33%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Delivered by</div>
+      <div style="font-weight:bold;margin:2px 0 26px">{% if dn.trip.delivery_rep %}{{ dn.trip.delivery_rep.full_name }}{% elif dn.delivered_by %}{{ dn.delivered_by.full_name }}{% else %}&nbsp;{% endif %}</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Signature</div>
+    </td>
+    <td style="width:34%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Received by</div>
+      <div style="font-weight:bold;margin:2px 0 26px">{{ dn.receiver_name|default:"&nbsp;" }}</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Name &amp; signature</div>
+    </td>
+    <td style="width:33%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Date received</div>
+      <div style="font-weight:bold;margin:2px 0 26px">{{ dn.delivered_at|date:"d/m/Y"|default:"&nbsp;" }}</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Stamp / date</div>
+    </td>
+  </tr>
+</table>
 {% endblock %}

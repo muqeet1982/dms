@@ -127,3 +127,34 @@ def test_workflow_reads_the_old_flow_too(api, order_with_stock):
     steps = _steps(api, order.pk)
     assert steps["delivered"]["state"] == "done" and steps["invoice"]["state"] == "done"
     assert steps["load_form"]["state"] in ("skipped", "todo", "current")
+
+
+def test_an_invoiced_order_can_still_be_dispatched(api, tenant, order_with_stock):
+    """
+    The invoice-before-dispatch flow: issue → invoice → dispatch. Once an order is fully invoiced its status is
+    `invoiced`, and that status was missing from the dispatch eligibility check — so the goods were issued and
+    invoiced but could not be put on a vehicle (SO-00004 in the field). Dispatch must still open.
+    """
+    from decimal import Decimal
+
+    from apps.core.tenancy import tenant_context
+
+    order, warehouse, variant = order_with_stock
+    form = api.post(f"/api/v1/sales-orders/{order.pk}/load-form", {}, format="json").data
+    form = form if isinstance(form, dict) else form[0]
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in form["lines"]]
+    assert api.post(f"/api/v1/pick-lists/{form['id']}/issue", {"issues": issues}, format="json").status_code == 200
+    assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {}, format="json").status_code == 201
+
+    # the real SO-00004 reached `invoiced` (deliver-then-invoice on part of it), with the loaded note still
+    # waiting for a vehicle — reproduce that state directly, which is what the fix is about
+    with tenant_context(tenant, tenant.owner):
+        order.refresh_from_db()
+        order.status = "invoiced"
+        order.save(update_fields=["status"])
+
+    r = api.post(f"/api/v1/pick-lists/{form['id']}/create-dispatch", {}, format="json")
+    assert r.status_code in (200, 201), r.content
+    assert r.data.get("number"), "a dispatch (trip) should have been created"
+    order.refresh_from_db()
+    assert order.trip_id, "the invoiced order is now on a trip"

@@ -6,17 +6,22 @@ words under it.
 {% endcomment %}
 {% block doc_title %}SALES INVOICE{% endblock %}
 {% block doc_ref %}{{ inv.number }}{% endblock %}
-{% block status %}<span class="badge{% if inv.status == 'paid' %} ok{% elif inv.status == 'cancelled' %} no{% elif inv.status == 'draft' %} q{% endif %}">{{ inv.get_status_display }}</span>{% endblock %}
 {% block watermark %}{% if inv.status == 'draft' %}<div class="mark">DRAFT</div>{% elif inv.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% endif %}{% endblock %}
 
 {% block meta %}
-<table class="grid"><tr>
-  <td><span class="k">Invoice date</span>{{ inv.date }}</td>
-  <td><span class="k">Due date</span>{{ inv.due_date }}{% if inv.customer.credit_days %} <span class="muted">({{ inv.customer.credit_days }} days)</span>{% endif %}</td>
-  <td><span class="k">Order</span>{{ inv.order.number|default:"—" }}</td>
-  <td><span class="k">Delivery note</span>{{ inv.delivery_note.number|default:"—" }}</td>
-  <td><span class="k">Salesman</span>{{ inv.rep.name|default:"—" }}</td>
-</tr></table>
+<table class="grid">
+  <tr>
+    <td><span class="k">Invoice date</span>{{ inv.date }}</td>
+    <td><span class="k">Due date</span>{{ inv.due_date }}</td>
+    <td><span class="k">Payment term</span>{% if inv.customer.credit_days %}{{ inv.customer.credit_days }} days credit{% else %}Cash on delivery{% endif %}</td>
+    <td><span class="k">Sales person</span>{% if inv.rep %}{{ inv.rep.name }}{% elif inv.order.rep %}{{ inv.order.rep.name }}{% elif inv.order.trip.rep %}{{ inv.order.trip.rep.name }}{% elif inv.delivery_note.trip.rep %}{{ inv.delivery_note.trip.rep.name }}{% else %}—{% endif %}</td>
+  </tr>
+  <tr>
+    <td><span class="k">Order</span>{{ inv.order.number|default:"—" }}</td>
+    <td><span class="k">Delivery note</span>{{ inv.delivery_note.number|default:"—" }}</td>
+    <td><span class="k">Delivery person</span>{% if inv.delivery_note.trip.delivery_rep %}{{ inv.delivery_note.trip.delivery_rep.full_name }}{% elif inv.delivery_note.delivered_by %}{{ inv.delivery_note.delivered_by.full_name }}{% else %}—{% endif %}</td>
+  </tr>
+</table>
 {% endblock %}
 
 {% block parties %}
@@ -24,19 +29,11 @@ words under it.
   <div class="party">
     <h2>Bill to</h2>
     <div class="who">{{ inv.customer.business_name|default:inv.customer.name }}</div>
-    <div class="muted">Code {{ inv.customer.code }}{% if inv.customer.business_name %} · {{ inv.customer.name }}{% endif %}</div>
+    {% if inv.customer.business_name and inv.customer.business_name != inv.customer.name %}<div class="muted">{{ inv.customer.name }}</div>{% endif %}
     {% if inv.customer.address %}<div>{{ inv.customer.address|linebreaksbr }}</div>{% endif %}
     {% if inv.customer.city %}<div>{{ inv.customer.city }}</div>{% endif %}
     <div class="muted">{% if inv.customer.phone %}Tel {{ inv.customer.phone }}{% endif %}{% if inv.customer.contact_person %} · {{ inv.customer.contact_person }}{% endif %}</div>
-  </div>
-  <div class="party">
-    <h2>Tax details</h2>
-    {% if inv.customer.ntn %}<div>NTN: {{ inv.customer.ntn }}</div>{% endif %}
-    {% if inv.customer.cnic %}<div>CNIC: {{ inv.customer.cnic }}</div>{% endif %}
-    {% for k, v in inv.customer.tax_numbers.items %}{% if v and k|lower != "strn" %}<div>{{ k }}: {{ v }}</div>{% endif %}{% endfor %}
-    {% if inv.customer.ntn or inv.customer.cnic or inv.customer.tax_numbers %}
-      {% if inv.customer.filer_status and inv.customer.filer_status != "unknown" %}<div class="muted">{{ inv.customer.get_filer_status_display }}</div>{% endif %}
-    {% else %}<div class="muted">No tax registration on file</div>{% endif %}
+    {% if inv.customer.ntn %}<div class="muted">NTN: {{ inv.customer.ntn }}</div>{% endif %}
   </div>
 </div>
 {% endblock %}
@@ -45,7 +42,7 @@ words under it.
 <table class="lines">
   <thead><tr>
     <th style="width:6mm">#</th><th>Item</th><th style="width:19mm">Batch</th>
-    <th class="r" style="width:12mm">Qty</th><th class="r" style="width:10mm">Free</th>
+    <th class="r" style="width:12mm">Qty</th>
     <th class="r" style="width:17mm">Rate</th><th class="r" style="width:16mm">Discount</th>
     <th class="r" style="width:21mm">Amount</th>
   </tr></thead>
@@ -55,7 +52,6 @@ words under it.
     <td>{{ l.description }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.variant.product.unit_size %} · {{ l.variant.product.unit_size }}{% endif %}</span></td>
     <td>{{ l.batch.batch_no|default:"—" }}{% if l.batch.expiry_date %}<span class="sku">exp {{ l.batch.expiry_date }}</span>{% endif %}</td>
     <td class="r">{{ l.qty|qty }}</td>
-    <td class="r">{% if l.free_qty %}{{ l.free_qty|qty }}{% else %}—{% endif %}</td>
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
     <td class="r b">{{ l.line_total|num }}</td>
@@ -84,10 +80,3 @@ page can be checked with a pencil. A subtotal before tax would not reconcile wit
 </table>
 {% endblock %}
 
-{% block signatures %}
-<div class="signs">
-  <div>Prepared by{% if inv.created_by %} — {{ inv.created_by.full_name }}{% endif %}</div>
-  <div>Checked by</div>
-  <div>Received in good order (name, signature &amp; date)</div>
-</div>
-{% endblock %}

@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { date, datetime, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
@@ -22,7 +22,7 @@ const orderColumns: Column<any>[] = [
   { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span>{o.external_ref && <div className="text-muted fs-11">{o.external_ref}</div>}</> },
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
   { key: "customer_name", header: "Customer", render: (o) => <><div>{o.customer_name}</div><div className="text-muted fs-11">{o.customer_code}</div></> },
-  { key: "rep_name", header: "Rep / source", render: (o) => <>{o.rep_name || <span className="text-muted">staff</span>}<div className="text-muted fs-11">{o.source}</div></> },
+  { key: "sales_person", header: "Sales person", render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
   { key: "warehouse_name", header: "Warehouse" },
   { key: "trip_number", header: "Trip", render: (o) => o.trip_number || "—" },
   { key: "total", header: "Total", num: true, sortKey: "total", render: (o) => <span className="fw-semibold">{money(o.total)}</span> },
@@ -50,13 +50,14 @@ export function OrdersInboxPage() {
 export function OrderDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
+  const qc = useQueryClient();
   const { can, isOwner } = usePerms();
   const page = usePage("sales_orders");
   const notesPage = usePage("delivery_notes");
   const tripsPage = usePage("trips");
   const q = useDoc("/api/v1/sales-orders", id);
   const { run, busy } = useAction("/api/v1/sales-orders", id, [["orders-stats"], ["orders-stats-badge"], ["dashboard"]]);
-  const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm">(null);
+  const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm" | "delete">(null);
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
   if (q.isLoading) return <Spinner />;
@@ -76,7 +77,7 @@ export function OrderDetailPage() {
           {confirmable && page.can("hold") && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("reject")}>Reject</button>}
           {["confirmed", "dispatched", "partially_delivered"].includes(o.status) && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "confirmed" && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
-          {["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}
+          {["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -91,16 +92,16 @@ export function OrderDetailPage() {
             <div className="card-body">
               <div className="row g-3 mb-3">
                 <InfoItem label="Customer"><Link to={`/app/customers/${o.customer}`}>{o.customer_name}</Link><div className="text-muted fs-12">{o.customer_phone} · {o.customer_address}</div></InfoItem>
-                <InfoItem label="Rep / supplier" col="col-md-2">{o.rep_name || "—"}<div className="text-muted fs-12">{o.supplier_name}</div></InfoItem>
+                <InfoItem label="Sales person / supplier" col="col-md-2">{o.sales_person || o.rep_name || "—"}<div className="text-muted fs-12">{o.supplier_name}</div></InfoItem>
                 <InfoItem label="Dates" col="col-md-2">{date(o.order_date)}<div className="text-muted fs-12">deliver by {date(o.requested_delivery_date)}</div></InfoItem>
-                <InfoItem label="Warehouse" col="col-md-2">{o.warehouse_name}</InfoItem>
+                <InfoItem label="Warehouse" col="col-md-2">{o.warehouse_name}</InfoItem><InfoItem label="Payment term" col="col-md-2">{o.payment_terms || "—"}</InfoItem><InfoItem label="Delivery person" col="col-md-2">{o.delivery_person || "—"}</InfoItem>
                 <InfoItem label="Trip" col="col-md-3">{o.trip_number ? <Link to={`/app/delivery/trips/${o.trip}`}>{o.trip_number}</Link> : "—"}{o.driver_name && <div className="text-muted fs-12">{o.driver_name} · {o.vehicle_reg}</div>}</InfoItem>
               </div>
               <div className="table-responsive">
                 <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: 760 }}>
-                  <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Free</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Total</th></tr></thead>
-                  <tbody>{o.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.free_qty)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
-                  <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={8} className="text-end">Discount</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={8} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={8} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
+                  <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Total</th></tr></thead>
+                  <tbody>{o.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
+                  <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={7} className="text-end">Discount</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={7} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={7} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
                 </table>
               </div>
               {o.notes && <p className="text-muted fs-13 mt-2 mb-0"><i className="ti ti-note me-1" />{o.notes}</p>}
@@ -122,6 +123,10 @@ export function OrderDetailPage() {
         </div>
       </div>
       <ConfirmDialog open={dlg === "reject"} title="Reject order" withReason danger confirmText="Reject" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("reject", { reason: r }); setDlg(null); }} />
+      <ConfirmDialog open={dlg === "delete"} title={`Delete ${o.number}?`} danger confirmText="Delete order" message="This removes the order completely. Only an order that has not been confirmed, delivered or invoiced can be deleted — otherwise cancel it instead." onClose={() => setDlg(null)} onConfirm={async () => {
+        try { await api.delete(`/api/v1/sales-orders/${o.id}`); toast.success(`${o.number} deleted`); qc.invalidateQueries({ queryKey: ["list", "/api/v1/sales-orders"] }); nav("/app/sales/orders"); }
+        catch (e: any) { toast.error(e.message); }
+      }} />
       <ConfirmDialog open={dlg === "cancel"} title="Cancel order" withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "hold"} title="Put on hold" withReason confirmText="Hold" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("hold", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "confirm"} title="Override credit hold?" message={<>{o.hold_reason}<br />Confirming will override the credit check.</>} confirmText="Override & confirm" onClose={() => setDlg(null)} onConfirm={async () => { await run("confirm", { override_credit: true }); setDlg(null); }} />
