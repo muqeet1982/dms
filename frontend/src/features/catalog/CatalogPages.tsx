@@ -61,12 +61,12 @@ export function ProductsPage() {
   const stats = useQuery({ queryKey: ["product-stats"], queryFn: () => api.get("/api/v1/products/stats") });
   const cols: Column<any>[] = [
     { key: "name", header: "Product", sortKey: "name", render: (p) => <><span className="fw-semibold text-dark">{p.name}</span><div className="text-muted fs-11 font-monospace">{[p.upc, p.item_code && p.item_code !== p.upc ? p.item_code : null].filter(Boolean).join(" · ") || p.sku}{Number(p.packing) > 1 ? ` · ${p.packing}/box` : ""}{p.variants_count > 1 ? ` · ${p.variants_count} variants` : ""}</div></> },
-    { key: "brand_name", header: "Brand", render: (p) => (p.brand_name ? <span className="badge bg-info-light text-info">{p.brand_name}</span> : "—") }, { key: "category_name", header: "Category", sortKey: "category__name" },
-    { key: "unit_size", header: "Unit", render: (p) => p.unit_size || <span className="text-muted">{p.base_uom_code}</span> }, { key: "packing", header: "Packing", num: true, sortKey: "packing", render: (p) => (p.packing > 1 ? p.packing : <span className="text-muted">1</span>) },
+    { key: "brand_name", header: "Brand", sortKey: "brand__name", render: (p) => (p.brand_name ? <span className="badge bg-info-light text-info">{p.brand_name}</span> : "—") }, { key: "category_name", header: "Category", sortKey: "category__name" },
+    { key: "unit_size", header: "Unit", sortKey: "unit_size", render: (p) => p.unit_size || <span className="text-muted">{p.base_uom_code}</span> }, { key: "packing", header: "Packing", num: true, sortKey: "packing", render: (p) => (p.packing > 1 ? p.packing : <span className="text-muted">1</span>) },
     { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <span className="fw-semibold">{money(p.sale_price)}</span> },
-    { key: "location_name", header: "Location", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
+    { key: "location_name", header: "Location", sortKey: "location__name", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
     { key: "stock_on_hand", header: "Stock", num: true, render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
-    { key: "status", header: "Status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
+    { key: "status", header: "Status", sortKey: "status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
   ];
   return (
     <ListPage title="Products" endpoint="/api/v1/products" exports={false} columns={cols} rowLink={(p) => `/app/catalog/products/${p.id}`} page="products" createTo="/app/catalog/products/new" createLabel="Add product" defaultOrdering="name" extraQuery={{ with_stock: 1 }} searchPlaceholder="Search name, SKU, barcode…"

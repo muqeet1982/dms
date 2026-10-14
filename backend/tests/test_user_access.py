@@ -214,3 +214,45 @@ def test_owner_cannot_log_in_as_another_owner(api, tenant):
     owner_membership = next(u for u in api.get("/api/v1/users").data["results"] if u["is_owner"])
     r = api.post(f"/api/v1/users/{owner_membership['id']}/login-as", {}, format="json")
     assert r.status_code == 400, r.content
+
+
+def test_a_platform_admin_viewing_a_tenant_can_also_log_in_as_a_user(api, tenant, roles, admin_user):
+    """
+    The owner's report: login-as failed. The real owner reaches their tenant through platform-admin
+    impersonation, and login-as used to refuse because a session was already active. Now it re-points that
+    session at the chosen user, and "back to owner" reverts to the owner without leaving the company.
+    """
+    from rest_framework.test import APIClient
+
+    from apps.accounts.models import TenantMembership, User
+    from apps.core.tenancy import tenant_context
+    from apps.platform.services import TenantService
+
+    # a staff user to act as
+    made = api.post("/api/v1/users", {"full_name": "Floor Staff", "email": "floor.staff@probe.pk",
+                                      "password": "Abcd-1234!", "roles": [str(roles["office"].id)]}, format="json")
+    assert made.status_code == 201, made.content
+    membership_id = made.data["id"]
+
+    # the platform admin starts impersonating the tenant (as its owner)
+    with tenant_context(tenant, tenant.owner):
+        TenantService.start_impersonation(admin_user, tenant)
+
+    admin = APIClient()
+    r = admin.post("/api/v1/auth/login", {"identifier": "admin-test", "password": "pak1stan"}, format="json")
+    admin.credentials(HTTP_AUTHORIZATION=f"Bearer {r.data['access']}", HTTP_X_TENANT_ID=str(tenant.id))
+
+    as_owner = admin.get("/api/v1/me").data
+    assert as_owner["impersonating"] is True and as_owner["is_owner"] is True
+    assert as_owner["impersonating_as"] is None, "viewing as the owner is not a 'logged in as user' state"
+
+    started = admin.post(f"/api/v1/users/{membership_id}/login-as", {}, format="json")
+    assert started.status_code == 200, started.content
+
+    now = admin.get("/api/v1/me").data
+    assert now["impersonating_as"] == "Floor Staff" and now["is_owner"] is False
+
+    # back to owner: stays in the tenant, reverts to the owner view
+    assert admin.post("/api/v1/users/exit-impersonation", {}, format="json").status_code == 200
+    back = admin.get("/api/v1/me").data
+    assert back["is_owner"] is True and back["impersonating_as"] is None and back["impersonating"] is True

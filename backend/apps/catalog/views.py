@@ -88,7 +88,7 @@ class ProductViewSet(TenantModelViewSet):
     perm_map = page_perms("products", {"variants": "catalog.change_product", "stats": "catalog.view_product"})
     search_fields = ["name", "sku", "upc", "box_upc", "item_code", "variants__sku", "variants__name", "variants__barcodes__code"]
     filterset_fields = ["brand", "category", "supplier", "status", "is_batch_tracked", "tax_class", "location", "location__warehouse"]
-    ordering_fields = ["name", "sku", "created_at", "sale_price", "cost_price", "retail_price", "packing", "category__name"]
+    ordering_fields = ["name", "sku", "created_at", "sale_price", "cost_price", "retail_price", "packing", "category__name", "brand__name", "unit_size", "location__name", "status"]
 
     def get_serializer_class(self):
         return ProductCreateSerializer if self.action == "create" else ProductSerializer

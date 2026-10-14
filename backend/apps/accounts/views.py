@@ -309,9 +309,10 @@ class MeView(APIView):
             "is_owner": False,
             "impersonating": getattr(request, "impersonating", False),
             "impersonation_expires_at": getattr(getattr(request, "impersonation", None), "expires_at", None),
-            # who the owner is acting as (owner login-as-user); the platform-admin flow leaves this blank
+            # who the user is being acted as, when a *specific* user was chosen (not the plain owner view).
+            # Set for both the tenant-owner login-as and a platform admin who logged in as a user.
             "impersonating_as": (getattr(getattr(request, "impersonation", None), "target", None).full_name
-                                 if getattr(request, "impersonating", False) and not getattr(user, "is_platform_admin", False) else None),
+                                 if getattr(request, "impersonating", False) and membership is not None and not membership.is_owner else None),
             "platform_permissions": sorted(user.platform_perms()),
             "warehouses": [],
             "supplier_rep": None,
@@ -581,32 +582,56 @@ class TenantUserViewSet(viewsets.ModelViewSet):
         from apps.core.plan_limits import platform_setting
         from .models import ImpersonationSession
 
-        me = getattr(request, "membership", None)
-        if me is None or not me.is_owner or getattr(request, "impersonating", False):
-            raise DomainError("Only the company owner can log in as a user.", code="forbidden", status_code=403)
         target_membership = self.get_object()
         if target_membership.is_owner:
             raise DomainError("You cannot log in as another owner.", status_code=400)
         if target_membership.status != "active":
             raise DomainError("That login is not active.", status_code=400)
-        minutes = int(platform_setting("impersonation_minutes", 60) or 60)
-        ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).update(ended_at=timezone.now())
-        ImpersonationSession.objects.create(
-            admin=request.user, target=target_membership.user, tenant=request.tenant,
-            expires_at=timezone.now() + timedelta(minutes=minutes), reason="owner login-as-user",
-        )
+
+        # Two ways to reach here. A platform admin (or anyone) already inside the tenant through an impersonation
+        # session just re-points that session at the chosen user. A plain tenant owner, not impersonating, opens
+        # a fresh owner login-as session. Either way `exit-impersonation` takes them back.
+        existing = getattr(request, "impersonation", None)
+        if existing is not None and getattr(request, "impersonating", False):
+            existing.target = target_membership.user
+            existing.save(update_fields=["target"])
+        else:
+            me = getattr(request, "membership", None)
+            if me is None or not me.is_owner:
+                raise DomainError("Only the company owner can log in as a user.", code="forbidden", status_code=403)
+            minutes = int(platform_setting("impersonation_minutes", 60) or 60)
+            ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).update(ended_at=timezone.now())
+            ImpersonationSession.objects.create(
+                admin=request.user, target=target_membership.user, tenant=request.tenant,
+                expires_at=timezone.now() + timedelta(minutes=minutes), reason="owner login-as-user",
+            )
         AuditService.log("user.login_as", target_membership, after={"as": target_membership.user.full_name}, tenant_id=request.tenant.id)
         return Response({"ok": True, "acting_as": target_membership.user.full_name})
 
     @action(detail=False, methods=["post"], url_path="exit-impersonation")
     def exit_impersonation(self, request):
-        """The owner stops acting as a user and goes back to being themselves."""
+        """
+        Go back from acting as a user.
+
+        A platform admin was already viewing the tenant before they logged in as a user, so they revert to the
+        owner and stay in the company. A plain tenant owner ends the login-as and becomes themselves again.
+        """
         from django.utils import timezone
 
-        from .models import ImpersonationSession
+        from .models import ImpersonationSession, TenantMembership
 
-        ended = ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).update(ended_at=timezone.now())
-        return Response({"ok": True, "ended": ended})
+        imp = ImpersonationSession.objects.filter(admin=request.user, tenant=request.tenant, ended_at__isnull=True).first()
+        if imp is None:
+            return Response({"ok": True})
+        if getattr(request.user, "is_platform_admin", False):
+            owner = TenantMembership.objects.filter(tenant=request.tenant, is_owner=True).select_related("user").first()
+            if owner is not None:
+                imp.target = owner.user
+                imp.save(update_fields=["target"])
+                return Response({"ok": True, "reverted_to_owner": True})
+        imp.ended_at = timezone.now()
+        imp.save(update_fields=["ended_at"])
+        return Response({"ok": True, "ended": True})
 
     @action(detail=False, methods=["post"], url_path="preview-access")
     @require_perm("users.view_user")
