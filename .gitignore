@@ -15,3 +15,6 @@ firebase/
 # Root env (contains the GitHub token and other secrets)
 /.env
 .env
+
+# CI workflow (push needs a token with workflow scope; add via GitHub UI)
+.github/workflows/
