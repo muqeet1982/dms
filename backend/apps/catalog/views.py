@@ -88,7 +88,7 @@ class ProductViewSet(TenantModelViewSet):
     perm_map = page_perms("products", {"variants": "catalog.change_product", "stats": "catalog.view_product"})
     search_fields = ["name", "sku", "upc", "box_upc", "item_code", "variants__sku", "variants__name", "variants__barcodes__code"]
     filterset_fields = ["brand", "category", "supplier", "status", "is_batch_tracked", "tax_class", "location", "location__warehouse"]
-    ordering_fields = ["name", "sku", "created_at", "sale_price", "cost_price", "retail_price", "packing", "category__name", "brand__name", "unit_size", "location__name", "status"]
+    ordering_fields = ["name", "sku", "created_at", "sale_price", "cost_price", "retail_price", "packing", "category__name", "brand__name", "unit_size", "location__name", "status", "stock_on_hand"]
 
     def get_serializer_class(self):
         return ProductCreateSerializer if self.action == "create" else ProductSerializer
@@ -100,7 +100,8 @@ class ProductViewSet(TenantModelViewSet):
 
     def get_queryset(self):
         qs = Product.objects.select_related("brand", "category", "supplier", "base_uom", "tax_class", "location", "location__warehouse").prefetch_related("variants__packagings", "variants__barcodes").annotate(variants_count=Count("variants", distinct=True))
-        if self.request.query_params.get("with_stock") == "1":
+        # stock_on_hand is annotated for the list display and also whenever someone sorts by it directly
+        if self.request.query_params.get("with_stock") == "1" or "stock_on_hand" in self.request.query_params.get("ordering", ""):
             qs = qs.annotate(stock_on_hand=Sum("variants__stock_levels__qty_on_hand"))
         if self.request.query_params.get("low_stock") == "1":
             from django.db.models import F

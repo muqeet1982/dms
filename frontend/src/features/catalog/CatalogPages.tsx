@@ -65,7 +65,7 @@ export function ProductsPage() {
     { key: "unit_size", header: "Unit", sortKey: "unit_size", render: (p) => p.unit_size || <span className="text-muted">{p.base_uom_code}</span> }, { key: "packing", header: "Packing", num: true, sortKey: "packing", render: (p) => (p.packing > 1 ? p.packing : <span className="text-muted">1</span>) },
     { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <span className="fw-semibold">{money(p.sale_price)}</span> },
     { key: "location_name", header: "Location", sortKey: "location__name", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
-    { key: "stock_on_hand", header: "Stock", num: true, render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
+    { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
     { key: "status", header: "Status", sortKey: "status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
   ];
   return (

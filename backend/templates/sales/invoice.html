@@ -41,7 +41,7 @@ words under it.
 {% block lines %}
 <table class="lines">
   <thead><tr>
-    <th style="width:6mm">#</th><th>Item</th><th style="width:19mm">Batch</th>
+    <th style="width:6mm">#</th><th>Item</th>
     <th class="r" style="width:12mm">Qty</th>
     <th class="r" style="width:17mm">Rate</th><th class="r" style="width:16mm">Discount</th>
     <th class="r" style="width:21mm">Amount</th>
@@ -50,7 +50,6 @@ words under it.
   {% for l in lines %}<tr>
     <td>{{ forloop.counter }}</td>
     <td>{{ l.description }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.variant.product.unit_size %} · {{ l.variant.product.unit_size }}{% endif %}</span></td>
-    <td>{{ l.batch.batch_no|default:"—" }}{% if l.batch.expiry_date %}<span class="sku">exp {{ l.batch.expiry_date }}</span>{% endif %}</td>
     <td class="r">{{ l.qty|qty }}</td>
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
