@@ -9,7 +9,7 @@ from apps.catalog.services import PricingService, TaxService
 from apps.core.audit import AuditService
 from apps.core.events import emit
 from apps.core.exceptions import DomainError
-from apps.core.numbering import next_number
+from apps.core.numbering import derived_number, next_number
 from apps.core.plan_limits import PlanLimitService
 from apps.core.tenancy import get_current_tenant, get_current_user
 from apps.inventory.services import StockService
@@ -445,7 +445,7 @@ class InvoiceService:
             return dn.invoice
         order = dn.order
         customer = order.customer
-        inv = SalesInvoice.objects.create(number=next_number("sales_invoice"), customer=customer, order=order, delivery_note=dn, rep=order.rep, date=timezone.localdate(), due_date=timezone.localdate() + timedelta(days=customer.credit_days or 0), cost_centre=order.cost_centre, from_transit=bool(order.trip_id and get_current_tenant().setting("two_step_dispatch")))
+        inv = SalesInvoice.objects.create(number=derived_number(order.number if order else (dn.order.number if dn and dn.order_id else None), "sales_invoice", SalesInvoice), customer=customer, order=order, delivery_note=dn, rep=order.rep, date=timezone.localdate(), due_date=timezone.localdate() + timedelta(days=customer.credit_days or 0), cost_centre=order.cost_centre, from_transit=bool(order.trip_id and get_current_tenant().setting("two_step_dispatch")))
         subtotal = disc = t1 = t2 = Decimal("0")
         tax1_type = tax2_type = None
         for i, dl in enumerate(dn.lines.select_related("order_line", "variant", "batch")):

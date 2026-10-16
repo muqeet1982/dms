@@ -32,6 +32,26 @@ def _steps(api, order_id):
     return {s["key"]: s for s in r.data["steps"]}
 
 
+def test_documents_inherit_the_order_number(api, order_with_stock):
+    """A whole chain shares the order's counter: SO-0000N → PL-0000N, DN-0000N, INV-0000N."""
+    from apps.core.numbering import numeric_core
+
+    order, _wh, _variant = order_with_stock
+    core = numeric_core(order.number)
+
+    pl = api.post(f"/api/v1/sales-orders/{order.pk}/load-form", {}, format="json").data
+    assert numeric_core(pl["number"]) == core, (pl["number"], order.number)
+
+    issued = api.post(f"/api/v1/pick-lists/{pl['id']}/issue",
+                      {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    assert issued.status_code == 200, issued.content
+    assert all(numeric_core(n["number"]) == core for n in issued.data["delivery_note_numbers"]), issued.data["delivery_note_numbers"]
+
+    inv = api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {}, format="json")
+    assert inv.status_code == 201, inv.content
+    assert numeric_core(inv.data[0]["number"]) == core, inv.data[0]["number"]
+
+
 def test_full_chain(api, tenant, order_with_stock):
     order, warehouse, variant = order_with_stock
     from apps.core.tenancy import tenant_context

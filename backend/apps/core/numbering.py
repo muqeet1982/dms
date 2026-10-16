@@ -1,3 +1,5 @@
+import re
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -30,6 +32,38 @@ DEFAULT_PREFIXES = {
     "product": "P-",
     "opening_balance": "OB-",
 }
+
+
+def _prefix_for(document_type: str, tenant_id) -> str:
+    seq = NumberSequence.all_objects.filter(tenant_id=tenant_id, document_type=document_type).first()
+    if seq is not None:
+        return seq.prefix
+    return DEFAULT_PREFIXES.get(document_type, document_type.upper()[:3] + "-")
+
+
+def numeric_core(number: str) -> str:
+    """The counter part of a document number, prefix stripped: 'SO-00001' -> '00001', 'SO-2026-7' -> '2026-7'."""
+    return re.sub(r"^[^0-9]*", "", number or "")
+
+
+def derived_number(parent_number: str, document_type: str, model, tenant_id=None) -> str:
+    """
+    Give a child document the parent's counter under its own prefix, so a whole chain shares one number:
+    SO-00001 -> INV-00001, DN-00001; PO-00001 -> GRN-00001, PB-00001. A second child for the same parent
+    (a partial second delivery or invoice) gets a '-2', '-3' … suffix so it stays tied to the parent and unique.
+    Falls back to a fresh sequence number when there is no parent to inherit from.
+    """
+    tenant_id = tenant_id or get_current_tenant_id()
+    if not parent_number:
+        return next_number(document_type, tenant_id, unique_for=(model, "number"))
+    base = f"{_prefix_for(document_type, tenant_id)}{numeric_core(parent_number)}"
+    taken = set(model.all_objects.filter(tenant_id=tenant_id, number__startswith=base).values_list("number", flat=True))
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
 
 
 def next_number(document_type: str, tenant_id=None, unique_for=None) -> str:

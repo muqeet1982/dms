@@ -7,7 +7,7 @@ from apps.catalog.services import TaxService
 from apps.core.audit import AuditService
 from apps.core.events import emit
 from apps.core.exceptions import DomainError
-from apps.core.numbering import next_number
+from apps.core.numbering import derived_number, next_number
 from apps.core.tenancy import get_current_user
 from apps.inventory.services import StockService
 
@@ -304,7 +304,7 @@ class GoodsReceiptService:
             return GoodsReceiptService._refill(open_draft, warehouse=warehouse, lines=lines, date=date, supplier_challan_no=supplier_challan_no, notes=notes, landed_costs=landed_costs)
         if not confirm_duplicate_challan:
             GoodsReceiptService.check_challan_unused(supplier, supplier_challan_no)
-        grn = GoodsReceipt.objects.create(number=next_number("goods_receipt"), po=po, supplier=supplier, warehouse=warehouse, date=date or timezone.localdate(), supplier_challan_no=supplier_challan_no, notes=notes, received_by=get_current_user())
+        grn = GoodsReceipt.objects.create(number=derived_number(po.number if po else None, "goods_receipt", GoodsReceipt), po=po, supplier=supplier, warehouse=warehouse, date=date or timezone.localdate(), supplier_challan_no=supplier_challan_no, notes=notes, received_by=get_current_user())
         GoodsReceiptService.write_lines(grn, lines)
         GoodsReceiptService.write_landed_costs(grn, landed_costs or [])
         GoodsReceiptService.allocate_landed_costs(grn)
@@ -464,7 +464,7 @@ class PurchaseBillService:
     @transaction.atomic
     def create(*, supplier, grns=(), bill_date=None, due_date=None, supplier_invoice_no="", lines=None, discount=Decimal("0"), freight=Decimal("0"), notes="", tax1_type=None, tax2_type=None, tax1_total=None, tax2_total=None):
         bill_date = bill_date or timezone.localdate()
-        bill = PurchaseBill.objects.create(number=next_number("purchase_bill"), supplier=supplier, bill_date=bill_date, due_date=due_date or (bill_date + timezone.timedelta(days=supplier.payment_terms_days or 0)), supplier_invoice_no=supplier_invoice_no, notes=notes, discount=discount or 0, freight=freight or 0)
+        bill = PurchaseBill.objects.create(number=derived_number(grns[0].po.number if grns and grns[0].po_id else None, "purchase_bill", PurchaseBill), supplier=supplier, bill_date=bill_date, due_date=due_date or (bill_date + timezone.timedelta(days=supplier.payment_terms_days or 0)), supplier_invoice_no=supplier_invoice_no, notes=notes, discount=discount or 0, freight=freight or 0)
         snapshot, subtotal, t1, t2 = [], Decimal("0"), Decimal("0"), Decimal("0")
         if grns:
             for g in grns:
@@ -546,7 +546,7 @@ class PurchaseReturnService:
     @staticmethod
     @transaction.atomic
     def create(*, supplier, warehouse, lines, grn=None, date=None, reason="", reason_code=None, notes="", is_debit_note_only=False):
-        ret = PurchaseReturn.objects.create(number=next_number("purchase_return"), supplier=supplier, warehouse=warehouse, grn=grn, date=date or timezone.localdate(), reason=reason, reason_code=reason_code, notes=notes, is_debit_note_only=is_debit_note_only)
+        ret = PurchaseReturn.objects.create(number=derived_number(grn.po.number if grn and grn.po_id else None, "purchase_return", PurchaseReturn), supplier=supplier, warehouse=warehouse, grn=grn, date=date or timezone.localdate(), reason=reason, reason_code=reason_code, notes=notes, is_debit_note_only=is_debit_note_only)
         total = Decimal("0")
         for l in lines:
             unit_cost = Decimal(l.get("unit_cost") or l["variant"].avg_cost or l["variant"].cost_price)

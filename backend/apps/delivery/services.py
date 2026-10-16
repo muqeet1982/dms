@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.core.audit import AuditService
 from apps.core.events import emit
 from apps.core.exceptions import DomainError
-from apps.core.numbering import next_number
+from apps.core.numbering import derived_number, next_number
 from apps.core.tenancy import get_current_tenant, get_current_user
 from apps.inventory.services import StockService
 from apps.sales.models import SalesOrder, StockReservation
@@ -23,7 +23,7 @@ class PickListService:
         orders = [o for o in orders if o.status == "confirmed" and o.warehouse_id == warehouse.pk]
         if not orders:
             raise DomainError("Select confirmed orders from this warehouse.")
-        pl = PickList.objects.create(number=next_number("pick_list"), warehouse=warehouse, notes=notes)
+        pl = PickList.objects.create(number=derived_number(orders[0].number, "pick_list", PickList), warehouse=warehouse, notes=notes)
         pl.orders.set(orders)
         tenant = get_current_tenant()
         for o in orders:
@@ -166,7 +166,7 @@ class DeliveryService:
     @transaction.atomic
     def create_note(order, trip=None, lines=None, sequence=0, picklist=None):
         """Delivery note for an order (all pending qty by default). lines: [{order_line, qty, batch?}]"""
-        dn = DeliveryNote.objects.create(number=next_number("delivery_note"), trip=trip, order=order, customer=order.customer, warehouse=trip.warehouse if trip else (picklist.warehouse if picklist else order.warehouse), sequence=sequence, picklist=picklist)
+        dn = DeliveryNote.objects.create(number=derived_number(order.number, "delivery_note", DeliveryNote), trip=trip, order=order, customer=order.customer, warehouse=trip.warehouse if trip else (picklist.warehouse if picklist else order.warehouse), sequence=sequence, picklist=picklist)
         tenant = get_current_tenant()
         if lines:
             for l in lines:
@@ -315,7 +315,7 @@ class TripService:
     @staticmethod
     @transaction.atomic
     def create(*, warehouse, date=None, driver=None, vehicle=None, rep=None, delivery_rep=None, loader=None, helper=None, route=None, orders=(), notes="", picklist=None):
-        trip = DeliveryTrip.objects.create(number=next_number("trip"), warehouse=warehouse, date=date or timezone.localdate(), driver=driver, vehicle=vehicle or (driver.default_vehicle if driver else None), rep=rep, delivery_rep=delivery_rep, loader=loader, helper=helper, route=route, notes=notes, picklist=picklist)
+        trip = DeliveryTrip.objects.create(number=derived_number(orders[0].number if orders else None, "trip", DeliveryTrip), warehouse=warehouse, date=date or timezone.localdate(), driver=driver, vehicle=vehicle or (driver.default_vehicle if driver else None), rep=rep, delivery_rep=delivery_rep, loader=loader, helper=helper, route=route, notes=notes, picklist=picklist)
         if orders:
             TripService.assign_orders(trip, orders)
         AuditService.log("created", trip, after={"driver": driver.name if driver else None, "vehicle": vehicle.reg_no if vehicle else None})
