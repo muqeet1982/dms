@@ -26,7 +26,7 @@ export function InvoicesPage() {
     { key: "total", header: "Total", num: true, sortKey: "total", render: (i) => money(i.total) },
     { key: "paid_amount", header: "Paid", num: true, render: (i) => money(i.paid_amount) },
     { key: "balance", header: "Balance", num: true, render: (i) => <span className={Number(i.balance) > 0 ? "fw-semibold text-danger" : "text-success"}>{money(i.balance)}</span> },
-    { key: "status", header: "Status", render: (i) => <StatusBadge status={i.status} /> },
+    { key: "status", header: "Status", render: (i) => <><StatusBadge status={i.status} />{i.delivery_status && <div className="fs-11 text-muted mt-1"><i className="ti ti-truck me-1" />{i.delivery_status}</div>}</> },
   ];
   return (
     <ListPage title="Sales invoices" page="invoices" endpoint="/api/v1/invoices" columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} createTo="/app/sales/invoices/new" createLabel="New invoice" defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
@@ -57,7 +57,7 @@ export function InvoiceDetailPage() {
   const open = ["posted", "partially_paid", "overdue"].includes(inv.status);
   return (
     <>
-      <PageHeader title={inv.number} badge={<StatusBadge status={inv.status} />} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
+      <PageHeader title={inv.number} badge={<><StatusBadge status={inv.status} />{inv.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{inv.delivery_status}</span>}</>} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
         actions={<>
           {inv.status === "draft" && page.can("discount") && <div className="btn-group">
             <select className="form-select form-select-sm" style={{ width: 150 }} value={String(Number(inv.discount_pct || 0))} onChange={(e) => run("discount", { action: e.target.value === "0" ? "remove" : "apply", percent: e.target.value }, { success: "Discount updated" })} title="Co-funded total discount">

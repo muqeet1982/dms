@@ -24,7 +24,7 @@ class CompanyClaimSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CompanyClaim
-        fields = ["id", "number", "invoice", "invoice_number", "customer_name", "supplier", "supplier_name", "date", "discount_pct", "company_pct", "total", "paid_amount", "balance", "status", "journal", "journal_number", "lines", "created_at"]
+        fields = ["id", "number", "invoice", "invoice_number", "customer_name", "supplier", "supplier_name", "date", "discount_pct", "company_pct", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "lines", "created_at"]
 
 
 class DiscountContributionSerializer(serializers.ModelSerializer):
@@ -176,7 +176,19 @@ class SalesInvoiceEditSerializer(serializers.ModelSerializer):
 class SalesInvoiceSerializer(serializers.ModelSerializer):
     lines = InvoiceLineSerializer(many=True, read_only=True)
     company_claims_total = serializers.SerializerMethodField()
+    delivery_status = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+
+    def get_delivery_status(self, obj):
+        """Where the goods actually are — the invoice's own status stays the payment state."""
+        dn = obj.delivery_note
+        if dn is None:
+            return ""
+        if dn.status in ("delivered", "partially_delivered", "returned", "failed"):
+            return dn.get_status_display()
+        if dn.trip_id:
+            return f"On trip {dn.trip.number}" if dn.trip.status in ("planned", "loading") else f"Out for delivery · {dn.trip.number}" if dn.trip.status == "out_for_delivery" else dn.trip.get_status_display()
+        return "Issued, awaiting dispatch"
 
     def get_company_claims_total(self, obj):
         return str(sum((c.total for c in obj.company_claims.exclude(status="cancelled")), __import__("decimal").Decimal("0")))
@@ -213,7 +225,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
