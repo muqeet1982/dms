@@ -106,3 +106,27 @@ def test_an_account_added_under_the_bank_group_becomes_a_pickable_bank(api, tena
         acct = Account.objects.get(code="1-01-002-0099")
         assert acct.subtype == "bank"
         assert BankAccount.objects.filter(account=acct, name="HBL Test").exists(), "the payment form lists bank records, so one must exist"
+
+
+def test_impersonations_of_different_tenants_coexist(admin_user, tenant, tenant_b):
+    """Two people share the platform admin login: one working in tenant A, one in tenant B. Starting or ending
+    one tenant's impersonation must not sign the other person out (it used to end every tenant's)."""
+    from apps.accounts.models import ImpersonationSession
+    from apps.platform.services import TenantService
+
+    a = TenantService.start_impersonation(admin_user, tenant, "support A")
+    b = TenantService.start_impersonation(admin_user, tenant_b, "support B")
+    a.refresh_from_db()
+    assert a.ended_at is None, "tenant B's impersonation must not end tenant A's"
+    # a second impersonation of the SAME tenant replaces the first
+    a2 = TenantService.start_impersonation(admin_user, tenant, "again")
+    a.refresh_from_db(); b.refresh_from_db()
+    assert a.ended_at is not None and b.ended_at is None
+    # ending one tenant leaves the other alone
+    TenantService.end_impersonation(admin_user, tenant=tenant)
+    a2.refresh_from_db(); b.refresh_from_db()
+    assert a2.ended_at is not None and b.ended_at is None
+    # ending with no tenant still ends everything (the old catch-all behaviour stays available)
+    TenantService.end_impersonation(admin_user)
+    b.refresh_from_db()
+    assert b.ended_at is not None

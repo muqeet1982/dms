@@ -208,16 +208,26 @@ class TenantService:
             raise DomainError("This tenant has disabled impersonation.")
         if tenant.owner is None:
             raise DomainError("Tenant has no owner.")
-        ImpersonationSession.objects.filter(admin=admin, ended_at__isnull=True).update(ended_at=timezone.now())
+        # Replace only a previous impersonation of THIS tenant. Ending every tenant's sessions here meant two
+        # people sharing the admin login signed each other out over and over — one working in demo, the other
+        # in a trafco tenant, each new impersonation killing the other's ("it keeps getting session out").
+        # Requests resolve their impersonation by (admin, tenant header), so sessions in different tenants
+        # coexist without touching each other.
+        ImpersonationSession.objects.filter(admin=admin, tenant=tenant, ended_at__isnull=True).update(ended_at=timezone.now())
         session = ImpersonationSession.objects.create(admin=admin, target=tenant.owner, tenant=tenant, reason=reason, expires_at=timezone.now() + timedelta(minutes=minutes or platform_setting("impersonation_minutes", settings.DMS["IMPERSONATION_MINUTES"])))
         AuditService.log("platform.impersonation.started", tenant, after={"target": str(tenant.owner), "reason": reason, "expires_at": session.expires_at.isoformat()}, actor=admin)
         return session
 
     @staticmethod
-    def end_impersonation(admin):
+    def end_impersonation(admin, tenant=None):
         from apps.accounts.models import ImpersonationSession
 
-        n = ImpersonationSession.objects.filter(admin=admin, ended_at__isnull=True).update(ended_at=timezone.now())
+        qs = ImpersonationSession.objects.filter(admin=admin, ended_at__isnull=True)
+        if tenant is not None:
+            # leave the admin's impersonations of OTHER tenants running — another person on the same admin
+            # login may be working in one of them right now
+            qs = qs.filter(tenant=tenant)
+        n = qs.update(ended_at=timezone.now())
         AuditService.log("platform.impersonation.ended", model="ImpersonationSession", actor=admin)
         return n
 

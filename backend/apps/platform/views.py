@@ -222,7 +222,8 @@ class TenantViewSet(PlatformViewSet):
 
     @action(detail=False, methods=["post"], url_path="end-impersonation")
     def end_impersonation(self, request):
-        TenantService.end_impersonation(request.user)
+        tenant = Tenant.objects.filter(pk=request.data.get("tenant")).first() if request.data.get("tenant") else None
+        TenantService.end_impersonation(request.user, tenant=tenant)
         return Response(status=204)
 
     @action(detail=True, methods=["post"], url_path="reset-owner-password")
