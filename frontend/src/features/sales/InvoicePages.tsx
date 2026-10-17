@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { date, datetime, money, qty } from "@/lib/format";
-import { useAction, useDoc, useOptions } from "@/lib/hooks";
+import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError } from "@/components/ui/Bits";
@@ -180,7 +180,9 @@ export function CreditNoteFormPage() {
   const sp = new URLSearchParams(window.location.search);
   const invoiceId = sp.get("invoice");
   const inv = useDoc("/api/v1/invoices", invoiceId);
-  const warehouses = useOptions("/api/v1/settings/warehouses", { is_active: true });
+  const wh = useWarehouses();
+  // restock targets are sellable warehouses — damaged/expired returns are routed to quarantine by the service
+  const restockable = wh.rows.filter((w: any) => !["quarantine", "van"].includes(w.type));
   const [form, setForm] = useState<any>({ customer: null, invoice: invoiceId, warehouse: "", date: new Date().toISOString().slice(0, 10), reason: "", applied_to_invoice: true, notes: "" });
   const [lines, setLines] = useState<(EditLine & { restock?: boolean; condition?: string; reason?: string })[]>([]);
   const [init, setInit] = useState(false);
@@ -207,7 +209,7 @@ export function CreditNoteFormPage() {
         <div className="row">
           <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" value={form.customer} onChange={(v) => setForm({ ...form, customer: v })} mapOption={(c) => ({ id: c.id, label: c.name, sub: c.code })} disabled={Boolean(invoiceId)} /></Field>
           <Field label="Against invoice" col="col-md-3"><EntitySelect endpoint="/api/v1/invoices" query={{ open: 1, customer: form.customer || undefined }} value={form.invoice} onChange={(v) => setForm({ ...form, invoice: v })} mapOption={(i) => ({ id: i.id, label: i.number, sub: `${i.customer_name} · balance ${money(i.balance)}` })} placeholder="optional" /></Field>
-          <Field label="Restock to warehouse" col="col-md-2"><select className="form-select" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}><option value="">main</option>{warehouses.data?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
+          <Field label="Restock to warehouse" col="col-md-2"><select className="form-select" value={form.warehouse || wh.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{!restockable.length && <option value="">—</option>}{restockable.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
           <Field label="Date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label="Reason" col="col-md-6"><input className="form-control" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="e.g. damaged in transit, wrong shade" /></Field>
           <Field label="Notes" col="col-md-3"><input className="form-control" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="optional" /></Field>
