@@ -96,6 +96,10 @@ PAGES = [
                  ("block", "Block customers", "customers.block_customer"),
                  ("ledger", "View ledger & outstanding", "customers.view_customer_ledger")),
          legacy=("customers.manage_customer",)),
+    page("store_locations", "Store locations (map)", "Customers", "/app/customers/stores", "customers", "store_location",
+         endpoint="/api/v1/customers/map", actions=("view", "edit"), enforced=True, skip_probe=("edit",),
+         legacy=("customers.manage_customer",),
+         note="The customer map: `view` opens it, `edit` drops or moves a store's pin."),
     page("territories", "Territories & routes", "Customers", "/app/customers/territories", "customers", "territory",
          endpoint="/api/v1/territories", enforced=True, legacy=("customers.manage_territories",)),
     page("visits", "Shop visits", "Customers", "/app/tracking/visits", "visits", "own",
@@ -287,6 +291,9 @@ BACKFILL = {
     # whoever could add journals could also edit and delete their drafts
     "accounting.add_journal": ["accounting.change_journal", "accounting.delete_journal"],
     "sales.view_sales_order": ["sales.view_order_inbox"],
+    # the Store locations map used to ride on the plain customer switches
+    "customers.view_customer": ["customers.view_store_location"],
+    "customers.change_customer": ["customers.change_store_location"],
     "sales.view_invoice": ["sales.view_credit_note"],
     "purchasing.view_purchase_order": ["purchasing.view_purchase_return"],
 }

@@ -25,7 +25,8 @@ const shapeOf = (f: any): Shape =>
 export function StoresPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
-  const rights = pageRights("customers");
+  const rights = pageRights("store_locations");
+  const customerRights = pageRights("customers");
   const q = useQuery({ queryKey: ["stores-map"], queryFn: () => api.get("/api/v1/customers/map") });
   const reps = useOptions("/api/v1/supplier-reps", { is_active: true });
   const [selected, setSelected] = useState<string | null>(null);
@@ -62,8 +63,8 @@ export function StoresPage() {
     <>
       <PageHeader title="Store locations" crumbs={[{ label: "Customers", to: "/app/customers" }, { label: "Store locations" }]}
         actions={<>
-          {area && rights.edit && <button className="btn btn-outline-primary me-2" onClick={() => setAssign(true)}><i className="ti ti-user-plus me-1" />Assign stores in this area</button>}
-          {rights.add && <button className={`btn ${addMode ? "btn-warning" : "btn-primary"}`} onClick={() => { setAddMode(!addMode); setPlacing(null); }}>
+          {area && customerRights.edit && <button className="btn btn-outline-primary me-2" onClick={() => setAssign(true)}><i className="ti ti-user-plus me-1" />Assign stores in this area</button>}
+          {customerRights.add && <button className={`btn ${addMode ? "btn-warning" : "btn-primary"}`} onClick={() => { setAddMode(!addMode); setPlacing(null); }}>
             <i className="ti ti-map-pin-plus me-1" />{addMode ? "Click the map… (cancel)" : "Add a store"}</button>}
         </>} />
 
@@ -130,7 +131,7 @@ export function StoresPage() {
               </div>
               <div className="d-flex gap-2 mt-2">
                 <Link className="btn btn-sm btn-outline-primary" to={`/app/customers/${chosen.id}`}>Open store</Link>
-                {rights.edit && <Link className="btn btn-sm btn-outline-secondary" to={`/app/customers/${chosen.id}/edit`}>Edit</Link>}
+                {customerRights.edit && <Link className="btn btn-sm btn-outline-secondary" to={`/app/customers/${chosen.id}/edit`}>Edit</Link>}
               </div>
             </div></div>
           )}

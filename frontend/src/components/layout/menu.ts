@@ -17,7 +17,7 @@ export const TENANT_MENU: MenuSection[] = [
         { label: "Rep collections", to: "/app/sales/rep-collections", page: "rep_collections" }, { label: "Rep settlements", to: "/app/sales/rep-settlements", page: "rep_settlements" },
       ] },
       { label: "Customers", icon: "ti-users-group", children: [
-        { label: "All customers", to: "/app/customers", end: true, page: "customers" }, { label: "Territories", to: "/app/customers/territories", page: "territories" }, { label: "Routes", to: "/app/customers/routes", page: "territories" }, { label: "Store locations", to: "/app/customers/stores", page: "customers" }, { label: "Working areas", to: "/app/customers/areas", page: "geofences" }, { label: "Check-ins", to: "/app/tracking/visits", page: "visits" },
+        { label: "All customers", to: "/app/customers", end: true, page: "customers" }, { label: "Territories", to: "/app/customers/territories", page: "territories" }, { label: "Routes", to: "/app/customers/routes", page: "territories" }, { label: "Store locations", to: "/app/customers/stores", page: "store_locations" }, { label: "Working areas", to: "/app/customers/areas", page: "geofences" }, { label: "Check-ins", to: "/app/tracking/visits", page: "visits" },
       ] },
     ],
   },

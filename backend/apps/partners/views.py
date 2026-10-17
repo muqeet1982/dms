@@ -172,8 +172,9 @@ class CustomerViewSet(TenantModelViewSet):
         "orders": "customers.view_customer",
         "credit_check": "customers.view_customer",
         "stats": "customers.view_customer",
-        "map": "customers.view_customer",
-        "pin": "customers.change_customer",
+        # the Store locations map has its own switches in the role matrix
+        "map": "customers.view_store_location",
+        "pin": "customers.change_store_location",
     })
     search_fields = ["name", "business_name", "code", "phone", "alt_mobile", "landline", "email", "contact_person", "address", "city", "ntn", "strn", "cnic"]
     filterset_fields = ["type", "status", "territory", "route", "price_list", "is_blocked", "assigned_reps", "city"]
