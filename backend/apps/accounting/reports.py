@@ -83,10 +83,24 @@ def general_ledger(account=None, date_from=None, date_to=None, partner_type=None
     if date_to:
         qs = qs.filter(entry__date__lte=date_to)
     rows, bal = [], opening
-    for l in qs[:5000]:
+    lines = list(qs[:5000])
+    # the voucher code per entry (CPV, BPV, JV …) — derived once per entry, as the owner's old ERP showed it
+    from .vouchers import voucher_code
+
+    by_entry = {}
+    for l in lines:
+        by_entry.setdefault(l.entry_id, []).append(l)
+    # an account-filtered ledger hides the entry's other side, and the code depends on it (bank vs cash) —
+    # so the undecided entries get their full line sets in one bulk query
+    need = [eid for eid, ls in by_entry.items() if not ls[0].entry.voucher_type and ls[0].entry.type not in ("opening", "closing")]
+    full = {}
+    for l in JournalLine.objects.filter(entry_id__in=need).select_related("account"):
+        full.setdefault(l.entry_id, []).append(l)
+    codes = {eid: voucher_code(ls[0].entry, full.get(eid, ls)) for eid, ls in by_entry.items()}
+    for l in lines:
         bal += l.debit - l.credit
-        rows.append({"date": l.entry.date, "journal": l.entry.number, "journal_id": str(l.entry_id), "source": f"{l.entry.source_type} {l.entry.source_number}".strip(), "account": f"{l.account.code} {l.account.name}", "description": l.description or l.entry.memo, "partner": f"{l.partner_type}:{l.partner_id}" if l.partner_type else "", "cost_centre": l.cost_centre.name if l.cost_centre else "", "debit": str(l.debit), "credit": str(l.credit), "balance": str(bal)})
-    return {"columns": ["date", "journal", "source", "account", "description", "debit", "credit", "balance"], "rows": rows, "totals": {"opening": str(opening), "closing": str(bal)}}
+        rows.append({"date": l.entry.date, "type": codes.get(l.entry_id, "JV"), "journal": l.entry.number, "journal_id": str(l.entry_id), "source": f"{l.entry.source_type} {l.entry.source_number}".strip(), "account": f"{l.account.code} {l.account.name}", "description": l.description or l.entry.memo, "partner": f"{l.partner_type}:{l.partner_id}" if l.partner_type else "", "cost_centre": l.cost_centre.name if l.cost_centre else "", "debit": str(l.debit), "credit": str(l.credit), "balance": str(bal)})
+    return {"columns": ["date", "type", "journal", "source", "account", "description", "debit", "credit", "balance"], "rows": rows, "totals": {"opening": str(opening), "closing": str(bal)}}
 
 
 def journal_register(date_from=None, date_to=None, type=None, status=None, **_):

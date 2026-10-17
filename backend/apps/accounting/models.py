@@ -87,8 +87,16 @@ class CostCentre(TenantModel):
 class JournalEntry(DocumentModel):
     TYPES = [("manual", "Manual"), ("auto", "Automatic"), ("opening", "Opening"), ("closing", "Closing")]
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("reversed", "Reversed")]
+    # The voucher family a MANUAL entry belongs to — a label and a numbering series (CPV-00001 …), exactly as
+    # the owner's old ERP had it. Automatic entries leave it blank and derive a report code instead.
+    VOUCHER_TYPES = [
+        ("cpv", "Cash Payment Voucher"), ("crv", "Cash Receipt Voucher"), ("bpv", "Bank Payment Voucher"),
+        ("brv", "Bank Receipt Voucher"), ("jv", "Journal Voucher"), ("jrv", "Journal Receipt Voucher"),
+        ("jpv", "Journal Payment Voucher"), ("jcv", "Journal Contra Voucher"), ("sjv", "Standing Journal Voucher"),
+    ]
     date = models.DateField(default=timezone.localdate, db_index=True)
     type = models.CharField(max_length=10, choices=TYPES, default="manual")
+    voucher_type = models.CharField(max_length=4, choices=VOUCHER_TYPES, blank=True, default="", db_index=True)
     source_type = models.CharField(max_length=40, blank=True, db_index=True)
     source_id = models.CharField(max_length=64, blank=True, db_index=True)
     source_number = models.CharField(max_length=40, blank=True)
@@ -121,6 +129,8 @@ class JournalLine(TenantModel):
     partner_id = models.CharField(max_length=64, blank=True, db_index=True)
     cost_centre = models.ForeignKey(CostCentre, null=True, blank=True, on_delete=models.SET_NULL, related_name="lines")
     tax_type = models.ForeignKey("catalog.TaxType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # a bank-account line on a manual voucher may carry one of our own cheques (claimed when the draft saves)
+    cheque_leaf = models.ForeignKey("ChequeLeaf", null=True, blank=True, on_delete=models.SET_NULL, related_name="je_lines")
     sequence = models.PositiveSmallIntegerField(default=0)
 
     class Meta:

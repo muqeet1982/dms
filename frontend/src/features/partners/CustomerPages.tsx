@@ -34,7 +34,7 @@ export function CustomersPage() {
         {c.contact_person && <div className="text-muted fs-11">{c.contact_person}</div>}</>
     ) },
     { key: "city", header: "City / route", render: (c) => <>{c.city || "—"}<div className="text-muted fs-11">{[c.territory_name, c.route_name].filter(Boolean).join(" · ")}</div></> },
-    { key: "rep_names", header: "Reps", render: (c) => c.rep_names?.join(", ") || <span className="text-muted">—</span> },
+    { key: "rep_names", header: "Sale person", render: (c) => c.rep_names?.join(", ") || <span className="text-muted">—</span> },
     { key: "outstanding", header: "Outstanding", num: true, render: (c) => (
       <><span className={Number(c.outstanding) > Number(c.credit_limit) && Number(c.credit_limit) > 0 ? "text-danger fw-semibold" : Number(c.outstanding) > 0 ? "fw-semibold" : "text-muted"}>{money(c.outstanding, 0)}</span>
         {Number(c.credit_limit) > 0 && <div className="text-muted fs-11">limit {money(c.credit_limit, 0)}</div>}</>

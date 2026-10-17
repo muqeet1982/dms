@@ -58,11 +58,12 @@ class JournalLineSerializer(serializers.ModelSerializer):
     account_code = serializers.CharField(source="account.code", read_only=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
     cost_centre_name = serializers.CharField(source="cost_centre.name", read_only=True, default="")
+    cheque_number = serializers.CharField(source="cheque_leaf.number", read_only=True, default="")
     partner_name = serializers.SerializerMethodField()
 
     class Meta:
         model = JournalLine
-        fields = ["id", "account", "account_code", "account_name", "debit", "credit", "description", "partner_type", "partner_id", "partner_name", "cost_centre", "cost_centre_name", "tax_type", "sequence"]
+        fields = ["id", "account", "account_code", "account_name", "debit", "credit", "description", "partner_type", "partner_id", "partner_name", "cost_centre", "cost_centre_name", "tax_type", "cheque_leaf", "cheque_number", "sequence"]
         read_only_fields = ["id"]
 
     def get_partner_name(self, obj):
@@ -79,13 +80,19 @@ class JournalLineSerializer(serializers.ModelSerializer):
 
 class JournalEntrySerializer(serializers.ModelSerializer):
     lines = JournalLineSerializer(many=True)
+    voucher_code = serializers.SerializerMethodField()
     posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True, default="")
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True, default="")
     reversed_by_number = serializers.CharField(source="reversed_by_entry.number", read_only=True, default="")
 
+    def get_voucher_code(self, obj):
+        from .vouchers import voucher_code
+
+        return voucher_code(obj)
+
     class Meta:
         model = JournalEntry
-        fields = ["id", "number", "version", "date", "type", "source_type", "source_id", "source_number", "status", "memo", "posted_by", "posted_by_name", "posted_at", "reversed_by_entry", "reversed_by_number", "period", "total_debit", "total_credit", "notes", "lines", "created_by_name", "created_at", "updated_at"]
+        fields = ["id", "number", "version", "date", "type", "voucher_type", "voucher_code", "source_type", "source_id", "source_number", "status", "memo", "posted_by", "posted_by_name", "posted_at", "reversed_by_entry", "reversed_by_number", "period", "total_debit", "total_credit", "notes", "lines", "created_by_name", "created_at", "updated_at"]
         read_only_fields = ["id", "number", "version", "type", "source_type", "source_id", "source_number", "status", "posted_by", "posted_at", "reversed_by_entry", "period", "total_debit", "total_credit", "created_at", "updated_at"]
 
 

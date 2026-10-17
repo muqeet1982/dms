@@ -24,6 +24,9 @@ DEFAULT_PREFIXES = {
     "stock_adjustment": "ADJ-",
     "stock_count": "SC-",
     "journal": "JV-",
+    # manual voucher families — each its own series, as the owner's old ERP numbered them
+    "journal_cpv": "CPV-", "journal_crv": "CRV-", "journal_bpv": "BPV-", "journal_brv": "BRV-",
+    "journal_jrv": "JRV-", "journal_jpv": "JPV-", "journal_jcv": "JCV-", "journal_sjv": "SJV-",
     "payment_in": "RCPT-",
     "payment_out": "PAY-",
     "expense": "EXP-",

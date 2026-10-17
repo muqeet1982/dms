@@ -142,7 +142,7 @@ def test_the_first_order_after_a_reset_is_numbered_one_again(admin_api, tenant):
         from apps.sales.services import OrderService
 
         order = OrderService.create(customer=ready["customer"], lines=[{"variant": ready["variant"], "qty": Decimal("1"), "unit_price": Decimal("10")}], source="staff", warehouse=ready["warehouse"])
-        assert order.number == "ORD/0001"
+        assert order.number == f"{tenant.doc_code}-ORD/0001"  # the company code rides in front of every number
         assert next_number("sales_invoice").endswith("00001")
 
 

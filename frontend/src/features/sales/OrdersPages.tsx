@@ -140,6 +140,18 @@ export function OrderDetailPage() {
   );
 }
 
+
+/** The order's sale person comes from the customer's linked rep; it is changed on the customer, not per order. */
+function SalePersonAuto({ customer, editingRep }: { customer: string | null; editingRep?: string | null }) {
+  const c = useDoc("/api/v1/customers", customer || undefined);
+  const name = c.data?.rep_names?.[0];
+  return (
+    <div className="form-control-plaintext fs-13">
+      {name ? <span className="fw-medium">{name}</span> : customer ? <span className="text-muted">none linked{" "}{c.data && <Link to={`/app/customers/${customer}/edit`} className="fs-12">set on customer</Link>}</span> : <span className="text-muted">pick a customer</span>}
+    </div>
+  );
+}
+
 export function OrderFormPage() {
   const [err, setErr] = useState<string | null>(null);
   const { id } = useParams();
@@ -182,7 +194,7 @@ export function OrderFormPage() {
         <div className="row">
           <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" query={{ status: "active" }} value={form.customer} onChange={(v) => setForm({ ...form, customer: v })} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""} · outstanding ${money(c.outstanding)}`, raw: c })} /></Field>
           <Field label="Warehouse" col="col-md-2"><select className="form-select" value={form.warehouse || warehouses.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{!warehouses.rows.length && <option value="">—</option>}{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
-          <Field label="Manufacturer rep" col="col-md-2"><EntitySelect endpoint="/api/v1/supplier-reps" query={{ is_active: true }} value={form.rep} onChange={(v) => setForm({ ...form, rep: v })} mapOption={(r) => ({ id: r.id, label: r.name, sub: r.supplier_name })} placeholder="optional" /></Field>
+          <Field label="Sale person" col="col-md-2" hint="linked on the customer — change it there"><SalePersonAuto customer={form.customer} editingRep={form.rep} /></Field>
           <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.order_date} onChange={(e) => setForm({ ...form, order_date: e.target.value })} /></Field>
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>

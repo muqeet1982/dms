@@ -45,10 +45,15 @@ export function DataTable<T extends { id?: string }>({ columns, rows, loading, r
 
 export function Pagination({ page, pages, count, pageSize, onPage, onPageSize }: { page: number; pages: number; count: number; pageSize: number; onPage: (p: number) => void; onPageSize?: (n: number) => void }) {
   if (!count) return null;
+  // a window of up to 5 page numbers centred on the current page: 1st ‹ 3 4 [5] 6 7 › Last
+  const start = Math.max(1, Math.min(page - 2, pages - 4));
+  const nums = Array.from({ length: Math.min(5, pages) }, (_, i) => start + i);
+  const go = (p: number) => { if (p >= 1 && p <= pages && p !== page) onPage(p); };
   return (
     <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 p-3 border-top">
-      <div className="text-muted fs-13 d-flex align-items-center gap-2">
-        <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, count)} of {count}</span>
+      <div className="text-muted fs-13 d-flex align-items-center gap-2 flex-wrap">
+        <span>Showing <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, count)}</strong> of <strong>{count}</strong> records</span>
+        <span>· Page {page} of {pages}</span>
         {onPageSize && (
           <select className="form-select form-select-sm w-auto" value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))}>
             {[10, 25, 50, 100, 200].map((n) => <option key={n} value={n}>{n} / page</option>)}
@@ -56,10 +61,12 @@ export function Pagination({ page, pages, count, pageSize, onPage, onPageSize }:
         )}
       </div>
       <nav>
-        <ul className="pagination mb-0 justify-content-end">
-          <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" onClick={() => page > 1 && onPage(page - 1)}>Previous</a></li>
-          <li className="page-item active"><span className="page-link">{page} of {pages}</span></li>
-          <li className={`page-item ${page >= pages ? "disabled" : ""}`}><a className="page-link cursor-pointer" onClick={() => page < pages && onPage(page + 1)}>Next</a></li>
+        <ul className="pagination pagination-sm mb-0 justify-content-end flex-wrap">
+          <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="First page" onClick={() => go(1)}>1st</a></li>
+          <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="Previous page" onClick={() => go(page - 1)}>Prev</a></li>
+          {nums.map((n) => <li key={n} className={`page-item ${n === page ? "active" : ""}`}><a className="page-link cursor-pointer" onClick={() => go(n)}>{n}</a></li>)}
+          <li className={`page-item ${page >= pages ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="Next page" onClick={() => go(page + 1)}>Next</a></li>
+          <li className={`page-item ${page >= pages ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="Last page" onClick={() => go(pages)}>Last</a></li>
         </ul>
       </nav>
     </div>

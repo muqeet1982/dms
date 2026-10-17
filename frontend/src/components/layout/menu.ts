@@ -49,7 +49,7 @@ export const TENANT_MENU: MenuSection[] = [
   {
     title: "ACCOUNTS", items: [
       { label: "Accounting", icon: "ti-report-money", children: [
-        { label: "Accounts", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journals", to: "/app/accounting/journals", page: "journals" },
+        { label: "Accounts", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals" },
         { label: "Opening balances", to: "/app/accounting/opening-balances", page: "opening_balances" }, { label: "Periods & year end", to: "/app/accounting/periods", page: "periods" },
         { label: "Transactions", to: "/app/accounting/payments", page: "payments" }, { label: "Cheques", to: "/app/accounting/cheques", page: "cheques" }, { label: "Cheque books", to: "/app/accounting/cheque-books", page: "cheque_books" }, { label: "Expenses", to: "/app/accounting/expenses", page: "expenses" }, { label: "Expense categories", to: "/app/accounting/expense-categories", page: "accounts" },
         { label: "Cash & bank", to: "/app/accounting/bank", page: "bank_cash" }, { label: "Bank reconciliation", to: "/app/accounting/reconciliation", page: "reconciliation" },

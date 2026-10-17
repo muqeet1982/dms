@@ -110,6 +110,9 @@ class OrderService:
     def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True):
         tenant = get_current_tenant()
         PlanLimitService.check(tenant, "max_orders_month")
+        if rep is None:
+            # the sale person lives on the customer: orders inherit it automatically (change it on the customer)
+            rep = customer.assigned_reps.filter(is_active=True).first() or customer.assigned_reps.first()
         if supplier is None and rep is not None:
             supplier = rep.supplier
         if external_ref and supplier is not None:

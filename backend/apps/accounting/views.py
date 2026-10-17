@@ -64,8 +64,9 @@ class JournalEntryViewSet(DocumentViewSet):
         "post": extra_perm("journals", "post"),
         "reverse": extra_perm("journals", "reverse"),
         "print": "accounting.view_journal",
+        "pdf": "accounting.view_journal",
     })
-    filterset_fields = ["status", "type", "source_type", "period", "date"]
+    filterset_fields = ["status", "type", "voucher_type", "source_type", "period", "date"]
     search_fields = ["number", "memo", "source_number", "lines__description"]
     ordering_fields = ["date", "number", "created_at", "total_debit"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -84,7 +85,11 @@ class JournalEntryViewSet(DocumentViewSet):
     def perform_create(self, serializer):
         d = serializer.validated_data
         lines = d.pop("lines")
-        entry = JournalEntry.objects.create(number=next_number("journal"), date=d.get("date", timezone.localdate()), type="manual", memo=d.get("memo", ""), notes=d.get("notes", ""), status="draft")
+        vt = str(self.request.data.get("voucher_type") or d.get("voucher_type") or "jv").lower()
+        if vt not in dict(JournalEntry.VOUCHER_TYPES):
+            raise DomainError(f"Unknown voucher type {vt!r}.")
+        # each voucher family numbers its own series (CPV-00001 …); plain JV shares the journal series
+        entry = JournalEntry.objects.create(number=next_number("journal" if vt == "jv" else f"journal_{vt}"), date=d.get("date", timezone.localdate()), type="manual", voucher_type=vt, memo=d.get("memo", ""), notes=d.get("notes", ""), status="draft")
         self._write_lines(entry, lines)
         serializer.instance = entry
         AuditService.log("journal.created", entry, request=self.request)
@@ -92,9 +97,31 @@ class JournalEntryViewSet(DocumentViewSet):
             PostingService.post_draft(entry)
 
     def _write_lines(self, entry, lines):
+        from .models import ChequeLeaf
+
+        # a draft's cheques are released first and re-claimed from the new lines, so a removed cheque
+        # goes back to Available (the guide's §7.5 behaviour)
+        held = set(entry.lines.exclude(cheque_leaf=None).values_list("cheque_leaf_id", flat=True))
+        if held:
+            ChequeLeaf.objects.filter(pk__in=held, status="issued", payment=None).update(status="available")
         entry.lines.all().delete()
         d = c = Decimal("0")
+        seen_leaves = set()
         for i, l in enumerate(lines):
+            leaf = l.get("cheque_leaf")
+            if leaf is not None:
+                leaf = ChequeLeaf.objects.select_for_update().get(pk=leaf.pk if hasattr(leaf, "pk") else leaf)
+                account = l.get("account")
+                if leaf.book.bank_account.account_id != (account.pk if hasattr(account, "pk") else account):
+                    raise DomainError(f"Cheque {leaf.number} belongs to {leaf.book.bank_account.name}, not this account.")
+                if leaf.pk in seen_leaves:
+                    raise DomainError(f"Cheque {leaf.number} is on two lines.")
+                if leaf.status != "available" and leaf.pk not in held:
+                    raise DomainError(f"Cheque {leaf.number} is no longer available — pick another.")
+                seen_leaves.add(leaf.pk)
+                leaf.status = "issued"
+                leaf.save(update_fields=["status"])
+                l = {**l, "cheque_leaf": leaf}
             JournalLine.objects.create(entry=entry, sequence=i, **{k: v for k, v in l.items() if k != "sequence"})
             d += l.get("debit", 0) or 0
             c += l.get("credit", 0) or 0
@@ -113,6 +140,11 @@ class JournalEntryViewSet(DocumentViewSet):
     def perform_destroy(self, instance):
         if instance.status != "draft":
             raise DomainError("Only draft journals can be deleted.")
+        from .models import ChequeLeaf
+
+        held = set(instance.lines.exclude(cheque_leaf=None).values_list("cheque_leaf_id", flat=True))
+        if held:
+            ChequeLeaf.objects.filter(pk__in=held, status="issued", payment=None).update(status="available")
         super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
@@ -128,15 +160,21 @@ class JournalEntryViewSet(DocumentViewSet):
 
     @action(detail=True, methods=["get"])
     def print(self, request, pk=None):
-        from django.http import HttpResponse
-        from django.template.loader import render_to_string
-        from weasyprint import HTML
+        from apps.core.documents import render_doc
+
+        from .vouchers import signature_boxes, voucher_code, voucher_title
 
         e = self.get_object()
-        html = render_to_string("accounting/voucher.html", {"e": e, "tenant": request.tenant})
-        resp = HttpResponse(HTML(string=html).write_pdf(), content_type="application/pdf")
-        resp["Content-Disposition"] = f'inline; filename="{e.number}.pdf"'
-        return resp
+        lines = list(e.lines.select_related("account", "cheque_leaf"))
+        code = voucher_code(e, lines)
+        return render_doc(request, "accounting/voucher.html",
+                          {"e": e, "lines": lines, "voucher_code": code, "voucher_title": voucher_title(code), "signatures": signature_boxes(code)},
+                          f"{e.number}.pdf", title=voucher_title(code), ref=e.number)
+
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        # every other document answers /pdf; the voucher print is the same document
+        return self.print(request, pk=pk)
 
 
 class FiscalYearViewSet(TenantModelViewSet):

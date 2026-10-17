@@ -55,17 +55,28 @@ export function AccountsPage() {
   const q = useQuery({ queryKey: ["coa-tree"], queryFn: () => api.get("/api/v1/accounting/accounts/tree") });
   const [modal, setModal] = useState<{ open: boolean; row?: any; parent?: any }>({ open: false });
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [search, setSearch] = useState("");
+  const [typeF, setTypeF] = useState("");
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !(o[id] ?? true) }));
+  // Search + type filter prune the tree but keep each match's parent groups, so the path to an account stays
+  // readable; while a filter is active every kept group is forced open.
+  const filtering = Boolean(search.trim() || typeF);
+  const needle = search.trim().toLowerCase();
+  const matches = (a: any) => (!typeF || a.type === typeF) && (!needle || `${a.code} ${a.name} ${a.subtype || ""}`.toLowerCase().includes(needle));
+  const prune = (nodes: any[]): any[] => nodes.map((a) => {
+    const kids = prune(a.children || []);
+    return matches(a) || kids.length ? { ...a, children: matches(a) && !needle ? a.children || [] : kids } : null;
+  }).filter(Boolean) as any[];
   const render = (nodes: any[], depth = 0): JSX.Element[] => nodes.flatMap((a) => [
     <div className="tree-row" key={a.id} style={{ paddingLeft: 8 + depth * 22 }}>
-      {a.children?.length ? <i className={`ti ${open[a.id] ?? true ? "ti-chevron-down" : "ti-chevron-right"} cursor-pointer`} onClick={() => toggle(a.id)} /> : <span style={{ width: 16, display: "inline-block" }} />}
+      {a.children?.length ? <i className={`ti ${(filtering || (open[a.id] ?? true)) ? "ti-chevron-down" : "ti-chevron-right"} cursor-pointer`} onClick={() => toggle(a.id)} /> : <span style={{ width: 16, display: "inline-block" }} />}
       <span className="font-monospace fs-12 text-muted" style={{ minWidth: 110 }}>{a.code}</span>
       <span className={`flex-grow-1 ${a.is_group ? "fw-semibold" : ""}`}>{a.is_group ? a.name : <Link to={`/app/accounting/accounts/${a.id}`}>{a.name}</Link>}{a.is_system && <i className="ti ti-lock ms-1 fs-11 text-muted" title="system account" />}{!a.is_active && <span className="badge bg-secondary-light text-secondary ms-1 fs-10">inactive</span>}</span>
       <span className="fs-11 text-muted">{a.subtype}</span>
       {!a.is_group && a.balance !== null && <span className="num fs-12" style={{ minWidth: 120 }}>{money(a.balance)}</span>}
       {pageRights("accounts").edit && <span className="no-row-click">{a.is_group && a.level < 4 && <button className="btn btn-sm btn-link p-0 me-2" title="Add child" onClick={() => setModal({ open: true, parent: a })}><i className="ti ti-plus" /></button>}{a.level > 2 ? <button className="btn btn-sm btn-link p-0" title="Edit" onClick={() => setModal({ open: true, row: a })}><i className="ti ti-edit" /></button> : <i className="ti ti-lock text-muted fs-12" title="Standard chart of accounts — add an account beneath it instead" />}</span>}
     </div>,
-    ...(open[a.id] ?? true ? render(a.children || [], depth + 1) : []),
+    ...((filtering || (open[a.id] ?? true)) ? render(a.children || [], depth + 1) : []),
   ]);
   // Levels 1-2 are the standard chart: the five classes and the groups under them. The balance sheet and P&L
   // print their names as headings (and keep them even at zero), and automatic postings find accounts by code,
@@ -92,7 +103,21 @@ export function AccountsPage() {
     <>
       <PageHeader title="Chart of accounts" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Chart of accounts" }]} actions={<>{pageRights("accounts").edit && <button className="btn btn-primary" onClick={() => setModal({ open: true })}><i className="ti ti-plus me-1" />Add level-1 account</button>}<Link to="/app/reports/trial_balance" className="btn btn-outline-secondary">Trial balance</Link></>} />
       <Alert kind="info">4-level structure: <strong>1</strong> class → <strong>1-01</strong> group → <strong>1-01-001</strong> sub-group → <strong>1-01-001-0001</strong> posting account. Levels 1–3 are groups (no posting). System accounts (🔒) are used by automatic postings and cannot be deleted. The class and group levels (1–2) are the standard chart, so their code and name are fixed.</Alert>
-      <div className="card"><div className="card-body p-2">{q.isLoading ? <Spinner /> : render(q.data || [])}</div></div>
+      <div className="card">
+        <div className="card-header d-flex flex-wrap align-items-center gap-2 py-2">
+          <div className="input-group" style={{ maxWidth: 320 }}>
+            <span className="input-group-text"><i className="ti ti-search" /></span>
+            <input className="form-control" placeholder="Search code, name, subtype…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            {search && <button className="btn btn-outline-secondary" onClick={() => setSearch("")}><i className="ti ti-x" /></button>}
+          </div>
+          <select className="form-select" style={{ maxWidth: 180 }} value={typeF} onChange={(e) => setTypeF(e.target.value)}>
+            <option value="">All types</option>
+            {["asset", "liability", "equity", "income", "expense"].map((t) => <option key={t} value={t}>{titleCase(t)}</option>)}
+          </select>
+          {filtering && <span className="fs-12 text-muted">showing matches with their parent groups</span>}
+        </div>
+        <div className="card-body p-2">{q.isLoading ? <Spinner /> : (() => { const rows = render(prune(q.data || [])); return rows.length ? rows : <div className="text-muted text-center py-3 fs-13">No accounts match.</div>; })()}</div>
+      </div>
       <ResourceModal open={modal.open} onClose={() => setModal({ open: false })} title={modal.row ? `Edit ${modal.row.code}` : modal.parent ? `New account under ${modal.parent.code} ${modal.parent.name}` : "New level-1 account"} endpoint="/api/v1/accounting/accounts" id={modal.row?.id} initial={modal.row || (modal.parent ? { parent: modal.parent.id, type: modal.parent.type, code: `${modal.parent.code}-`, is_group: modal.parent.level < 3 } : { is_group: true })} onSaved={() => qc.invalidateQueries({ queryKey: ["coa-tree"] })}
         fields={fields} />
     </>
@@ -114,8 +139,8 @@ export function AccountLedgerPage() {
 
 export function JournalsPage() {
   const { can } = usePerms();
-  const cols: Column<any>[] = [{ key: "number", header: "Journal #", sortKey: "number", render: (j) => <span className="fw-semibold text-dark">{j.number}</span> }, { key: "date", header: "Date", sortKey: "date", render: (j) => date(j.date) }, { key: "type", header: "Type", render: (j) => titleCase(j.type) }, { key: "memo", header: "Memo", render: (j) => <>{j.memo}<div className="text-muted fs-11">{j.source_type} {j.source_number}</div></> }, { key: "total_debit", header: "Debit", num: true, render: (j) => money(j.total_debit) }, { key: "total_credit", header: "Credit", num: true, render: (j) => money(j.total_credit) }, { key: "status", header: "Status", render: (j) => <StatusBadge status={j.status} /> }];
-  return <ListPage page="journals" title="Journal entries" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Journals" }]} endpoint="/api/v1/accounting/journals" columns={cols} rowLink={(j) => `/app/accounting/journals/${j.id}`} createTo="/app/accounting/journals/new" createLabel="Manual journal" defaultOrdering="-date" searchPlaceholder="Search number, memo, source…" filters={[{ name: "status", label: "Status", type: "select", options: ["draft", "posted", "reversed"].map((s) => ({ value: s, label: s })) }, { name: "type", label: "Type", type: "select", options: ["manual", "auto", "opening", "closing"].map((s) => ({ value: s, label: s })) }, { name: "account", label: "Account", type: "entity", endpoint: "/api/v1/accounting/accounts", query: { is_group: false }, mapOption: acctOption }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]} />;
+  const cols: Column<any>[] = [{ key: "number", header: "Journal #", sortKey: "number", render: (j) => <span className="fw-semibold text-dark">{j.number}</span> }, { key: "date", header: "Date", sortKey: "date", render: (j) => date(j.date) }, { key: "voucher_code", header: "Voucher", render: (j) => <><span className="badge bg-info-light text-info">{j.voucher_code}</span><div className="text-muted fs-11">{titleCase(j.type)}</div></> }, { key: "memo", header: "Memo", render: (j) => <>{j.memo}<div className="text-muted fs-11">{j.source_type} {j.source_number}</div></> }, { key: "total_debit", header: "Debit", num: true, render: (j) => money(j.total_debit) }, { key: "total_credit", header: "Credit", num: true, render: (j) => money(j.total_credit) }, { key: "status", header: "Status", render: (j) => <StatusBadge status={j.status} /> }];
+  return <ListPage page="journals" title="Journal entries" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Journal entries" }]} endpoint="/api/v1/accounting/journals" columns={cols} rowLink={(j) => `/app/accounting/journals/${j.id}`} createTo="/app/accounting/journals/new" createLabel="New journal entry" defaultOrdering="-date" searchPlaceholder="Search number, memo, source…" filters={[{ name: "status", label: "Status", type: "select", options: ["draft", "posted", "reversed"].map((s) => ({ value: s, label: s })) }, { name: "voucher_type", label: "Voucher", type: "select", options: ["cpv", "crv", "bpv", "brv", "jv", "jrv", "jpv", "jcv", "sjv"].map((s) => ({ value: s, label: s.toUpperCase() })) }, { name: "type", label: "Type", type: "select", options: ["manual", "auto", "opening", "closing"].map((s) => ({ value: s, label: s })) }, { name: "account", label: "Account", type: "entity", endpoint: "/api/v1/accounting/accounts", query: { is_group: false }, mapOption: acctOption }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]} />;
 }
 
 export function JournalDetailPage() {
@@ -130,15 +155,32 @@ export function JournalDetailPage() {
   const src: Record<string, string> = { SalesInvoice: "/app/sales/invoices/", SalesOrder: "/app/sales/orders/", PurchaseBill: "/app/purchasing/bills/", GoodsReceipt: "/app/purchasing/grns/", Payment: "/app/accounting/payments/", StockAdjustment: "/app/inventory/adjustments/", Expense: "/app/accounting/expenses/", CreditNote: "/app/sales/credit-notes/", StockTransfer: "/app/inventory/transfers/", DeliveryTrip: "/app/delivery/trips/", PurchaseReturn: "/app/purchasing/returns/" };
   return (
     <>
-      <PageHeader title={j.number} badge={<StatusBadge status={j.status} />} crumbs={[{ label: "Journals", to: "/app/accounting/journals" }, { label: j.number }]}
-        actions={<>{j.status === "draft" && pageRights("journals").add && <Link to={`/app/accounting/journals/${j.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{j.status === "draft" && pageRights("journals").extras.post && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post")}><i className="ti ti-check me-1" />Post</button>}{j.status === "posted" && pageRights("journals").extras.reverse && <button className="btn btn-outline-danger" onClick={() => setRev(true)}>Reverse</button>}<button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/accounting/journals/${j.id}/print`)}><i className="ti ti-printer me-1" />Voucher</button></>} />
+      <PageHeader title={j.number} badge={<><span className="badge bg-info-light text-info me-1">{j.voucher_code}</span><StatusBadge status={j.status} /></>} crumbs={[{ label: "Journal entries", to: "/app/accounting/journals" }, { label: j.number }]}
+        actions={<>{j.status === "draft" && pageRights("journals").add && <Link to={`/app/accounting/journals/${j.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{j.status === "draft" && pageRights("journals").extras.post && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post")}><i className="ti ti-check me-1" />Post</button>}{j.status === "posted" && pageRights("journals").extras.reverse && <button className="btn btn-outline-danger" onClick={() => setRev(true)}>Reverse</button>}<button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/accounting/journals/${j.id}/print`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/accounting/journals/${j.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button></>} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Date / type">{date(j.date)} · {titleCase(j.type)}</InfoItem><InfoItem label="Memo">{j.memo}</InfoItem><InfoItem label="Source">{j.source_type && src[j.source_type] ? <Link to={`${src[j.source_type]}${j.source_id}`}>{j.source_type} {j.source_number}</Link> : j.source_type ? `${j.source_type} ${j.source_number}` : "manual"}</InfoItem><InfoItem label="Posted">{j.posted_by_name} {datetime(j.posted_at)}{j.reversed_by_number && <div className="fs-12 text-danger">reversed by {j.reversed_by_number}</div>}</InfoItem></div>
-        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Account</th><th>Description</th><th>Partner</th><th>Cost centre</th><th className="num">Debit</th><th className="num">Credit</th></tr></thead><tbody>{j.lines.map((l: any) => <tr key={l.id}><td><Link to={`/app/accounting/accounts/${l.account}`}>{l.account_code} {l.account_name}</Link></td><td>{l.description}</td><td>{l.partner_name || (l.partner_type ? `${l.partner_type}` : "")}</td><td>{l.cost_centre_name}</td><td className="num">{Number(l.debit) ? money(l.debit) : ""}</td><td className="num">{Number(l.credit) ? money(l.credit) : ""}</td></tr>)}</tbody><tfoot><tr className="fw-bold"><td colSpan={4} className="text-end">Total</td><td className="num">{money(j.total_debit)}</td><td className="num">{money(j.total_credit)}</td></tr></tfoot></table>
+        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Account</th><th>Description</th><th>Partner</th><th>Cost centre</th><th className="num">Debit</th><th className="num">Credit</th></tr></thead><tbody>{j.lines.map((l: any) => <tr key={l.id}><td><Link to={`/app/accounting/accounts/${l.account}`}>{l.account_code} {l.account_name}</Link></td><td>{l.description}{l.cheque_number && <span className="badge bg-secondary-light text-secondary ms-1 fs-11">Chq {l.cheque_number}</span>}</td><td>{l.partner_name || (l.partner_type ? `${l.partner_type}` : "")}</td><td>{l.cost_centre_name}</td><td className="num">{Number(l.debit) ? money(l.debit) : ""}</td><td className="num">{Number(l.credit) ? money(l.credit) : ""}</td></tr>)}</tbody><tfoot><tr className="fw-bold"><td colSpan={4} className="text-end">Total</td><td className="num">{money(j.total_debit)}</td><td className="num">{money(j.total_credit)}</td></tr></tfoot></table>
       </div></div>
       <DocTabs model="JournalEntry" id={j.id} showJournal={false} />
       <ConfirmDialog open={rev} title="Reverse journal" message="A mirror entry will be posted today and this entry marked reversed." withReason confirmText="Reverse" onClose={() => setRev(false)} onConfirm={async (r) => { await run("reverse", { memo: r || undefined }); setRev(false); }} />
     </>
+  );
+}
+
+
+/** A bank-account line on a voucher may carry one of our own cheques — offered only when the account is a bank. */
+function LineCheque({ account, value, number, onChange }: { account: string | null; value?: string | null; number?: string; onChange: (leaf: string | null, num: string) => void }) {
+  const banks = useOptions("/api/v1/accounting/bank-accounts");
+  const bank = (banks.data || []).find((b: any) => b.account === account);
+  const leaves = useQuery({ queryKey: ["line-cheques", bank?.id], queryFn: () => api.get("/api/v1/accounting/cheques-register", { available: 1, bank_account: bank.id, page_size: 100 }), enabled: Boolean(bank) });
+  if (!bank) return null;
+  const rows = (leaves.data?.results || leaves.data || []) as any[];
+  return (
+    <select className="form-select form-select-sm mt-1" value={value || ""} onChange={(e) => { const r = rows.find((x) => x.id === e.target.value); onChange(e.target.value || null, r?.number || ""); }}>
+      <option value="">no cheque</option>
+      {value && !rows.some((r) => r.id === value) && <option value={value}>Chq {number}</option>}
+      {rows.map((r: any, i: number) => <option key={r.id} value={r.id}>Chq {r.number}{i === 0 ? " (next)" : ""}</option>)}
+    </select>
   );
 }
 
@@ -152,8 +194,8 @@ export function JournalFormPage() {
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const j = existing.data;
-    setForm(j ? { date: j.date, memo: j.memo, notes: j.notes, version: j.version } : { date: new Date().toISOString().slice(0, 10), memo: "", notes: "" });
-    setLines(j ? j.lines.map((l: any) => ({ key: l.id, account: l.account, account_label: `${l.account_code} ${l.account_name}`, debit: l.debit, credit: l.credit, description: l.description, partner_type: l.partner_type, partner_id: l.partner_id })) : [{ key: "a", account: null, debit: "", credit: "", description: "" }, { key: "b", account: null, debit: "", credit: "", description: "" }]);
+    setForm(j ? { date: j.date, memo: j.memo, notes: j.notes, version: j.version, voucher_type: j.voucher_type || "jv" } : { date: new Date().toISOString().slice(0, 10), memo: "", notes: "", voucher_type: "jv" });
+    setLines(j ? j.lines.map((l: any) => ({ key: l.id, account: l.account, account_label: `${l.account_code} ${l.account_name}`, debit: l.debit, credit: l.credit, description: l.description, partner_type: l.partner_type, partner_id: l.partner_id, cheque_leaf: l.cheque_leaf, cheque_number: l.cheque_number })) : [{ key: "a", account: null, debit: "", credit: "", description: "" }, { key: "b", account: null, debit: "", credit: "", description: "" }]);
     return <Spinner />;
   }
   const td = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
@@ -164,7 +206,7 @@ export function JournalFormPage() {
     if (valid.length < 2) return toast.error("At least two lines with amounts are required");
     if (Math.abs(td - tc) > 0.005) return toast.error(`Journal does not balance (debit ${money(td)} ≠ credit ${money(tc)})`);
     try {
-      const body = { ...form, post, lines: valid.map((l, i) => ({ account: l.account, debit: l.debit || 0, credit: l.credit || 0, description: l.description || "", partner_type: l.partner_type || "", partner_id: l.partner_id || "", sequence: i })) };
+      const body = { ...form, post, lines: valid.map((l, i) => ({ account: l.account, debit: l.debit || 0, credit: l.credit || 0, description: l.description || "", partner_type: l.partner_type || "", partner_id: l.partner_id || "", cheque_leaf: l.cheque_leaf || null, sequence: i })) };
       const r = id ? await api.patch(`/api/v1/accounting/journals/${id}`, body) : await api.post("/api/v1/accounting/journals", body, true);
       toast.success("Saved");
       nav(`/app/accounting/journals/${r.id}`);
@@ -172,11 +214,11 @@ export function JournalFormPage() {
   };
   return (
     <>
-      <PageHeader title={id ? `Edit ${existing.data?.number}` : "Manual journal"} crumbs={[{ label: "Journals", to: "/app/accounting/journals" }, { label: id ? "Edit" : "New" }]} />
+      <PageHeader title={id ? `Edit ${existing.data?.number}` : "New journal entry"} crumbs={[{ label: "Journal entries", to: "/app/accounting/journals" }, { label: id ? "Edit" : "New" }]} />
       <div className="card mb-3"><div className="card-body">
-        <div className="row"><Field label="Date" col="col-md-3"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field><Field label="Memo *" col="col-md-9"><input className="form-control" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} /></Field></div>
+        <div className="row"><Field label="Date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field><Field label="Voucher type" col="col-md-3" hint="its own numbering series (CPV-00001 …)"><select className="form-select" value={form.voucher_type} disabled={Boolean(id)} onChange={(e) => setForm({ ...form, voucher_type: e.target.value })}>{[["cpv", "CPV — Cash Payment"], ["crv", "CRV — Cash Receipt"], ["bpv", "BPV — Bank Payment"], ["brv", "BRV — Bank Receipt"], ["jv", "JV — Journal"], ["jrv", "JRV — Journal Receipt"], ["jpv", "JPV — Journal Payment"], ["jcv", "JCV — Journal Contra"], ["sjv", "SJV — Standing Journal"]].map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></Field><Field label="Memo *" col="col-md-7"><input className="form-control" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} /></Field></div>
         <table className="table table-sm align-middle"><thead className="table-light"><tr><th style={{ minWidth: 280 }}>Account</th><th>Description</th><th style={{ width: 140 }} className="num">Debit</th><th style={{ width: 140 }} className="num">Credit</th><th style={{ width: 40 }} /></tr></thead>
-          <tbody>{lines.map((l) => <tr key={l.key}><td><EntitySelect endpoint="/api/v1/accounting/accounts" query={{ is_group: false, is_active: true }} value={l.account} onChange={(v) => upd(l.key, { account: v })} mapOption={acctOption} size="sm" allowClear={false} /></td><td><input className="form-control form-control-sm" value={l.description} onChange={(e) => upd(l.key, { description: e.target.value })} /></td><td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.debit} onChange={(e) => upd(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} /></td><td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.credit} onChange={(e) => upd(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} /></td><td><button className="btn btn-sm btn-outline-danger" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><i className="ti ti-x" /></button></td></tr>)}</tbody>
+          <tbody>{lines.map((l) => <tr key={l.key}><td><EntitySelect endpoint="/api/v1/accounting/accounts" query={{ is_group: false, is_active: true }} value={l.account} onChange={(v) => upd(l.key, { account: v, cheque_leaf: null, cheque_number: "" })} mapOption={acctOption} size="sm" allowClear={false} /><LineCheque account={l.account} value={l.cheque_leaf} number={l.cheque_number} onChange={(leaf, num) => upd(l.key, { cheque_leaf: leaf, cheque_number: num })} /></td><td><input className="form-control form-control-sm" value={l.description} onChange={(e) => upd(l.key, { description: e.target.value })} /></td><td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.debit} onChange={(e) => upd(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} /></td><td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.credit} onChange={(e) => upd(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} /></td><td><button className="btn btn-sm btn-outline-danger" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><i className="ti ti-x" /></button></td></tr>)}</tbody>
           <tfoot><tr><td colSpan={2} className="text-end fw-semibold">Totals</td><td className="num fw-bold">{money(td)}</td><td className="num fw-bold">{money(tc)}</td><td /></tr>{Math.abs(td - tc) > 0.005 && <tr><td colSpan={5} className="text-danger fs-12">Difference: {money(td - tc)}</td></tr>}</tfoot></table>
         <button className="btn btn-outline-primary btn-sm" onClick={() => setLines([...lines, { key: crypto.randomUUID(), account: null, debit: "", credit: "", description: "" }])}><i className="ti ti-plus me-1" />Add line</button>
       </div></div>
