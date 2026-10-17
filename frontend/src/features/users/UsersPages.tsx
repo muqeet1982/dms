@@ -377,7 +377,10 @@ export function RoleFormPage() {
   const [form, setForm] = useState<any>(null);
   const [saved, setSaved] = useState<null | { name: string; users: number; revoked: boolean }>(null);
   const [busy, setBusy] = useState(false);
-  if ((id && q.isLoading) || (roleType === "external" && catalog.isLoading)) return <Spinner />;
+  // The first seed must come from data fresh off the network, not the cached copy react-query hands back
+  // instantly while it refetches — seeding from that stale copy showed pre-save switches until a hard refresh.
+  // Once the form is seeded, background refetches are ignored so they can never wipe the user's editing.
+  if ((id && (q.isLoading || (q.isFetching && !form))) || (roleType === "external" && catalog.isLoading)) return <Spinner />;
   // `permissions_effective` expands any coarse codenames an older role still holds, so the switches show reality
   if (!form) { setForm(q.data ? { name: q.data.name, description: q.data.description, permissions: q.data.permissions_effective || q.data.permissions, approval_limits: q.data.approval_limits || {} } : { name: "", description: "", permissions: [], approval_limits: {} }); return <Spinner />; }
   const readOnly = Boolean(q.data?.is_system) || (id ? !page.edit : !page.add);
