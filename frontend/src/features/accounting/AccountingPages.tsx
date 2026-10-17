@@ -314,16 +314,13 @@ export function PaymentFormPage() {
         {form.partner_type === "other" && <Field label="Account head *" col="col-md-4" hint={form.direction === "in" ? "what the money is — rent income, a loan received, owner capital …" : "what the money pays for"}><EntitySelect endpoint="/api/v1/accounting/accounts" query={{ is_group: false, is_active: true }} value={form.other_account} onChange={(v) => setForm({ ...form, other_account: v })} mapOption={acctOption} placeholder="defaults to Misc income" /></Field>}
         {form.partner_type !== "other" && <Field label="Partner *" col="col-md-4"><EntitySelect endpoint={endpoint} value={form.partner_id} onChange={(v) => { setForm({ ...form, partner_id: v }); setAlloc({}); setDeduct({}); }} mapOption={(p) => ({ id: p.id, label: p.name, sub: `${p.code || ""} outstanding ${money(p.outstanding)}` })} /></Field>}
         <Field label="Amount *" col="col-md-2"><input type="number" step="0.01" className="form-control" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field><Field label="Date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label={form.direction === "in" ? "Received as" : "Paid as"} col="col-md-2" hint={form.money.startsWith("cash:") ? "cash account picked" : form.method === "cheque" ? "waits as a cheque until cleared" : undefined}>
-          {form.money.startsWith("cash:")
-            ? <div className="form-control-plaintext fs-13"><i className="ti ti-cash me-1" />Cash</div>
-            : <select className="form-select" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
-                {!form.money && <option value="cash">Cash</option>}
-                <option value="bank_transfer">Bank transfer</option>
-                <option value="online">Online (JazzCash/Easypaisa/card)</option>
-                <option value="cheque">Cheque</option>
-              </select>}
-        </Field>
+        {form.money.startsWith("bank:") && <Field label={form.direction === "in" ? "Received as" : "Paid as"} col="col-md-2" hint={form.method === "cheque" ? (form.direction === "in" ? "waits in PDC until cleared into this bank" : "writes a leaf from this bank's cheque book") : undefined}>
+          <select className="form-select" value={form.method === "cash" ? "bank_transfer" : form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
+            <option value="bank_transfer">Bank transfer</option>
+            <option value="online">Online (JazzCash/Easypaisa/card)</option>
+            <option value="cheque">Cheque</option>
+          </select>
+        </Field>}
         <Field label={form.direction === "in" ? "Debit — money into *" : "Credit — paid from *"} col="col-md-3" hint={form.method === "cheque" && form.direction === "in" ? "a customer cheque waits in Post-dated Cheques Received until it clears into this bank" : undefined}><EntitySelect endpoint="/api/v1/accounting/payments/money-accounts" value={form.money || null} onChange={pickMoney} mapOption={(r: any) => r} placeholder="search bank or cash…" /></Field>
         <Field label={form.direction === "in" ? "Credit — against" : "Debit — against"} col="col-md-3" hint={form.partner_type === "other" ? "pick the account head above" : "fixed: allocating to documents must move this control account"}><div className="form-control-plaintext fs-13">{legs.data ? <><i className={`ti ${legs.data.locked ? "ti-lock" : "ti-pencil"} me-1 text-muted`} />{legs.data.account}</> : <span className="text-muted">pick a partner</span>}</div></Field>
         {form.method === "cheque" && <><ChequeNumberField form={form} setForm={setForm} /><Field label="Cheque date" col="col-md-2"><DateInput className="form-control" value={form.cheque_date} onChange={(e) => setForm({ ...form, cheque_date: e.target.value })} /></Field><Field label="Bank" col="col-md-2"><input className="form-control" value={form.cheque_bank} onChange={(e) => setForm({ ...form, cheque_bank: e.target.value })} /></Field></>}
