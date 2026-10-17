@@ -50,3 +50,8 @@ export const daysAgo = (n: number) => dayjs().subtract(n, "day").format("YYYY-MM
 export const startOfMonth = () => dayjs().startOf("month").format("YYYY-MM-DD");
 export const titleCase = (s: any) => (s ? String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "");
 export const num = (v: any) => Number(v || 0);
+
+/** Field names in Title Case — every word's first letter capital, the rest untouched (NTN, D.P stay as typed). */
+export function labelCase(s: string): string {
+  return s.replace(/(^|\s|\/|\()([a-z])/g, (_m, pre, ch) => pre + ch.toUpperCase());
+}

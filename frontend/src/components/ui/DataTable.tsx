@@ -1,3 +1,4 @@
+import { labelCase } from "@/lib/format";
 import { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { EmptyState, Spinner } from "./Bits";
@@ -18,7 +19,7 @@ export function DataTable<T extends { id?: string }>({ columns, rows, loading, r
               const active = ordering && c.sortKey && ordering.replace("-", "") === c.sortKey;
               return (
                 <th key={c.key} className={`${c.num ? "num " : ""}${c.className || ""} ${c.sortKey ? "cursor-pointer" : ""}`} onClick={() => c.sortKey && onSort?.(active && !ordering!.startsWith("-") ? `-${c.sortKey}` : c.sortKey!)}>
-                  {c.header}{active && <i className={`ti ${ordering!.startsWith("-") ? "ti-arrow-down" : "ti-arrow-up"} ms-1 fs-11`} />}
+                  {typeof c.header === "string" ? labelCase(c.header) : c.header}{active && <i className={`ti ${ordering!.startsWith("-") ? "ti-arrow-down" : "ti-arrow-up"} ms-1 fs-11`} />}
                 </th>
               );
             })}

@@ -1,3 +1,4 @@
+import { labelCase } from "@/lib/format";
 import { DateInput } from "@/components/ui/DateInput";
 import { Fragment, ReactNode, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -151,7 +152,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
     if (f.type === "date") return <DateInput className={`form-control ${invalid}`} value={values[f.name] ?? ""} onChange={(e) => set(f.name, e.target.value)} readOnly={f.readOnly} />;
     if (f.type === "select") return <Select value={values[f.name]} onChange={(v) => set(f.name, v)} options={f.options || []} className={`form-select ${invalid}`} empty={f.required ? "— Select —" : "— None —"} />;
     if (f.type === "entity") return <EntitySelect endpoint={f.endpoint!} mapOption={f.mapOption!} query={f.query} value={values[f.name]} onChange={(v) => set(f.name, v)} placeholder={f.placeholder || `Select ${f.label.toLowerCase()}`} />;
-    if (f.type === "checkbox") return <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id={`rf-${f.name}`} checked={Boolean(values[f.name])} onChange={(e) => set(f.name, e.target.checked)} /><label className="form-check-label fs-13" htmlFor={`rf-${f.name}`}>{f.label}</label></div>;
+    if (f.type === "checkbox") return <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id={`rf-${f.name}`} checked={Boolean(values[f.name])} onChange={(e) => set(f.name, e.target.checked)} /><label className="form-check-label fs-13" htmlFor={`rf-${f.name}`}>{labelCase(f.label)}</label></div>;
     if (f.type === "custom") return f.render?.(values[f.name], (v) => set(f.name, v), values, set);
     return null;
   };
@@ -160,7 +161,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
     <div className="row">
       {g.fields.map((f) => (
         <div key={f.name} className={`${f.col || (inline ? "col-md-6" : "col-md-6")} mb-3`}>
-          {f.type !== "checkbox" && <label className="form-label fs-13 fw-medium" htmlFor={`rf-${f.name}`}>{f.label}{f.required && <span className="text-danger"> *</span>}</label>}
+          {f.type !== "checkbox" && <label className="form-label fs-13 fw-medium" htmlFor={`rf-${f.name}`}>{labelCase(f.label)}{f.required && <span className="text-danger"> *</span>}</label>}
           {control(f)}
           {errors[f.name] && <div className="invalid-feedback d-block">{errors[f.name]}</div>}
           {f.hint && !errors[f.name] && <div className="form-text fs-11">{f.hint}</div>}

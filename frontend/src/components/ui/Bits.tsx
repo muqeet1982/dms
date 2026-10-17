@@ -1,3 +1,4 @@
+import { labelCase } from "@/lib/format";
 import { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { money, titleCase } from "@/lib/format";
@@ -75,7 +76,7 @@ export function Alert({ kind = "info", children, icon }: { kind?: "info" | "warn
 export function Field({ label, children, hint, col = "" }: { label?: ReactNode; children: ReactNode; hint?: ReactNode; col?: string }) {
   return (
     <div className={`${col ? col + " " : ""}mb-3`}>
-      {label && <label className="form-label">{label}</label>}
+      {label && <label className="form-label">{typeof label === "string" ? labelCase(label) : label}</label>}
       {children}
       {hint && <div className="form-text">{hint}</div>}
     </div>
@@ -85,7 +86,7 @@ export function Field({ label, children, hint, col = "" }: { label?: ReactNode; 
 export function InfoItem({ label, children, col = "col-md-3" }: { label: string; children: ReactNode; col?: string }) {
   return (
     <div className={col}>
-      <p className="text-muted fs-11 mb-1">{label}</p>
+      <p className="text-muted fs-11 mb-1">{labelCase(label)}</p>
       <div className="mb-0 fw-medium">{children ?? "—"}</div>
     </div>
   );
