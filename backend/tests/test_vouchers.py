@@ -76,3 +76,17 @@ def test_deleting_a_draft_releases_its_cheques(api, tenant):
     assert api.delete(f"/api/v1/accounting/journals/{r.data['id']}").status_code in (200, 204)
     leaf.refresh_from_db()
     assert leaf.status == "available"
+
+
+def test_an_other_receipt_credits_the_chosen_account_head(api, tenant):
+    """Receiving money that is not from a customer books against the head the user picks, not Misc income."""
+    from apps.accounting.models import Account, JournalLine
+    from apps.accounting.services import PaymentService
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        head = Account.all_objects.filter(tenant=tenant, type="income", is_group=False).exclude(name__icontains="misc").first()
+        pay = PaymentService.record(direction="in", partner_type="other", partner_name="Landlord refund", amount="500", method="cash", other_account=head)
+        assert pay.other_account_id == head.id
+        line = JournalLine.objects.get(entry=pay.journal, credit__gt=0)
+        assert line.account_id == head.id, (line.account.code, head.code)

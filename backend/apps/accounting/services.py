@@ -265,6 +265,9 @@ class PostingService:
         elif payment.partner_type == "company":
             # manufacturer reimbursing its discount share — settles the claims receivable, not AP
             partner_acct = account_for("manufacturer_claim", "payment")
+        elif payment.other_account_id:
+            # "other" with a chosen head: the user says what the money is (rent income, a loan, capital …)
+            partner_acct = payment.other_account
         else:
             partner_acct = account_for("other_income", "payment") if payment.direction == "in" else account_for("bank_charges", "payment")
         net = payment.amount - payment.withholding_amount
@@ -576,7 +579,7 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
-    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None):
+    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None, other_account=None):
         amount = q4(amount)
         if amount <= 0:
             raise DomainError("Amount must be positive.")
@@ -620,7 +623,7 @@ class PaymentService:
             number=number, direction=direction, partner_type=partner_type, partner_id=str(partner_id or ""), partner_name=partner_name, date=date_ or timezone.localdate(), amount=amount, method=method,
             bank_account=bank_account, cash_account=cash_account if method == "cash" else None, collected_by=collected_by or (get_current_user() if getattr(get_current_user(), "is_authenticated", False) else None),
             cheque_no=cheque_no, cheque_date=cheque_date, cheque_bank=cheque_bank, cheque_status="pending" if method == "cheque" else "", reference=reference, notes=notes,
-            withholding_tax=withholding_tax, withholding_amount=q4(withholding_amount), trip=trip, delivery_note=delivery_note, status="posted",
+            withholding_tax=withholding_tax, withholding_amount=q4(withholding_amount), trip=trip, delivery_note=delivery_note, status="posted", other_account=other_account if partner_type == "other" else None,
         )
         if method == "cheque":
             ChequeBookService.take(pay)

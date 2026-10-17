@@ -346,7 +346,7 @@ class PaymentViewSet(DocumentViewSet):
             direction=d["direction"], partner_type=d["partner_type"], partner_id=d.get("partner_id", ""), amount=d["amount"], method=d.get("method", "cash"), date_=d.get("date"),
             bank_account=d.get("bank_account"), cash_account=d.get("cash_account"), allocations=allocations or None, cheque_no=d.get("cheque_no", ""), cheque_date=d.get("cheque_date"), cheque_bank=d.get("cheque_bank", ""),
             reference=d.get("reference", ""), notes=d.get("notes", ""), withholding_tax=d.get("withholding_tax"), withholding_amount=d.get("withholding_amount", 0), trip=d.get("trip"), delivery_note=d.get("delivery_note"), collected_by=d.get("collected_by"),
-            claim_deductions=claim_deductions or None,
+            claim_deductions=claim_deductions or None, other_account=d.get("other_account"),
         )
 
     def perform_update(self, serializer):

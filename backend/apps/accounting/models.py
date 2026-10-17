@@ -233,6 +233,9 @@ class Payment(DocumentModel):
     method = models.CharField(max_length=15, choices=METHODS, default="cash")
     bank_account = models.ForeignKey(BankAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="payments")
     cash_account = models.ForeignKey(CashAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="payments")
+    # partner type "other": the account head the money is booked against (rent income, a loan, owner capital …);
+    # left empty it falls back to Misc income (in) / Bank charges (out)
+    other_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.PROTECT, related_name="other_payments")
     collected_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="collected_payments")
     cheque_no = models.CharField(max_length=40, blank=True)
     cheque_date = models.DateField(null=True, blank=True)

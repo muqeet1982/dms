@@ -160,6 +160,11 @@ class PaymentAllocationSerializer(serializers.ModelSerializer):
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    other_account_name = serializers.SerializerMethodField()
+
+    def get_other_account_name(self, obj):
+        return f"{obj.other_account.code} {obj.other_account.name}" if obj.other_account_id else ""
+
     allocations = PaymentAllocationSerializer(many=True, required=False)
     bank_account_name = serializers.CharField(source="bank_account.name", read_only=True, default="")
     cash_account_name = serializers.CharField(source="cash_account.name", read_only=True, default="")
@@ -168,7 +173,7 @@ class PaymentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Payment
-        fields = ["id", "number", "direction", "partner_type", "partner_id", "partner_name", "date", "amount", "method", "bank_account", "bank_account_name", "cash_account", "cash_account_name", "collected_by", "collected_by_name", "cheque_no", "cheque_date", "cheque_bank", "cheque_status", "reference", "withholding_tax", "withholding_amount", "status", "journal", "journal_number", "trip", "delivery_note", "unallocated", "notes", "allocations", "created_at"]
+        fields = ["id", "number", "direction", "partner_type", "partner_id", "partner_name", "date", "amount", "method", "bank_account", "bank_account_name", "cash_account", "cash_account_name", "other_account", "other_account_name", "collected_by", "collected_by_name", "cheque_no", "cheque_date", "cheque_bank", "cheque_status", "reference", "withholding_tax", "withholding_amount", "status", "journal", "journal_number", "trip", "delivery_note", "unallocated", "notes", "allocations", "created_at"]
         read_only_fields = ["id", "number", "partner_name", "cheque_status", "status", "journal", "unallocated", "created_at"]
 
 
