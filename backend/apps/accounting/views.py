@@ -336,6 +336,8 @@ class PaymentViewSet(DocumentViewSet):
         "cheque": "accounting.change_cheque",
         "cheques": "accounting.view_cheque",
         "open_documents": "accounting.view_payment",
+        "money_accounts": "accounting.view_payment",
+        "legs": "accounting.view_payment",
         "print": "accounting.view_payment",
     }, also={"create": [extra_perm("payments", "receive"), extra_perm("payments", "pay")]})
     filterset_fields = ["direction", "partner_type", "partner_id", "method", "status", "cheque_status", "bank_account", "cash_account", "collected_by", "trip"]
@@ -400,6 +402,32 @@ class PaymentViewSet(DocumentViewSet):
         pt, pid = request.query_params.get("partner_type"), request.query_params.get("partner_id")
         docs = PaymentService._open_documents(pt, pid)
         return Response([{"document_type": t, "document_id": str(d.pk), "number": d.number, "date": getattr(d, "date", None) or getattr(d, "bill_date", None), "due_date": d.due_date, "total": str(d.total), "paid": str(d.paid_amount), "balance": str(b)} for d, b, t in docs])
+
+    @action(detail=False, methods=["get"], url_path="money-accounts")
+    def money_accounts(self, request):
+        """Every place money can sit, in one searchable list: the payment form's debit (in) / credit (out) leg."""
+        needle = (request.query_params.get("search") or "").lower()
+        rows = []
+        for c in CashAccount.objects.filter(is_active=True).select_related("account"):
+            rows.append({"id": f"cash:{c.pk}", "label": c.name, "sub": f"Cash · {c.account.code if c.account_id else ''}", "kind": "cash"})
+        for b in BankAccount.objects.filter(is_active=True).select_related("account"):
+            rows.append({"id": f"bank:{b.pk}", "label": b.name, "sub": f"Bank · {b.account.code if b.account_id else ''} {b.account_no or ''}".strip(), "kind": "bank"})
+        if needle:
+            rows = [r for r in rows if needle in r["label"].lower() or needle in r["sub"].lower()]
+        return Response(rows)
+
+    @action(detail=False, methods=["get"])
+    def legs(self, request):
+        """What the partner side of this payment will hit — shown on the form so both Dr and Cr are visible
+        before saving, resolved by the same code that posts the journal."""
+        p = request.query_params
+        other = None
+        if p.get("other_account"):
+            other = Account.objects.filter(pk=p["other_account"]).first()
+        acct = PostingService.resolve_partner_account(p.get("direction", "in"), p.get("partner_type", "customer"), p.get("partner_id") or None, other)
+        locked = p.get("partner_type", "customer") != "other"
+        return Response({"account": f"{acct.code} {acct.name}", "account_id": str(acct.id), "locked": locked,
+                         "why": "allocating to invoices/bills must move this control account, or the ledger and the document balances drift apart" if locked else "your choice of head"})
 
     @action(detail=True, methods=["get"])
     def print(self, request, pk=None):

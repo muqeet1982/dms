@@ -244,32 +244,33 @@ class PostingService:
         return account_for("cash", "payment")
 
     @staticmethod
-    def post_payment(payment):
-        money = PostingService._money_account(payment)
-        if payment.partner_type == "customer":
-            partner_acct = account_for("ar", "payment")
+    def resolve_partner_account(direction, partner_type, partner_id=None, other_account=None):
+        """The partner leg of a payment — the account the money is booked against. One resolver, used both to
+        post the journal and to show the leg on the form before saving, so the two can never disagree."""
+        if partner_type == "customer":
             from apps.partners.models import Customer
 
-            c = Customer.objects.filter(pk=payment.partner_id).first()
-            if c and c.account_id:
-                partner_acct = c.account
-        elif payment.partner_type == "supplier":
-            partner_acct = account_for("ap", "payment")
+            c = Customer.objects.filter(pk=partner_id).first() if partner_id else None
+            return c.account if c and c.account_id else account_for("ar", "payment")
+        if partner_type == "supplier":
             from apps.partners.models import Supplier
 
-            s = Supplier.objects.filter(pk=payment.partner_id).first()
-            if s and s.account_id:
-                partner_acct = s.account
-        elif payment.partner_type == "rep":
-            partner_acct = account_for("rep_clearing", "payment")
-        elif payment.partner_type == "company":
+            s = Supplier.objects.filter(pk=partner_id).first() if partner_id else None
+            return s.account if s and s.account_id else account_for("ap", "payment")
+        if partner_type == "rep":
+            return account_for("rep_clearing", "payment")
+        if partner_type == "company":
             # manufacturer reimbursing its discount share — settles the claims receivable, not AP
-            partner_acct = account_for("manufacturer_claim", "payment")
-        elif payment.other_account_id:
+            return account_for("manufacturer_claim", "payment")
+        if other_account is not None:
             # "other" with a chosen head: the user says what the money is (rent income, a loan, capital …)
-            partner_acct = payment.other_account
-        else:
-            partner_acct = account_for("other_income", "payment") if payment.direction == "in" else account_for("bank_charges", "payment")
+            return other_account
+        return account_for("other_income", "payment") if direction == "in" else account_for("bank_charges", "payment")
+
+    @staticmethod
+    def post_payment(payment):
+        money = PostingService._money_account(payment)
+        partner_acct = PostingService.resolve_partner_account(payment.direction, payment.partner_type, payment.partner_id, payment.other_account if payment.other_account_id else None)
         net = payment.amount - payment.withholding_amount
         # the manufacturer is a supplier on the ledger; "other" carries no partner tag
         jp = "supplier" if payment.partner_type == "company" else (payment.partner_type if payment.partner_type != "other" else "")

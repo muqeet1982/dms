@@ -130,3 +130,18 @@ def test_impersonations_of_different_tenants_coexist(admin_user, tenant, tenant_
     TenantService.end_impersonation(admin_user)
     b.refresh_from_db()
     assert b.ended_at is not None
+
+
+def test_payment_form_shows_both_legs(api, tenant):
+    """The form's two dropdowns: money accounts merged+searchable, and the partner leg resolved by the same
+    code that posts the journal — locked for partners, free for 'other'."""
+    r = api.get("/api/v1/accounting/payments/money-accounts")
+    assert r.status_code == 200 and any(x["kind"] == "bank" for x in r.data) and any(x["kind"] == "cash" for x in r.data), r.data
+    assert all(":" in x["id"] for x in r.data)
+    s = api.get("/api/v1/accounting/payments/money-accounts", {"search": "main bank"})
+    assert all("main bank" in x["label"].lower() for x in s.data) and s.data
+
+    legs = api.get("/api/v1/accounting/payments/legs", {"direction": "in", "partner_type": "customer"})
+    assert legs.status_code == 200 and legs.data["locked"] and "Receivable" in legs.data["account"], legs.data
+    other = api.get("/api/v1/accounting/payments/legs", {"direction": "in", "partner_type": "other"})
+    assert not other.data["locked"]
