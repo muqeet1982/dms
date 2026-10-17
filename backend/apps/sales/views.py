@@ -325,6 +325,10 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
             qs = qs.filter(date__lte=p["date_to"])
         if p.get("open") == "1":
             qs = qs.filter(status__in=["posted", "partially_paid", "overdue"])
+        if p.get("returnable") == "1":
+            # a credit note can be raised against any real invoice, PAID included — goods come back after
+            # payment all the time; only drafts and cancelled ones are no basis for a return
+            qs = qs.filter(status__in=["posted", "partially_paid", "paid", "overdue"])
         if p.get("overdue") == "1":
             qs = qs.filter(status__in=["posted", "partially_paid", "overdue"], due_date__lt=timezone.localdate())
         return qs

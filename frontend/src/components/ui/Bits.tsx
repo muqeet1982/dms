@@ -134,7 +134,7 @@ export function Breadcrumb({ items }: { items: { label: string; to?: string }[] 
       <ol className="breadcrumb mb-0">
         <li className="breadcrumb-item"><Link to={root}>{root === "/rep" ? "Home" : "Dashboard"}</Link></li>
         {items.map((it, i) => (
-          <li key={i} className={`breadcrumb-item ${i === items.length - 1 ? "active" : ""}`}>{it.to && i < items.length - 1 ? <Link to={it.to}>{it.label}</Link> : it.label}</li>
+          <li key={i} className={`breadcrumb-item ${i === items.length - 1 ? "active" : ""}`}>{it.to && i < items.length - 1 ? <Link to={it.to}>{labelCase(it.label)}</Link> : labelCase(it.label)}</li>
         ))}
       </ol>
     </nav>
@@ -145,7 +145,7 @@ export function PageHeader({ title, badge, crumbs, actions }: { title: ReactNode
   return (
     <div className="d-md-flex d-block align-items-center justify-content-between mb-3">
       <div className="my-auto mb-2">
-        <h3 className="page-title mb-1">{title}{badge && <span className="ms-2 align-middle">{badge}</span>}</h3>
+        <h3 className="page-title mb-1">{typeof title === "string" ? labelCase(title) : title}{badge && <span className="ms-2 align-middle">{badge}</span>}</h3>
         {crumbs && crumbs.length > 0 && <Breadcrumb items={crumbs} />}
       </div>
       {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
