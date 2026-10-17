@@ -35,11 +35,18 @@ DEFAULT_PREFIXES = {
 }
 
 
+def _company_code(tenant_id) -> str:
+    """The tenant's short code stamped before every document number (TDN-SO-00001), '' when unset."""
+    from apps.platform.models import Tenant
+
+    code = Tenant.objects.filter(pk=tenant_id).values_list("doc_code", flat=True).first() or ""
+    return f"{code}-" if code else ""
+
+
 def _prefix_for(document_type: str, tenant_id) -> str:
     seq = NumberSequence.all_objects.filter(tenant_id=tenant_id, document_type=document_type).first()
-    if seq is not None:
-        return seq.prefix
-    return DEFAULT_PREFIXES.get(document_type, document_type.upper()[:3] + "-")
+    prefix = seq.prefix if seq is not None else DEFAULT_PREFIXES.get(document_type, document_type.upper()[:3] + "-")
+    return f"{_company_code(tenant_id)}{prefix}"
 
 
 def numeric_core(number: str) -> str:
@@ -95,9 +102,10 @@ def next_number(document_type: str, tenant_id=None, unique_for=None) -> str:
         if seq.reset == "yearly" and seq.last_reset_year != year:
             seq.next_number = 1
             seq.last_reset_year = year
-        number = f"{seq.prefix}{str(seq.next_number).zfill(seq.padding)}"
+        company = _company_code(tenant_id)
+        number = f"{company}{seq.prefix}{str(seq.next_number).zfill(seq.padding)}"
         if seq.reset == "yearly":
-            number = f"{seq.prefix}{year}-{str(seq.next_number).zfill(seq.padding)}"
+            number = f"{company}{seq.prefix}{year}-{str(seq.next_number).zfill(seq.padding)}"
         seq.next_number += 1
         seq.save(update_fields=["next_number", "last_reset_year", "updated_at"])
         return number

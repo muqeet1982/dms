@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
 import { date, datetime, money, titleCase } from "@/lib/format";
 import { useOptions } from "@/lib/hooks";
-import { usePerms } from "@/lib/perms";
+import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, Tabs } from "@/components/ui/Bits";
 import { CrudPage } from "@/components/ui/CrudPage";
@@ -230,7 +230,31 @@ export function TaxesPage() {
   );
 }
 
+function CompanyCodeCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["company-code"], queryFn: () => api.get("/api/v1/settings/numbering/company-code") });
+  const [code, setCode] = useState<string | null>(null);
+  const rights = pageRights("settings_numbering");
+  const value = code ?? q.data?.code ?? "";
+  return (
+    <div className="card mb-3"><div className="card-body d-flex flex-wrap align-items-end gap-3">
+      <div>
+        <label className="form-label mb-1 fw-medium">Company code on every document number</label>
+        <div className="fs-12 text-muted mb-2">Each company's documents carry its own code — e.g. <code>{q.data?.example || "TDN-SO-00001"}</code> — so numbers can never be confused between companies.</div>
+        <div className="d-flex gap-2">
+          <input className="form-control" style={{ width: 140 }} maxLength={8} value={value} onChange={(e) => setCode(e.target.value.toUpperCase())} disabled={!rights.edit} />
+          {rights.edit && <button className="btn btn-primary" disabled={!value || value === q.data?.code} onClick={async () => { try { await api.post("/api/v1/settings/numbering/company-code", { code: value }); toast.success("Company code saved — new documents will carry it"); qc.invalidateQueries({ queryKey: ["company-code"] }); setCode(null); } catch (e: any) { toast.error(e.message); } }}>Save</button>}
+        </div>
+      </div>
+    </div></div>
+  );
+}
+
 export function NumberingPage() {
+  return <><CompanyCodeCard /><NumberingTable /></>;
+}
+
+function NumberingTable() {
   return <CrudPage page="settings_numbering" title="Document numbering" crumbs={[{ label: "Settings" }, { label: "Numbering" }]} endpoint="/api/v1/settings/numbering" columns={[{ key: "document_type", header: "Document", render: (n: any) => titleCase(n.document_type) }, { key: "prefix", header: "Prefix" }, { key: "next_number", header: "Next number", num: true }, { key: "padding", header: "Padding", num: true }, { key: "reset", header: "Reset" }, { key: "preview", header: "Preview", render: (n: any) => <code>{n.prefix}{n.reset === "yearly" ? `${new Date().getFullYear()}-` : ""}{String(n.next_number).padStart(n.padding, "0")}</code> }]} fields={[{ name: "prefix", label: "Prefix", col: "col-md-4" }, { name: "next_number", label: "Next number", type: "number", col: "col-md-4" }, { name: "padding", label: "Padding (digits)", type: "number", col: "col-md-4" }, { name: "reset", label: "Reset", type: "select", options: [{ value: "never", label: "Never" }, { value: "yearly", label: "Yearly" }], col: "col-md-4" }]} canDelete={false} />;
 }
 

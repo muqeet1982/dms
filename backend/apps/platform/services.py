@@ -53,6 +53,18 @@ class PlanService:
 
 class TenantService:
     @staticmethod
+    def derive_doc_code(name):
+        """Short company code for document numbers: initials of the name (TDN), deduped across tenants."""
+        words = [w for w in "".join(c if c.isalnum() or c.isspace() else " " for c in (name or "")).split() if w]
+        code = ("".join(w[0] for w in words)[:4] if len(words) >= 2 else (words[0][:4] if words else "CO")).upper()
+        taken = set(Tenant.objects.exclude(doc_code="").values_list("doc_code", flat=True))
+        base, n = code, 2
+        while code in taken:
+            code = f"{base}{n}"
+            n += 1
+        return code
+
+    @staticmethod
     @transaction.atomic
     def create_tenant(*, legal_name, display_name, owner_name, owner_email=None, owner_phone=None, owner_password=None, plan=None, slug=None, created_by=None, send_invite=True, **fields):
         from apps.accounts.services import RoleService, UserService
@@ -62,6 +74,7 @@ class TenantService:
         while Tenant.objects.filter(slug=slug).exists():
             i += 1
             slug = f"{base}-{i}"
+        fields.setdefault("doc_code", TenantService.derive_doc_code(display_name or slug))
         tenant = Tenant.objects.create(slug=slug, legal_name=legal_name, display_name=display_name, created_by=created_by, **fields)
         plan = plan or Plan.objects.filter(code=settings.DMS["DEFAULT_PLAN_CODE"], is_current=True).first() or Plan.objects.filter(is_current=True).first()
         if plan is None:

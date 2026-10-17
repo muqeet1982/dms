@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.page_permissions import page_perms
+from apps.core.audit import AuditService
 from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, has_tenant_perm, require_perm
 
@@ -187,6 +188,23 @@ class NumberingViewSet(viewsets.ModelViewSet):
             if dt not in existing:
                 NumberSequence.objects.create(document_type=dt, prefix=prefix)
         return super().list(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get", "post"], url_path="company-code")
+    def company_code(self, request):
+        """The short company code stamped before every document number (TDN-SO-00001)."""
+        from apps.platform.models import Tenant
+
+        tenant = request.tenant
+        if request.method == "POST":
+            code = str(request.data.get("code", "")).strip().upper()
+            if not code or len(code) > 8 or not code.replace("-", "").isalnum():
+                raise DomainError("The company code must be 1–8 letters or digits.")
+            if Tenant.objects.exclude(pk=tenant.pk).filter(doc_code=code).exists():
+                raise DomainError(f"The code {code} is already used by another company.")
+            tenant.doc_code = code
+            tenant.save(update_fields=["doc_code"])
+            AuditService.log("settings.doc_code", tenant, after={"code": code})
+        return Response({"code": tenant.doc_code, "example": f"{tenant.doc_code}-SO-00001" if tenant.doc_code else "SO-00001"})
 
 
 class TenantSubscriptionView(APIView):

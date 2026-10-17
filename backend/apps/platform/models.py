@@ -110,6 +110,9 @@ class Tenant(models.Model):
     slug = models.SlugField(max_length=60, unique=True)
     legal_name = models.CharField(max_length=200)
     display_name = models.CharField(max_length=120)
+    # Short company code stamped onto every document number (TDN-SO-00001), so each company's count is
+    # unmistakably its own. Derived from the name at creation; editable in Settings → Document numbering.
+    doc_code = models.CharField(max_length=8, blank=True, default="")
     status = models.CharField(max_length=12, choices=STATUS, default="trial", db_index=True)
     address = models.TextField(blank=True)
     city = models.CharField(max_length=80, blank=True)
