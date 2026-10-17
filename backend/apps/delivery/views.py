@@ -90,7 +90,7 @@ def _dispatch_sheet_pdf(request, trip):
 
     html = render_to_string("delivery/dispatch_sheet.html", dispatch_sheet_context(trip, request.tenant))
     resp = HttpResponse(HTML(string=html).write_pdf(), content_type="application/pdf")
-    resp["Content-Disposition"] = f'inline; filename="{trip.number}-dispatch-sheet.pdf"'
+    resp["Content-Disposition"] = f'inline; filename="{trip.number}.pdf"'
     return resp
 
 
