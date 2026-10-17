@@ -52,7 +52,7 @@ class OrderService:
         elif not line.unit_price or not allow_override:
             line.unit_price = list_price
         gross = q4(line.qty_ordered * line.unit_price)
-        line.discount_amount = q4(gross * line.discount_pct / 100)
+        line.discount_amount = q4(gross * (line.discount_pct + line.product_discount_pct) / 100)
         sd, free, names = PricingService.apply_schemes(line.variant, line.qty_ordered, line.unit_price, customer, order.order_date)
         line.scheme_discount, line.free_qty, line.scheme_names = sd, free, names
         taxable = gross - line.discount_amount - line.scheme_discount
@@ -96,7 +96,7 @@ class OrderService:
             req = l.get("unit_price")
             if req is not None and l.get("price_per_packaging") and packaging:
                 req = Decimal(req) / packaging.qty_in_base
-            SalesOrderLine.objects.create(order=order, variant=l["variant"], packaging=packaging, qty_ordered=qty, requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"), discount_pct=l.get("discount_pct", 0) or 0, sequence=i)
+            SalesOrderLine.objects.create(order=order, variant=l["variant"], packaging=packaging, qty_ordered=qty, requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"), discount_pct=l.get("discount_pct", 0) or 0, product_discount_pct=l.get("product_discount_pct", l["variant"].product.discount_pct) or 0, sequence=i)
         if default_pct:
             for line in order.lines.all():
                 if not line.discount_pct:
@@ -593,7 +593,7 @@ class InvoiceService:
     def _raise_company_claims(inv):
         """
         After an invoice posts, recover the manufacturer's share of its discount. The co-funded total % is
-        inv.discount_pct; the DiscountContribution row for it gives the company fraction (company_pct/total_pct).
+        inv.discount_pct; the DiscountContribution row for it gives the company's percentage points of the sale.
         Each line's share of the discount actually given is attributed to that product's manufacturer, so one
         invoice can raise several claims — one per manufacturer. Nothing is raised when no co-funding applies.
         """
@@ -608,7 +608,8 @@ class InvoiceService:
         row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
         if row is None or row.company_pct <= 0 or row.total_pct <= 0:
             return
-        fraction = Decimal(row.company_pct) / Decimal(row.total_pct)  # company's share of the discount given
+        # the company funds its percentage points OF THE SALE (5% = 3 + 2): its share is base x company%,
+        # so a product's own discount (not co-funded) never inflates the claim
         groups = defaultdict(list)  # supplier_id -> (supplier, [(line, company_amount)])
         for line in inv.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
             if line.discount_amount <= 0:
@@ -617,7 +618,7 @@ class InvoiceService:
             supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
             if supplier is None:
                 continue
-            company_amt = q4(line.discount_amount * fraction)
+            company_amt = q4(q4(line.qty * line.unit_price) * row.company_pct / 100)
             if company_amt <= 0:
                 continue
             groups.setdefault(supplier.id, (supplier, []))[1].append((line, company_amt))

@@ -7,9 +7,9 @@ import { toast } from "@/lib/toast";
 import { EntitySelect } from "../ui/EntitySelect";
 import { LINES_SCROLL_FROM } from "../ui/Bits";
 
-export type EditLine = { key: string; variant: string | null; variant_name?: string; sku?: string; packaging?: string | null; packagings?: { id: string; name: string; qty_in_base: string }[]; qty: string; unit_price?: string; discount_pct?: string; batch?: string | null; batch_no?: string; expiry_date?: string; extra?: Record<string, any> };
+export type EditLine = { key: string; variant: string | null; variant_name?: string; sku?: string; packaging?: string | null; packagings?: { id: string; name: string; qty_in_base: string }[]; qty: string; unit_price?: string; discount_pct?: string; product_discount_pct?: string; batch?: string | null; batch_no?: string; expiry_date?: string; extra?: Record<string, any> };
 
-export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: null, qty: "1", unit_price: "", discount_pct: "0" });
+export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: null, qty: "1", unit_price: "", discount_pct: "0", product_discount_pct: "0" });
 
 /**
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
@@ -43,7 +43,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     if (priceFor !== "cost" && customerId) {
       try { const p = await api.get(`/api/v1/variants/${v.id}/price`, { customer: customerId, packaging: packaging?.id }); price = p.unit_price; } catch { /* ignore */ }
     }
-    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), extra: { ...(prev?.extra || {}), is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? "") } };
+    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: String(Number(v.product_discount_pct || 0) || 0), extra: { ...(prev?.extra || {}), is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? "") } };
   };
   /**
    * Re-price a line when its packaging changes. A carton is the piece price times the box size; a customer's
@@ -88,7 +88,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     setScan("");
   };
   useScanListener(handleScan, { enabled: !readOnly });
-  const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0) * (1 - Number(l.discount_pct || 0) / 100), 0);
+  const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0) * (1 - (Number(l.discount_pct || 0) + Number(l.product_discount_pct || 0)) / 100), 0);
   return (
     <div className="line-editor">
       {!readOnly && (
@@ -108,7 +108,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
       )}
       <div className={lines.length > LINES_SCROLL_FROM ? "table-scroll" : "table-responsive"}>
         <table className="table table-sm align-middle mb-0">
-          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{showPrice && <th className="num" style={{ width: 130 }}>Total</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
+          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{showPrice && <th className="num" style={{ width: 130 }}>Total</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
           <tbody>
             {lines.map((l) => (
               <tr key={l.key}>
@@ -116,11 +116,11 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
                 <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else reprice(l, pk); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
                 <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} readOnly={readOnly} /></td>
                 {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value })} readOnly={readOnly} /></td>}
-                {showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.discount_pct ?? "0"} onChange={(e) => update(l.key, { discount_pct: e.target.value })} readOnly={readOnly} /></td>}
+                {showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.discount_pct ?? "0"} onChange={(e) => update(l.key, { discount_pct: e.target.value })} readOnly={readOnly} /></td>}{showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => update(l.key, { product_discount_pct: e.target.value })} readOnly={readOnly} /></td>}
                 {reasons && <td><select className="form-select form-select-sm" value={l.extra?.reason_code || ""} onChange={(e) => update(l.key, { extra: { ...(l.extra || {}), reason_code: e.target.value || null } })} disabled={readOnly}><option value="">same as document</option>{reasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></td>}
                 {showBatch && <td><input className="form-control form-control-sm" placeholder={l.extra?.is_batch_tracked ? "required" : "optional"} value={l.batch_no || ""} onChange={(e) => update(l.key, { batch_no: e.target.value })} readOnly={readOnly} /></td>}
                 {showBatch && <td><DateInput className="form-control form-control-sm" value={l.expiry_date || ""} onChange={(e) => update(l.key, { expiry_date: e.target.value })} readOnly={readOnly} /></td>}
-                {showPrice && <td className="num fw-medium">{money(Number(l.qty || 0) * Number(l.unit_price || 0) * (1 - Number(l.discount_pct || 0) / 100))}</td>}
+                {showPrice && <td className="num fw-medium">{money(Number(l.qty || 0) * Number(l.unit_price || 0) * (1 - (Number(l.discount_pct || 0) + Number(l.product_discount_pct || 0)) / 100))}</td>}
                 {!readOnly && <td><button type="button" className="btn btn-sm btn-outline-danger" onClick={() => remove(l.key)}><i className="ti ti-x" /></button></td>}
               </tr>
             ))}

@@ -74,6 +74,7 @@ class SalesOrderLine(TaxLineMixin, TenantModel):
     unit_price = models.DecimalField(**MONEY)  # per base unit
     requested_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     discount_pct = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
+    product_discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
     discount_amount = models.DecimalField(**MONEY)
     scheme_discount = models.DecimalField(**MONEY)
     line_total = models.DecimalField(**MONEY)

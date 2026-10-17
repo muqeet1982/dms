@@ -152,3 +152,28 @@ def test_claims_cannot_be_deducted_on_a_cheque(tenant):
         claim = CompanyClaim.objects.get(invoice=inv)
         with pytest.raises(DomainError):
             PaymentService.record(direction="out", partner_type="supplier", partner_id=str(sup.id), amount=Decimal("10"), method="cheque", cheque_no="123", claim_deductions=[{"claim_id": str(claim.pk), "amount": Decimal("5")}])
+
+
+def test_product_discount_applies_and_stacks_but_is_not_cofunded(tenant):
+    """A product's own discount % auto-applies on its lines (stacking with the customer %), is editable per
+    line, and never inflates the manufacturer claim — only the co-funded % is claimed."""
+    from apps.core.tenancy import tenant_context
+    from apps.sales.models import CompanyClaim
+    from apps.sales.services import OrderService
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        v.product.discount_pct = Decimal("10")
+        v.product.save(update_fields=["discount_pct"])
+        cust.default_discount_pct = Decimal("5")
+        cust.save(update_fields=["default_discount_pct"])
+        order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("10"), "unit_price": None}], source="staff")
+        line = order.lines.get()
+        assert line.product_discount_pct == Decimal("10") and line.discount_pct == Decimal("5")
+        gross = line.qty_ordered * line.unit_price
+        assert line.discount_amount == (gross * Decimal("15") / 100).quantize(Decimal("0.0001")), line.discount_amount
+        # the claim uses the co-funded 5% row (company 2 points of the sale) — the product's 10% is not claimed
+        inv = _posted_invoice(tenant, cust, v, pct="5")
+        claim = CompanyClaim.objects.get(invoice=inv)
+        assert claim.total == Decimal("20.0000")  # 1000 base x 2%, untouched by any product discount

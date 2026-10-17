@@ -130,7 +130,10 @@ class Product(TenantModel):
     unit_size = models.CharField(max_length=30, blank=True, help_text="Pack size as printed on the price list: 60ml, 1L, 500g, pcs")
     packing = models.PositiveIntegerField(default=1, help_text="Units per box / carton (price-list 'Packing')")
     cost_price = models.DecimalField(**MONEY)  # D.P — distributor price (what we pay the supplier)
-    sale_price = models.DecimalField(**MONEY)  # T.P — trade price (what we charge salons / retailers)
+    sale_price = models.DecimalField(**MONEY)
+    # the product's own standing discount, applied on every sales line of this product (editable per line);
+    # deliberately separate from the customer's co-funded discount — the manufacturer does not co-fund it
+    discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))  # T.P — trade price (what we charge salons / retailers)
     retail_price = models.DecimalField(**MONEY)  # R.P — retail price / MRP printed for the end consumer
     price_effective_date = models.DateField(null=True, blank=True, help_text="Date of the price list these prices came from")
     min_stock = models.DecimalField(**QTY)

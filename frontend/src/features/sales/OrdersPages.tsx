@@ -180,7 +180,7 @@ export function OrderFormPage() {
     if (!valid.length) return toast.error("Add at least one line");
     setSaving(true);
     try {
-      const body = { ...form, warehouse: form.warehouse || null, confirm, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
+      const body = { ...form, warehouse: form.warehouse || null, confirm, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/sales-orders/${id}`, body) : await api.post("/api/v1/sales-orders", body, true);
       toast.success(id ? "Order updated" : "Order created");
       nav(`/app/sales/orders/${r.id}`);
