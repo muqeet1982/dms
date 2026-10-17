@@ -174,7 +174,7 @@ class CreditNote(DocumentModel):
 
 
 class CreditNoteLine(TaxLineMixin, TenantModel):
-    CONDITIONS = [("good", "Good"), ("damaged", "Damaged")]
+    CONDITIONS = [("good", "Good"), ("damaged", "Damaged"), ("expired", "Expired")]
     credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name="lines")
     variant = models.ForeignKey("catalog.ProductVariant", on_delete=models.PROTECT, related_name="+")
     batch = models.ForeignKey("inventory.Batch", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")

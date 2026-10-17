@@ -184,15 +184,27 @@ class PostingService:
                 lines.append(Line(acct, debit=amt, description=f"Output tax reversal {tt.name if tt else idx + 1}", tax_type=tt))
         lines.append(Line(ar, credit=cn.total, description=f"Credit note {cn.number}", partner_type="customer", partner_id=cn.customer_id))
         je = PostingService.post(lines, date_=cn.date, memo=f"Credit note {cn.number} – {cn.customer.name}", source=cn)
-        restock_value = sum((q4(l.qty * l.unit_cost) for l in cn.lines.filter(restock=True)), Decimal("0"))
-        damaged_value = sum((q4(l.qty * l.unit_cost) for l in cn.lines.filter(restock=False)), Decimal("0"))
+        # COGS reversal: good stock the user restocked goes back into Inventory; broken goods are expensed to
+        # Damaged Goods and expired goods to Expiry Loss. The restock test matches the stock routing in
+        # CreditNoteService.post exactly, so the ledger and the warehouse never disagree.
+        restock_value = expired_value = damaged_value = Decimal("0")
+        for l in cn.lines.all():
+            val = q4(l.qty * l.unit_cost)
+            if l.restock and l.condition == "good":
+                restock_value += val
+            elif l.condition == "expired":
+                expired_value += val
+            else:
+                damaged_value += val
         cl = []
         if restock_value:
             cl += [Line(account_for("inventory", "credit_note"), debit=restock_value, description=f"Restock {cn.number}")]
+        if expired_value:
+            cl += [Line(account_for("expiry_loss", "credit_note"), debit=expired_value, description=f"Expired returns {cn.number}")]
         if damaged_value:
             cl += [Line(account_for("damaged_goods", "credit_note"), debit=damaged_value, description=f"Damaged returns {cn.number}")]
         if cl:
-            cl.append(Line(account_for("cogs", "credit_note"), credit=restock_value + damaged_value, description=f"COGS reversal {cn.number}"))
+            cl.append(Line(account_for("cogs", "credit_note"), credit=restock_value + expired_value + damaged_value, description=f"COGS reversal {cn.number}"))
             PostingService.post(cl, date_=cn.date, memo=f"COGS reversal for {cn.number}", source=cn)
         return je
 
