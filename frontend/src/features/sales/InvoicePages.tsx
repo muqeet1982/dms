@@ -29,7 +29,7 @@ export function InvoicesPage() {
     { key: "status", header: "Status", render: (i) => <StatusBadge status={i.status} /> },
   ];
   return (
-    <ListPage title="Sales invoices" endpoint="/api/v1/invoices" columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
+    <ListPage title="Sales invoices" page="invoices" endpoint="/api/v1/invoices" columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} createTo="/app/sales/invoices/new" createLabel="New invoice" defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
       filters={[{ name: "status", label: "Status", type: "select", options: ["posted", "partially_paid", "paid", "overdue", "cancelled"].map((s) => ({ value: s, label: s.replace(/_/g, " ") })) }, { name: "customer", label: "Customer", type: "entity", endpoint: "/api/v1/customers", mapOption: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, { name: "open", label: "Open only", type: "toggle" }, { name: "overdue", label: "Overdue only", type: "toggle" }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Open invoices" value={stats.data.open_count} icon="ti-file-invoice" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Outstanding" value={money(stats.data.outstanding, 0)} icon="ti-receipt" color="warning" /></div><div className="col-6 col-md-3"><StatCard label="Overdue" value={money(stats.data.overdue, 0)} icon="ti-alert-circle" color="danger" /></div><div className="col-6 col-md-3"><StatCard label="Sales this month" value={money(stats.data.month_sales, 0)} icon="ti-chart-line" color="success" /></div></div>} />
   );
@@ -138,6 +138,45 @@ export function InvoiceDetailPage() {
         </div>}
       </Modal>
       <ConfirmDialog open={cancel} title="Cancel invoice" withReason danger confirmText="Cancel invoice" onClose={() => setCancel(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancel(false); }} />
+    </>
+  );
+}
+
+
+/** New invoice = invoice an order that has issued/delivered goods not yet invoiced — that is where invoices
+ * come from in this flow. The button appears for anyone whose role holds the Invoices "Add" switch. */
+export function InvoiceCreatePage() {
+  const nav = useNavigate();
+  const [order, setOrder] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const detail = useDoc("/api/v1/sales-orders", order || undefined);
+  const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoice_number);
+  return (
+    <>
+      <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
+      <div className="card mb-3"><div className="card-body">
+        <Alert kind="info">An invoice bills the goods a sales order has issued or delivered. Pick the order — each of its deliveries not yet billed becomes an invoice. To bill an order with no delivery yet, open the order and use its workflow (load form → issue → invoice).</Alert>
+        <div className="row">
+          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ status__in: "issued,dispatched,partially_delivered,delivered" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+        </div>
+        {order && detail.data && (
+          uninvoiced.length
+            ? <div className="fs-13">{uninvoiced.length} delivery note(s) to bill: {uninvoiced.map((d: any) => d.number).join(", ")}</div>
+            : <div className="fs-13 text-warning">Every delivery on this order is already invoiced.</div>
+        )}
+      </div></div>
+      <div className="d-flex gap-2 justify-content-end">
+        <button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>
+        <button className="btn btn-primary" disabled={!order || busy} onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, {}, true);
+            const made = Array.isArray(r) ? r : [r];
+            toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
+            nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
+          } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+        }}><i className="ti ti-file-invoice me-1" />Create invoice</button>
+      </div>
     </>
   );
 }

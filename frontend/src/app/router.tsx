@@ -6,7 +6,7 @@ import { ChangePasswordPage, ForgotPasswordPage, LoginPage, ResetPasswordPage, S
 import { LegalPublicPage } from "@/features/platform/LegalPublicPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { OrderDetailPage, OrderFormPage, OrdersInboxPage, OrdersPage } from "@/features/sales/OrdersPages";
-import { CreditNoteDetailPage, CreditNoteFormPage, CreditNotesPage, InvoiceDetailPage, InvoicesPage, RepCollectionsPage, RepSettlementsPage } from "@/features/sales/InvoicePages";
+import { CreditNoteDetailPage, CreditNoteFormPage, CreditNotesPage, InvoiceCreatePage, InvoiceDetailPage, InvoicesPage, RepCollectionsPage, RepSettlementsPage } from "@/features/sales/InvoicePages";
 import { CompanyClaimsPage, CompanyClaimDetailPage } from "@/features/sales/CompanyClaimsPage";
 import { CustomerDetailPage, CustomerFormPage, CustomersPage, RoutesPage, TerritoriesPage } from "@/features/partners/CustomerPages";
 import { CoverageMapPage, GeofenceDetailPage, GeofenceFormPage, GeofencesPage } from "@/features/partners/GeofencePages";
@@ -57,7 +57,7 @@ export const router = createBrowserRouter([
         { path: "sales/inbox", element: <RequirePage page="sales_inbox"><OrdersInboxPage /></RequirePage> },
         { path: "sales/orders", element: <RequirePage page="sales_orders"><OrdersPage /></RequirePage> }, { path: "sales/orders/new", element: <RequirePage page="sales_orders" action="add"><OrderFormPage /></RequirePage> },
         { path: "sales/orders/:id", element: <RequirePage page="sales_orders"><OrderDetailPage /></RequirePage> }, { path: "sales/orders/:id/edit", element: <RequirePage page="sales_orders" action="edit"><OrderFormPage /></RequirePage> },
-        { path: "sales/invoices", element: <RequirePage page="invoices"><InvoicesPage /></RequirePage> }, { path: "sales/invoices/:id", element: <RequirePage page="invoices"><InvoiceDetailPage /></RequirePage> },
+        { path: "sales/invoices", element: <RequirePage page="invoices"><InvoicesPage /></RequirePage> }, { path: "sales/invoices/new", element: <RequirePage page="invoices" action="add"><InvoiceCreatePage /></RequirePage> }, { path: "sales/invoices/:id", element: <RequirePage page="invoices"><InvoiceDetailPage /></RequirePage> },
         { path: "sales/credit-notes", element: <RequirePage page="credit_notes"><CreditNotesPage /></RequirePage> }, { path: "sales/credit-notes/new", element: <RequirePage page="credit_notes" action="add"><CreditNoteFormPage /></RequirePage> }, { path: "sales/credit-notes/:id", element: <RequirePage page="credit_notes"><CreditNoteDetailPage /></RequirePage> },
         { path: "sales/company-claims", element: <RequirePage page="company_claims"><CompanyClaimsPage /></RequirePage> }, { path: "sales/company-claims/:id", element: <RequirePage page="company_claims"><CompanyClaimDetailPage /></RequirePage> },
         { path: "sales/rep-collections", element: <RequirePage page="rep_collections"><RepCollectionsPage /></RequirePage> }, { path: "sales/rep-settlements", element: <RequirePage page="rep_settlements"><RepSettlementsPage /></RequirePage> },
