@@ -13,12 +13,13 @@ export function PrintViewPage() {
   const src = sp.get("u") || "";
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useState("document.pdf");
   const frame = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
     let alive = true;
     let obj = "";
     if (!src.startsWith("/api/")) { setErr("Nothing to print."); return; }
-    api.blobOf(src).then((b: Blob) => { if (!alive) return; obj = URL.createObjectURL(b); setUrl(obj); })
+    api.blobOf(src).then(({ blob, name }: { blob: Blob; name: string }) => { if (!alive) return; obj = URL.createObjectURL(blob); setUrl(obj); setName(name); document.title = name.replace(/\.pdf$/i, ""); })
       .catch((e: any) => alive && setErr(e.message || "Could not load the document."));
     return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
   }, [src]);
@@ -29,9 +30,8 @@ export function PrintViewPage() {
   const doDownload = () => {
     if (!url) return;
     const a = document.createElement("a");
-    const last = src.split("?")[0].split("/").filter(Boolean).pop() || "document";
     a.href = url;
-    a.download = /\.[a-z0-9]{2,5}$/i.test(last) ? last : `${last}.pdf`;
+    a.download = name;
     a.click();
   };
   const doClose = () => { window.close(); setTimeout(() => nav(-1), 150); };

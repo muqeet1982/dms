@@ -291,6 +291,20 @@ async function safeProblem(res: Response): Promise<Problem> {
  * expired — a slow PDF render then ends in a blocked popup and, as far as the user can tell, a button that
  * does nothing. `open` returns null in that case, so save the file instead.
  */
+/** The filename the server put on the response — every document names itself (TDN-INV-00016.pdf); the URL's
+ * last segment is a poor fallback ("pdf"), so it is used only when no header arrived. */
+function filenameFrom(res: Response, path: string, fallbackExt = "pdf"): string {
+  const cd = res.headers.get("content-disposition") || "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  if (star) try { return decodeURIComponent(star[1].trim()); } catch { /* fall through */ }
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  if (plain) return plain[1].trim().replace(/\.pdf\.pdf$/i, ".pdf");
+  const parts = path.split("?")[0].replace(/\/$/, "").split("/").filter(Boolean);
+  const last = parts.pop() || "document";
+  const name = ["pdf", "print", "export", "download"].includes(last.toLowerCase()) ? (parts.pop() || "document") : last;
+  return /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.${fallbackExt}`;
+}
+
 function openBlobUrl(url: string, path: string): void {
   const win = window.open(url, "_blank");
   if (win) return;
@@ -331,7 +345,7 @@ export const api = {
   postBlob: (path: string, body: any, filename?: string) => withReport("That document", async () => {
     const res = (await request<Response>(path, { method: "POST", body, raw: true })) as unknown as Response;
     const url = URL.createObjectURL(await res.blob());
-    if (filename) { const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); } else openBlobUrl(url, path);
+    const a = document.createElement("a"); a.href = url; a.download = filename || filenameFrom(res, path); a.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }),
   /** Fetch a binary (PDF/CSV/XLSX) with auth headers and open/download it. */
@@ -339,12 +353,10 @@ export const api = {
     const res = (await request<Response>(path, { query, raw: true })) as unknown as Response;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    if (filename) {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-    } else openBlobUrl(url, path);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || filenameFrom(res, path);
+    a.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }),
   /**
@@ -355,10 +367,10 @@ export const api = {
    * a hidden iframe instead. Opening it first and pointing it at the document when it arrives keeps the tab and
    * gives the person the thing itself — they can read it, print it, or keep it open beside the screen.
    */
-  /** Fetch a binary with auth headers and hand back the Blob (the print view uses this). */
-  blobOf: async (path: string): Promise<Blob> => {
+  /** Fetch a binary with auth headers: the Blob plus the server's own filename (the print view uses this). */
+  blobOf: async (path: string): Promise<{ blob: Blob; name: string }> => {
     const res = (await request<Response>(path, { raw: true })) as unknown as Response;
-    return res.blob();
+    return { blob: await res.blob(), name: filenameFrom(res, path) };
   },
   /** Every Print button: open the in-app print view (a real page — Print / Download PDF / Close), never a blob URL. */
   printDoc: (path: string, query?: Record<string, any>) => {

@@ -192,7 +192,7 @@ class JournalEntryViewSet(DocumentViewSet):
         code = voucher_code(e, lines)
         return render_doc(request, "accounting/voucher.html",
                           {"e": e, "lines": lines, "voucher_code": code, "voucher_title": voucher_title(code), "signatures": signature_boxes(code)},
-                          f"{e.number}.pdf", title=voucher_title(code), ref=e.number)
+                          e.number, title=voucher_title(code), ref=e.number)
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
