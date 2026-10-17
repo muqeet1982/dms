@@ -355,38 +355,15 @@ export const api = {
    * a hidden iframe instead. Opening it first and pointing it at the document when it arrives keeps the tab and
    * gives the person the thing itself — they can read it, print it, or keep it open beside the screen.
    */
+  /** Fetch a binary with auth headers and hand back the Blob (the print view uses this). */
+  blobOf: async (path: string): Promise<Blob> => {
+    const res = (await request<Response>(path, { raw: true })) as unknown as Response;
+    return res.blob();
+  },
+  /** Every Print button: open the in-app print view (a real page — Print / Download PDF / Close), never a blob URL. */
   printDoc: (path: string, query?: Record<string, any>) => {
-    const tab = window.open("", "_blank");
-    if (tab) {
-      tab.document.write('<!doctype html><title>Preparing…</title><body style="font:14px Helvetica,Arial,sans-serif;color:#6B7280;padding:24px">Preparing the document…</body>');
-      tab.document.close();
-    }
-    return withReport("That document", async () => {
-      let url = "";
-      try {
-        const res = (await request<Response>(path, { query, raw: true })) as unknown as Response;
-        url = URL.createObjectURL(await res.blob());
-      } catch (e) {
-        tab?.close();
-        throw e;
-      }
-      if (!tab) {
-        // the browser refused the tab: fall back to showing it however it will, rather than losing the document
-        openBlobUrl(url, path);
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return;
-      }
-      tab.location.replace(url);
-      // the viewer needs a moment to lay the PDF out; printing before that prints a blank page
-      setTimeout(() => {
-        try {
-          tab.focus();
-          tab.print();
-        } catch {
-          /* the tab has the document either way, and its own print button */
-        }
-      }, 900);
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    });
+    const qs = query ? "?" + new URLSearchParams(Object.entries(query).reduce((a, [k, v]) => (v === undefined || v === null ? a : { ...a, [k]: String(v) }), {})).toString() : "";
+    const root = location.pathname.startsWith("/rep") ? "/rep" : location.pathname.startsWith("/admin") ? "/admin" : "/app";
+    window.open(`${root}/print-view?u=${encodeURIComponent(path + qs)}`, "_blank");
   },
 };

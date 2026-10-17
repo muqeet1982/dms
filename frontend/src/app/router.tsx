@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { PLATFORM_MENU, REP_MENU, TENANT_MENU } from "@/components/layout/menu";
 import { HomeRedirect, RequireAuth, RequirePage } from "./guards";
+import { PrintViewPage } from "@/features/shared/PrintViewPage";
 import { ChangePasswordPage, ForgotPasswordPage, LoginPage, ResetPasswordPage, SelectCompanyPage } from "@/features/auth/pages";
 import { LegalPublicPage } from "@/features/platform/LegalPublicPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -50,7 +51,8 @@ export const router = createBrowserRouter([
   { path: "/app-login", element: <AppLoginPage /> },
   {
     element: <RequireAuth mode="tenant" />,
-    children: [{
+    // the print view is authed but shell-free — a clean page holding only the document and its toolbar
+    children: [{ path: "/app/print-view", element: <PrintViewPage /> }, {
       path: "/app", element: <AppShell sections={TENANT_MENU} />,
       children: [
         { index: true, element: <DashboardPage /> }, { path: "notifications", element: <NotificationsPage /> }, { path: "profile", element: <ProfilePage /> },
@@ -102,7 +104,7 @@ export const router = createBrowserRouter([
   },
   {
     element: <RequireAuth mode="rep" />,
-    children: [{
+    children: [{ path: "/rep/print-view", element: <PrintViewPage /> }, {
       path: "/rep", element: <AppShell sections={REP_MENU} notificationsTo="/rep/notifications" />,
       children: [
         { index: true, element: <RepHomePage /> }, { path: "customers", element: <RepCustomersPage /> }, { path: "customers/:id", element: <RepCustomerDetailPage /> }, { path: "orders", element: <RepOrdersPage /> }, { path: "orders/new", element: <RepNewOrderPage /> }, { path: "orders/:id", element: <RepOrderDetailPage /> },
@@ -112,7 +114,7 @@ export const router = createBrowserRouter([
   },
   {
     element: <RequireAuth mode="platform" />,
-    children: [{
+    children: [{ path: "/admin/print-view", element: <PrintViewPage /> }, {
       path: "/admin", element: <AppShell sections={PLATFORM_MENU} notificationsTo="/admin/notifications" />,
       children: [
         { index: true, element: <PlatformDashboardPage /> }, { path: "tenants", element: <TenantsPage /> }, { path: "tenants/new", element: <TenantCreatePage /> }, { path: "tenants/:id", element: <TenantDetailPage /> }, { path: "subscriptions", element: <SubscriptionsPage /> }, { path: "plans", element: <PlansPage /> },

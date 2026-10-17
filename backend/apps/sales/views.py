@@ -80,6 +80,10 @@ class SalesOrderViewSet(DocumentViewSet):
             qs = qs.filter(status__in=SalesOrder.OPEN_STATUSES)
         if p.get("status__in"):
             qs = qs.filter(status__in=[s.strip() for s in p["status__in"].split(",") if s.strip()])
+        if p.get("uninvoiced") == "1":
+            # the New Invoice picker: an order appears only while it still has an issued delivery nobody billed;
+            # once every delivery is invoiced it drops out, so an invoice cannot be issued twice
+            qs = qs.filter(delivery_notes__stock_out_done=True, delivery_notes__invoice__isnull=True).exclude(status__in=["cancelled", "rejected"]).distinct()
         if p.get("updated_after"):
             qs = qs.filter(updated_at__gt=p["updated_after"])
         return qs

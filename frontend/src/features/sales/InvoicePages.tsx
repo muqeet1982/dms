@@ -150,24 +150,30 @@ export function InvoiceCreatePage() {
   const [order, setOrder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const detail = useDoc("/api/v1/sales-orders", order || undefined);
-  const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoice_number);
+  const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoiced);
   return (
     <>
       <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body">
         <Alert kind="info">An invoice bills the goods a sales order has issued or delivered. Pick the order — each of its deliveries not yet billed becomes an invoice. To bill an order with no delivery yet, open the order and use its workflow (load form → issue → invoice).</Alert>
         <div className="row">
-          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ status__in: "issued,dispatched,partially_delivered,delivered" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued,dispatched,partially_delivered,delivered" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
         </div>
         {order && detail.data && (
           uninvoiced.length
-            ? <div className="fs-13">{uninvoiced.length} delivery note(s) to bill: {uninvoiced.map((d: any) => d.number).join(", ")}</div>
-            : <div className="fs-13 text-warning">Every delivery on this order is already invoiced.</div>
+            ? <>
+                <div className="fs-13 mb-2">Billing <strong>{detail.data.customer_name}</strong> for {uninvoiced.length} delivery note(s): {uninvoiced.map((d: any) => d.number).join(", ")}</div>
+                <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Issued / delivered</th><th className="num">Rate</th><th className="num">Discount</th><th className="num">Amount</th></tr></thead>
+                  <tbody>{(detail.data.lines || []).map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{Number(l.qty_ordered)}</td><td className="num">{Number(l.qty_delivered) || Number(l.qty_dispatched)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
+                  <tfoot><tr className="fw-bold"><td colSpan={6} className="text-end">Order total</td><td className="num">{money(detail.data.total)}</td></tr></tfoot></table>
+                <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above — check it, then issue.</div>
+              </>
+            : <div className="fs-13 text-warning">Every delivery on this order is already invoiced — it will not be offered again.</div>
         )}
       </div></div>
       <div className="d-flex gap-2 justify-content-end">
         <button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>
-        <button className="btn btn-primary" disabled={!order || busy} onClick={async () => {
+        <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={async () => {
           setBusy(true);
           try {
             const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, {}, true);
@@ -175,7 +181,7 @@ export function InvoiceCreatePage() {
             toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
             nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
           } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
-        }}><i className="ti ti-file-invoice me-1" />Create invoice</button>
+        }}><i className="ti ti-file-invoice me-1" />Issue Invoice</button>
       </div>
     </>
   );
