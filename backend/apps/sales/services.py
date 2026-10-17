@@ -474,7 +474,7 @@ class InvoiceService:
             taxable = gross - line_disc
             tax_class = TaxService.resolve_class(ol.variant, customer)
             t = TaxService.compute(taxable, tax_class, inv.date)
-            SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=ol.variant, batch=dl.batch, description=ol.variant.name, qty=paid_qty, free_qty=free_part, unit_price=ol.unit_price, unit_cost=dl.unit_cost or ol.variant.avg_cost, discount_amount=line_disc, line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], sequence=i)
+            SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=ol.variant, batch=dl.batch, description=ol.variant.name, qty=paid_qty, free_qty=free_part, unit_price=ol.unit_price, unit_cost=dl.unit_cost or ol.variant.avg_cost, discount_amount=line_disc, product_discount_pct=ol.product_discount_pct, line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], sequence=i)
             subtotal += gross
             disc += line_disc
             t1 += t["tax1_amount"]
@@ -524,6 +524,11 @@ class InvoiceService:
                 line.unit_price = Decimal(str(row["unit_price"]))
             if row.get("discount_amount") is not None:
                 line.discount_amount = Decimal(str(row["discount_amount"]))
+            if row.get("product_discount_pct") is not None:
+                new_pct = Decimal(str(row["product_discount_pct"]))
+                gross = q4(line.qty * line.unit_price)
+                line.discount_amount = max(Decimal("0"), q4(line.discount_amount + gross * (new_pct - line.product_discount_pct) / 100))
+                line.product_discount_pct = new_pct
             if line.unit_price < 0 or line.discount_amount < 0:
                 raise DomainError("A price or a discount cannot be negative.", status_code=400)
             gross = q4(line.qty * line.unit_price)

@@ -69,7 +69,7 @@ export function InvoiceDetailPage() {
           {open && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {inv.status !== "cancelled" && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount) })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {inv.status !== "cancelled" && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0) })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -82,7 +82,7 @@ export function InvoiceDetailPage() {
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem></div>
         <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Amount</th></tr></thead>
-          <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(l.discount_amount)}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
+          <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(l.discount_amount)}{Number(l.product_discount_pct) > 0 && <div className="text-muted fs-11">prod {Number(l.product_discount_pct)}%</div>}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
           <tfoot>{Number(inv.discount) > 0 && <tr><td colSpan={5} className="text-end">Discount given{Number(inv.discount_pct) > 0 ? ` (${Number(inv.discount_pct)}%)` : ""}</td><td className="num">{money(inv.discount)}</td></tr>}{Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={5} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}<tr className="fw-bold"><td colSpan={5} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>
       </div></div>
       <DocTabs model="SalesInvoice" id={inv.id} showMovements extra={[{ key: "payments", label: "Payments", render: () => (
@@ -98,7 +98,7 @@ export function InvoiceDetailPage() {
               const body: any = { due_date: edit!.due_date || null, notes: edit!.notes };
               if (inv.status === "draft") {
                 body.date = edit!.date || undefined;
-                body.lines = edit!.lines.map((l) => ({ id: l.id, unit_price: l.unit_price, discount_amount: l.discount_amount }));
+                body.lines = edit!.lines.map((l) => ({ id: l.id, unit_price: l.unit_price, discount_amount: l.discount_amount, product_discount_pct: l.product_discount_pct }));
               }
               await api.patch(`/api/v1/invoices/${inv.id}`, body);
               toast.success("Invoice updated");
@@ -123,13 +123,13 @@ export function InvoiceDetailPage() {
             <div className="col-12">
               <label className="form-label fs-12 fw-semibold">Prices</label>
               <div className="table-responsive"><table className="table table-sm align-middle mb-1">
-                <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 90 }}>Qty</th><th className="num" style={{ width: 130 }}>Rate</th><th className="num" style={{ width: 130 }}>Discount</th></tr></thead>
+                <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 90 }}>Qty</th><th className="num" style={{ width: 130 }}>Rate</th><th className="num" style={{ width: 130 }}>Discount</th><th className="num" style={{ width: 100 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th></tr></thead>
                 <tbody>{edit.lines.map((l: any, i: number) => (
                   <tr key={l.id}>
                     <td className="fs-12">{l.description}</td>
                     <td className="num fs-12">{qty(l.qty)}</td>
                     <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.unit_price} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, unit_price: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
-                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, discount_amount: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
+                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, discount_amount: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td><td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, product_discount_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
                   </tr>))}</tbody>
               </table></div>
               <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. Tax is recalculated from the corrected figures when you save.</div>

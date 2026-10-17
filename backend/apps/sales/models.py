@@ -145,6 +145,8 @@ class SalesInvoiceLine(TaxLineMixin, TenantModel):
     unit_price = models.DecimalField(**MONEY)
     unit_cost = models.DecimalField(**MONEY)
     discount_amount = models.DecimalField(**MONEY)
+    # the product's own standing discount carried from the order line — shown and adjustable on a draft
+    product_discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
     line_total = models.DecimalField(**MONEY)
     sequence = models.PositiveSmallIntegerField(default=0)
 

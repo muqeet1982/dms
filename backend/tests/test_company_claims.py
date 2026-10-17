@@ -177,3 +177,20 @@ def test_product_discount_applies_and_stacks_but_is_not_cofunded(tenant):
         inv = _posted_invoice(tenant, cust, v, pct="5")
         claim = CompanyClaim.objects.get(invoice=inv)
         assert claim.total == Decimal("20.0000")  # 1000 base x 2%, untouched by any product discount
+
+
+def test_invoice_carries_and_edits_the_product_discount(tenant):
+    """The product % rides onto the invoice line and a draft can change it — the amount follows the delta."""
+    from apps.core.tenancy import tenant_context
+    from apps.sales.models import SalesInvoice, SalesInvoiceLine
+    from apps.sales.services import InvoiceService
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        inv = SalesInvoice.objects.create(number="INV-PD-1", customer=cust, subtotal=Decimal("1000"), discount=Decimal("100"), total=Decimal("900"), status="draft")
+        line = SalesInvoiceLine.objects.create(invoice=inv, variant=v, description=v.name, qty=Decimal("10"), unit_price=Decimal("100"), unit_cost=Decimal("60"), discount_amount=Decimal("100"), product_discount_pct=Decimal("10"), line_total=Decimal("900"))
+        InvoiceService.update_draft(inv, lines=[{"id": str(line.id), "product_discount_pct": "5"}])
+        line.refresh_from_db()
+        assert line.product_discount_pct == Decimal("5")
+        assert line.discount_amount == Decimal("50.0000"), line.discount_amount  # 100 + 1000 x (5-10)% = 50
