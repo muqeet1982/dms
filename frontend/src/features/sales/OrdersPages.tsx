@@ -26,7 +26,7 @@ const orderColumns: Column<any>[] = [
   { key: "warehouse_name", header: "Warehouse" },
   { key: "trip_number", header: "Trip", render: (o) => o.trip_number || "—" },
   { key: "total", header: "Total", num: true, sortKey: "total", render: (o) => <span className="fw-semibold">{money(o.total)}</span> },
-  { key: "status", header: "Status", sortKey: "status", render: (o) => <><StatusBadge status={o.status} />{o.hold_reason && <div className="text-warning fs-11 mt-1" style={{ maxWidth: 220 }}>{o.hold_reason}</div>}</> },
+  { key: "status", header: "Status", sortKey: "status", render: (o) => <><StatusBadge status={o.status} />{o.delivery_status && <div className="fs-11 text-muted mt-1"><i className="ti ti-truck me-1" />{o.delivery_status}</div>}{o.hold_reason && <div className="text-warning fs-11 mt-1" style={{ maxWidth: 220 }}>{o.hold_reason}</div>}</> },
 ];
 
 export function OrdersPage() {
@@ -67,7 +67,7 @@ export function OrderDetailPage() {
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   return (
     <>
-      <PageHeader title={o.number} badge={<StatusBadge status={o.status} />} crumbs={[{ label: "Sales orders", to: "/app/sales/orders" }, { label: o.number }]}
+      <PageHeader title={o.number} badge={<><StatusBadge status={o.status} />{o.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{o.delivery_status}</span>}</>} crumbs={[{ label: "Sales orders", to: "/app/sales/orders" }, { label: o.number }]}
         actions={<>
           {editable && page.edit && <Link to={`/app/sales/orders/${o.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}
           {o.status === "draft" && page.add && <button className="btn btn-primary" disabled={!!busy} onClick={() => run("submit")}>Submit</button>}

@@ -76,6 +76,18 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True, default="")
     trip_number = serializers.CharField(source="trip.number", read_only=True, default="")
+    delivery_status = serializers.SerializerMethodField()
+
+    def get_delivery_status(self, obj):
+        """The dispatch stage, where it says more than the order status does: a created-but-not-started trip."""
+        if not obj.trip_id or obj.status in ("delivered", "invoiced", "cancelled", "rejected"):
+            return ""
+        t = obj.trip
+        if t.status in ("planned", "loading"):
+            return f"On trip {t.number}"
+        if t.status == "out_for_delivery":
+            return f"Out for delivery · {t.number}"
+        return ""
     lines_count = serializers.IntegerField(source="lines.count", read_only=True)
     sales_person = serializers.SerializerMethodField()
 
@@ -89,7 +101,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):
