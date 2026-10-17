@@ -795,3 +795,44 @@ class ExtMeView(ExtBase):
         key = getattr(request, "api_key", None)
         perms = sorted(m.permission_codenames()) if m else sorted({p for s in key.scopes for p in __import__("apps.integrations.models", fromlist=["SCOPE_TO_PERMS"]).SCOPE_TO_PERMS.get(s, [])})
         return Response({"tenant": {"id": str(request.tenant.id), "name": request.tenant.display_name, "currency": request.tenant.base_currency}, "supplier": {"id": str(supplier.id), "name": supplier.name} if supplier else None, "rep": {"id": str(rep.id), "code": rep.code, "name": rep.name, "target": str(rep.monthly_target)} if rep else None, "permissions": perms, "auth": "api_key" if key else "jwt"})
+
+
+class ExtOrderPdfView(ExtBase):
+    """
+    `GET /ext/v1/orders/{id}/pdf` — the rep's own order as the printed document, for the app's print view and
+    the WhatsApp/email share sheet. Same scoping as the order detail: only an order that is theirs.
+    `GET /ext/v1/orders/{id}/invoice-pdf` — the invoice raised on that order, when one exists.
+    """
+
+    def get(self, request, pk, kind="order"):
+        from decimal import Decimal
+
+        from apps.core.documents import render_doc
+        from apps.sales.models import SalesInvoice
+
+        self.perm(request, "external.view_own_orders")
+        supplier, rep = self.context(request)
+        qs = SalesOrder.objects.all()
+        if rep is not None:
+            qs = qs.filter(rep=rep)
+        elif supplier is not None:
+            qs = qs.filter(supplier=supplier)
+        o = qs.filter(pk=pk).first()
+        if o is None:
+            return Response({"type": "not_found", "detail": "Not your order."}, status=404)
+        if kind == "invoice":
+            inv = SalesInvoice.objects.filter(order=o).exclude(status="cancelled").order_by("-created_at").first()
+            if inv is None:
+                return Response({"type": "no_invoice", "detail": f"{o.number} has no invoice yet."}, status=404)
+            lines = list(inv.lines.select_related("variant__product", "batch"))
+            return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines}, inv.number, title="SALES INVOICE", ref=inv.number)
+        lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
+        for l in lines:
+            l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
+            l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
+        return render_doc(request, "sales/order.html", {
+            "o": o, "lines": lines,
+            "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
+            "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
+            "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
+        }, o.number, title="SALES ORDER", ref=o.number)

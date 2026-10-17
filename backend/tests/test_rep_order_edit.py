@@ -188,3 +188,24 @@ def test_the_shop_licence_numbers_are_stored_instead_of_silently_dropped(rep_app
 
     listed = next(c for c in rep_app["phone"].get("/ext/v1/customers").data["results"] if c["id"] == r.data["id"])
     assert listed["ntn"] == "1234567-8" and listed["cnic"] == "35202-1234567-1"
+
+
+def test_a_rep_can_fetch_their_own_order_pdf_but_not_an_office_one(rep_app, tenant):
+    """The app's print/share sheet needs the document: own order -> PDF; an office order -> 404, same as detail."""
+    from apps.sales.services import OrderService
+
+    made = _order(rep_app)
+    assert made.status_code == 201, made.content
+    own_id, own_number = made.data["id"], made.data["number"]
+    r = rep_app["phone"].get(f"/ext/v1/orders/{own_id}/pdf")
+    assert r.status_code == 200 and r["Content-Type"] == "application/pdf", r.status_code
+    assert own_number in r["Content-Disposition"]
+
+    r2 = rep_app["phone"].get(f"/ext/v1/orders/{own_id}/invoice-pdf")
+    assert r2.status_code == 404 and r2.data["type"] == "no_invoice"
+
+    with tenant_context(tenant, tenant.owner):
+        other = OrderService.create(customer=rep_app["customer"], lines=[{"variant": rep_app["variant"], "qty": Decimal("1"), "unit_price": None}], source="staff")
+        other.rep = None
+        other.save(update_fields=["rep"])
+    assert rep_app["phone"].get(f"/ext/v1/orders/{other.pk}/pdf").status_code == 404
