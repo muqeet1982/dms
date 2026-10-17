@@ -301,10 +301,14 @@ class PaymentViewSet(DocumentViewSet):
             if not m.has_perm(needed):
                 raise DomainError("You cannot receive payments." if d["direction"] == "in" else "You cannot make payments.", code="forbidden", status_code=403)
         allocations = [{"document_type": a["document_type"], "document_id": a["document_id"], "amount": a["amount"]} for a in d.pop("allocations", [])]
+        claim_deductions = self.request.data.get("claim_deductions") or []
+        if claim_deductions and not (m.has_perm("sales.settle_company_claim") or m.is_owner):
+            raise DomainError("You cannot settle company discount claims.", code="forbidden", status_code=403)
         serializer.instance = PaymentService.record(
             direction=d["direction"], partner_type=d["partner_type"], partner_id=d.get("partner_id", ""), amount=d["amount"], method=d.get("method", "cash"), date_=d.get("date"),
             bank_account=d.get("bank_account"), cash_account=d.get("cash_account"), allocations=allocations or None, cheque_no=d.get("cheque_no", ""), cheque_date=d.get("cheque_date"), cheque_bank=d.get("cheque_bank", ""),
             reference=d.get("reference", ""), notes=d.get("notes", ""), withholding_tax=d.get("withholding_tax"), withholding_amount=d.get("withholding_amount", 0), trip=d.get("trip"), delivery_note=d.get("delivery_note"), collected_by=d.get("collected_by"),
+            claim_deductions=claim_deductions or None,
         )
 
     def perform_update(self, serializer):

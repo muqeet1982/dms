@@ -102,3 +102,53 @@ def test_settle_by_netting_against_purchases(tenant):
         # netting debits AP (reduces payable) and credits the receivable
         assert _role_bal("manufacturer_claim") == (Decimal("30"), Decimal("30"))
         assert _role_bal("ap")[0] == Decimal("30"), _role_bal("ap")
+
+
+def test_claims_deducted_when_paying_the_supplier(tenant):
+    """Paying the manufacturer for purchases can deduct open claims: the bill settles for cash + deduction,
+    the claims receivable is cleared, and cancelling the payment restores both."""
+    from apps.accounting.services import PaymentService
+    from apps.core.tenancy import tenant_context
+    from apps.purchasing.models import PurchaseBill
+    from apps.sales.models import CompanyClaim
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        inv = _posted_invoice(tenant, cust, v, pct="5")  # claim of 20 against the supplier
+        claim = CompanyClaim.objects.get(invoice=inv)
+        bill = PurchaseBill.objects.create(number="PB-T-1", supplier=sup, subtotal=Decimal("100"), total=Decimal("100"), status="posted")
+
+        pay = PaymentService.record(
+            direction="out", partner_type="supplier", partner_id=str(sup.id), amount=Decimal("80"), method="cash",
+            allocations=[{"document_type": "purchase_bill", "document_id": str(bill.pk), "amount": Decimal("100")}],
+            claim_deductions=[{"claim_id": str(claim.pk), "amount": Decimal("20")}],
+        )
+        bill.refresh_from_db(); claim.refresh_from_db()
+        assert bill.status == "paid" and bill.paid_amount == Decimal("100"), (bill.status, bill.paid_amount)
+        assert claim.status == "paid" and claim.paid_amount == Decimal("20")
+        # GL: AP debited for the full 100 (80 cash + 20 claims), receivable credited 20 by the payment
+        b = _role_bal("manufacturer_claim")
+        assert b == (Decimal("20"), Decimal("20")), b  # claim raised 20, cleared 20
+        assert _role_bal("ap")[0] == Decimal("100"), _role_bal("ap")
+
+        # cancelling the payment restores the bill and the claim, and reverses the journal
+        PaymentService.cancel(pay, reason="test")
+        bill.refresh_from_db(); claim.refresh_from_db()
+        assert bill.status == "posted" and bill.paid_amount == Decimal("0")
+        assert claim.status == "posted" and claim.paid_amount == Decimal("0")
+
+
+def test_claims_cannot_be_deducted_on_a_cheque(tenant):
+    from apps.accounting.services import PaymentService
+    from apps.core.exceptions import DomainError
+    from apps.core.tenancy import tenant_context
+    from apps.sales.models import CompanyClaim
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        inv = _posted_invoice(tenant, cust, v, pct="5")
+        claim = CompanyClaim.objects.get(invoice=inv)
+        with pytest.raises(DomainError):
+            PaymentService.record(direction="out", partner_type="supplier", partner_id=str(sup.id), amount=Decimal("10"), method="cheque", cheque_no="123", claim_deductions=[{"claim_id": str(claim.pk), "amount": Decimal("5")}])

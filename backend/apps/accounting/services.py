@@ -276,7 +276,14 @@ class PostingService:
                 lines.append(Line(account_for("withholding_receivable", "payment"), debit=payment.withholding_amount, description="Withholding tax deducted by customer", tax_type=payment.withholding_tax))
             lines.append(Line(partner_acct, credit=payment.amount, description=f"Receipt {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id))
         else:
-            lines = [Line(partner_acct, debit=payment.amount, description=f"Payment {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id), Line(money, credit=net, description=f"Payment {payment.number}")]
+            # paying a supplier may deduct manufacturer discount claims: the payable is settled for cash +
+            # deductions, and the deducted part clears the claims receivable instead of the money account
+            claim_ded = Decimal("0")
+            if payment.partner_type == "supplier":
+                claim_ded = sum((a.amount for a in payment.allocations.filter(document_type="company_claim")), Decimal("0"))
+            lines = [Line(partner_acct, debit=payment.amount + claim_ded, description=f"Payment {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id), Line(money, credit=net, description=f"Payment {payment.number}")]
+            if claim_ded:
+                lines.append(Line(account_for("manufacturer_claim", "payment"), credit=claim_ded, description=f"Discount claims deducted {payment.number}"))
             if payment.withholding_amount:
                 lines.append(Line(account_for("withholding_payable", "payment"), credit=payment.withholding_amount, description="Withholding tax withheld", tax_type=payment.withholding_tax))
         return PostingService.post(lines, date_=payment.date, memo=f"{'Receipt' if payment.direction == 'in' else 'Payment'} {payment.number} – {payment.partner_name}", source=payment)
@@ -569,10 +576,34 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
-    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None):
+    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None):
         amount = q4(amount)
         if amount <= 0:
             raise DomainError("Amount must be positive.")
+        # Paying a manufacturer for purchases may deduct their outstanding discount-share claims: the bills are
+        # settled for cash + deductions, the claims receivable is cleared for the deducted part (post_payment).
+        deduction_total = Decimal("0")
+        claim_allocs = []
+        if claim_deductions:
+            if direction != "out" or partner_type != "supplier":
+                raise DomainError("Discount claims can only be deducted when paying a supplier.")
+            if method == "cheque":
+                raise DomainError("Claims cannot be deducted on a cheque payment — the bounce path cannot restore them. Pay by bank/cash, or settle the claim from its own page.")
+            from apps.sales.models import CompanyClaim
+
+            for cd in claim_deductions:
+                claim = CompanyClaim.objects.filter(pk=cd.get("claim_id") or cd.get("claim")).first()
+                if claim is None:
+                    raise DomainError("Unknown discount claim.")
+                if str(claim.supplier_id) != str(partner_id):
+                    raise DomainError(f"Claim {claim.number} belongs to another company.")
+                if claim.status not in ("posted", "partially_paid"):
+                    raise DomainError(f"Claim {claim.number} is not open.")
+                amt = q4(cd.get("amount") or (claim.total - claim.paid_amount))
+                if amt <= 0:
+                    continue
+                deduction_total += amt
+                claim_allocs.append({"document_type": "company_claim", "document_id": str(claim.pk), "amount": amt})
         if method in ("bank_transfer", "online") and bank_account is None:
             raise DomainError("Select a bank account for bank/online payments.")
         if method == "cash" and cash_account is None:
@@ -593,7 +624,7 @@ class PaymentService:
         )
         if method == "cheque":
             ChequeBookService.take(pay)
-        remaining = amount
+        remaining = amount + deduction_total  # deducted claims settle bills just like cash does
         allocations = allocations or []
         if not allocations and partner_type in ("customer", "supplier") and partner_id:
             # FIFO by default (§6.1)
@@ -605,7 +636,8 @@ class PaymentService:
                     continue
                 allocations.append({"document_type": dtype, "document_id": str(doc.pk), "amount": take})
                 remaining -= take
-        remaining = amount
+        allocations = allocations + claim_allocs
+        remaining = amount + deduction_total
         for a in allocations:
             amt = q4(a["amount"])
             if amt <= 0:
