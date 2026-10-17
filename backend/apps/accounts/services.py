@@ -31,11 +31,23 @@ def ensure_permission_catalog():
         for action, codename in pg["actions"].items():
             Permission.objects.get_or_create(content_type=ct, codename=codename, defaults={"name": f"{ACTION_LABELS[action]} — {pg['label']}"[:255]})
         for extra in pg["extras"]:
-            Permission.objects.get_or_create(content_type=ct, codename=extra["perm"], defaults={"name": f"{extra['label']} ({pg['label']})"[:255]})
+            perms = extra["perm"] if isinstance(extra["perm"], list) else [extra["perm"]]
+            for perm in perms:
+                Permission.objects.get_or_create(content_type=ct, codename=perm, defaults={"name": f"{extra['label']} ({pg['label']})"[:255]})
 
 
 def _perm_objects(codenames):
+    """
+    The Permission rows for these codenames — creating any that do not exist yet. Filtering alone silently
+    dropped every switch whose row was missing (a page added after the catalog last ran), which read as
+    "I turned Edit on, saved, and it came back off". Inputs are validated against the known catalog upstream,
+    so materialising a row here is always legitimate.
+    """
     ct = ContentType.objects.get_for_model(Module)
+    have = set(Permission.objects.filter(content_type=ct, codename__in=codenames).values_list("codename", flat=True))
+    for code in codenames:
+        if code not in have:
+            Permission.objects.get_or_create(content_type=ct, codename=code, defaults={"name": code[:255]})
     return Permission.objects.filter(content_type=ct, codename__in=codenames)
 
 

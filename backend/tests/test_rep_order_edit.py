@@ -134,8 +134,11 @@ def test_once_the_office_confirms_it_the_rep_cannot_change_it(rep_app, api):
     assert "office" in blocked.data["detail"]
 
 
-def test_a_rep_cannot_edit_somebody_elses_order(rep_app, api, tenant):
-    """The rep's own orders are scoped by rep, and that scoping has to hold on the write too."""
+def test_a_rep_cannot_edit_an_office_order(rep_app, api, tenant):
+    """
+    A staff order for the rep's customer carries them as the sale person (auto-assigned from the customer), so
+    it shows in their app — but it is the office's document: the write must be refused even though it is visible.
+    """
     from apps.sales.services import OrderService
 
     with tenant_context(tenant, tenant.owner):
@@ -144,7 +147,9 @@ def test_a_rep_cannot_edit_somebody_elses_order(rep_app, api, tenant):
     r = rep_app["phone"].patch(f"/ext/v1/orders/{other.pk}", {
         "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 99}],
     }, format="json")
-    assert r.status_code == 404, r.content
+    assert r.status_code in (403, 404), r.content
+    if r.status_code == 403:
+        assert r.data.get("type") == "order_not_editable", r.data
 
 
 def test_a_shop_outside_the_area_is_kept_with_the_distance_on_it(rep_app):

@@ -5,6 +5,8 @@ cd /var/www/dms
 echo "== backend =="
 backend/.venv/bin/python -m pip install -q -r backend/requirements.txt
 (cd backend && .venv/bin/python manage.py migrate --noinput && .venv/bin/python manage.py collectstatic --noinput -v 0)
+# every grantable switch needs its Permission row, or role saves silently drop it
+(cd backend && .venv/bin/python -c "import django,os; os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings'); django.setup(); from apps.accounts.services import ensure_permission_catalog; ensure_permission_catalog(); print('permission catalog ensured')")
 echo "== frontend =="
 if [ -d frontend ] && [ -f frontend/package.json ]; then (cd frontend && npm ci --silent && npm run build --silent); fi
 echo "== permissions =="

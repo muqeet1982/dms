@@ -297,7 +297,9 @@ class OrderService:
 
     @staticmethod
     def rep_can_edit(order):
-        return order.status in OrderService.REP_EDITABLE_STATUSES and timezone.now() < OrderService.edit_window_end(order)
+        # only an order the rep took on the app is theirs to change — a staff order that merely carries them
+        # as the sale person (auto-assigned from the customer) is the office's document
+        return order.source == "rep_app" and order.status in OrderService.REP_EDITABLE_STATUSES and timezone.now() < OrderService.edit_window_end(order)
 
     @staticmethod
     @transaction.atomic
@@ -309,6 +311,11 @@ class OrderService:
         normal case rather than the suspicious one. Where they were when they *took* the order is already on
         the order and does not change.
         """
+        if order.source != "rep_app":
+            raise DomainError(
+                f"{order.number} was entered by the office — only the office can change it.",
+                code="order_not_editable", status_code=403,
+            )
         if order.status not in OrderService.REP_EDITABLE_STATUSES:
             raise DomainError(
                 f"{order.number} has moved on — it is {order.get_status_display().lower()}, so the office has to change it now.",

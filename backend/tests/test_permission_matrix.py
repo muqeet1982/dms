@@ -446,3 +446,23 @@ def test_a_role_given_only_the_old_codename_keeps_working(api, tenant):
         RoleService.update_role(role, permissions=["customers.manage_territories", "catalog.view_product"])
         rights = expand(role.permission_codenames)
         assert "customers.delete_territory" in rights and "customers.view_territory" in rights
+
+
+def test_a_switch_with_no_permission_row_still_sticks(api, tenant):
+    """
+    Role saves used to *filter* codenames against the Permission table, so a switch whose row was missing (a
+    page added after the catalog last ran on that database) silently vanished on save — "I turned Edit on,
+    saved, and it came back off". The save now materialises the missing row instead.
+    """
+    from django.contrib.auth.models import Permission
+    from django.contrib.contenttypes.models import ContentType
+
+    import apps.accounts.services as S
+    from apps.accounts.services import RoleService
+    from apps.core.tenancy import tenant_context
+
+    ct = ContentType.objects.get_for_model(S.Module)
+    Permission.objects.filter(content_type=ct, codename="sales.change_invoice").delete()
+    with tenant_context(tenant, tenant.owner):
+        role = RoleService.create_role(tenant, "Invoice editor", ["sales.view_invoice", "sales.change_invoice"])
+        assert "sales.change_invoice" in role.permission_codenames, role.permission_codenames
