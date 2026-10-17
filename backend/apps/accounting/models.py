@@ -210,7 +210,7 @@ class ChequeLeaf(TenantModel):
 
 class Payment(DocumentModel):
     DIRECTIONS = [("in", "Receipt"), ("out", "Payment")]
-    PARTNERS = [("customer", "Customer"), ("supplier", "Supplier"), ("rep", "Rep"), ("other", "Other")]
+    PARTNERS = [("customer", "Customer"), ("supplier", "Supplier"), ("rep", "Rep"), ("company", "Manufacturer/Company"), ("other", "Other")]
     METHODS = [("cash", "Cash"), ("bank_transfer", "Bank transfer"), ("cheque", "Cheque"), ("online", "Online"), ("adjustment", "Adjustment")]
     CHEQUE_STATUS = [("pending", "Pending"), ("deposited", "Deposited"), ("cleared", "Cleared"), ("bounced", "Bounced")]
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("cancelled", "Cancelled")]
@@ -309,9 +309,10 @@ class PostingRule(TenantModel):
         ("inventory", "Stock in hand"), ("in_transit", "Stock in transit"), ("quarantine", "Damaged/quarantine stock"), ("cogs", "Cost of goods sold"), ("ar", "Trade receivables"), ("ap", "Trade payables"),
         ("sales", "Sales"), ("sales_return", "Sales returns"), ("discount", "Discounts allowed"), ("tax1_out", "Output tax 1"), ("tax2_out", "Output tax 2"), ("tax1_in", "Input tax 1"), ("tax2_in", "Input tax 2"),
         ("grni", "Goods received not invoiced"), ("ppv", "Purchase price variance"), ("freight_in", "Freight inward"), ("rep_clearing", "Rep cash clearing"), ("cash", "Cash in hand"), ("petty_cash", "Petty cash"), ("bank", "Default bank"),
-        ("pdc_received", "Post-dated cheques received"), ("cheques_payable", "Cheques payable"), ("shrinkage", "Inventory shrinkage"), ("expiry_loss", "Expiry loss"), ("damaged_goods", "Damaged goods"), ("transit_damage", "Transit damage"),
+        ("pdc_received", "Post-dated cheques received"), ("manufacturer_claim", "Manufacturer claims receivable"), ("cheques_payable", "Cheques payable"), ("shrinkage", "Inventory shrinkage"), ("expiry_loss", "Expiry loss"), ("damaged_goods", "Damaged goods"), ("transit_damage", "Transit damage"),
         ("samples", "Samples & promotion"), ("withholding_payable", "Withholding tax payable"), ("withholding_receivable", "Withholding tax receivable"), ("advance_customer", "Advances from customers"), ("advance_supplier", "Advances to suppliers"),
         ("opening_equity", "Opening balance equity"), ("retained_earnings", "Retained earnings"), ("current_year_profit", "Current year profit"), ("bank_charges", "Bank charges"), ("other_income", "Misc income"), ("bad_debts", "Bad debts"),
+        ("manufacturer_incentive", "Manufacturer incentive / scheme income"),
     ]
     role = models.CharField(max_length=30, choices=ROLES)
     document_type = models.CharField(max_length=30, default="*")

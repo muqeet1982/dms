@@ -17,6 +17,7 @@ DEFAULT_PREFIXES = {
     "delivery_note": "DN-",
     "sales_invoice": "INV-",
     "credit_note": "CN-",
+    "company_claim": "CLM-",
     "rep_collection": "RC-",
     "rep_settlement": "RS-",
     "stock_transfer": "ST-",

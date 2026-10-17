@@ -90,6 +90,18 @@ class TenantService:
         seed_chart_of_accounts(tenant)
         seed_reason_codes(tenant)
         seed_catalog_defaults(tenant)
+        TenantService._seed_discount_contributions(tenant)
+
+    @staticmethod
+    def _seed_discount_contributions(tenant):
+        from decimal import Decimal
+
+        from apps.sales.models import DiscountContribution
+
+        if DiscountContribution.all_objects.filter(tenant=tenant).exists():
+            return
+        for total, dist, comp in [(3, 2, 1), (4, 2, 2), (5, 3, 2), (6, 3, 3), (7, 3, 4)]:
+            DiscountContribution.all_objects.create(tenant=tenant, total_pct=Decimal(total), distributor_pct=Decimal(dist), company_pct=Decimal(comp), is_active=True)
 
     @staticmethod
     @transaction.atomic

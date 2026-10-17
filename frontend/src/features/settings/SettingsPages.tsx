@@ -331,3 +331,27 @@ export function SupportPage() {
     </>
   );
 }
+
+export function DiscountContributionsPage() {
+  return (
+    <CrudPage
+      page="settings_discount_contributions"
+      title="Discount contributions"
+      crumbs={[{ label: "Settings" }, { label: "Discount contributions" }]}
+      endpoint="/api/v1/settings/discount-contributions"
+      intro={<Alert kind="info">For each total invoice discount, set how much the <strong>distributor</strong> gives and how much the <strong>manufacturer/company</strong> funds. The two must add up to the total. Customers are given one of these total %s; the company's share of every discounted invoice is claimed back automatically.</Alert>}
+      columns={[
+        { key: "total_pct", header: "Total discount", render: (r: any) => `${Number(r.total_pct)}%` },
+        { key: "distributor_pct", header: "Distributor gives", render: (r: any) => `${Number(r.distributor_pct)}%` },
+        { key: "company_pct", header: "Company gives", render: (r: any) => `${Number(r.company_pct)}%` },
+        { key: "is_active", header: "Active", render: (r: any) => (r.is_active ? "Yes" : "No") },
+      ]}
+      fields={[
+        { name: "total_pct", label: "Total discount %", type: "number", required: true },
+        { name: "distributor_pct", label: "Distributor gives %", type: "number", required: true },
+        { name: "company_pct", label: "Company gives %", type: "number", required: true },
+        { name: "is_active", label: "Active", type: "checkbox", default: true },
+      ]}
+    />
+  );
+}

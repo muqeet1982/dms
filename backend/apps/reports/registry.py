@@ -63,6 +63,7 @@ REPORTS = {
     "cheque_register": {"title": "Cheque register", "area": "receivables", "params": [{"name": "cheque_status", "type": "select", "options": ["", "pending", "deposited", "cleared", "bounced"]}], "query": ops.cheque_register, "perm": OPS},
     "credit_utilisation": {"title": "Credit limit utilisation", "area": "receivables", "params": [], "query": ops.credit_utilisation, "perm": OPS},
     "ap_ageing": {"title": "Payables ageing", "area": "payables", "params": AS_OF + [{"name": "supplier", "type": "supplier"}], "query": fin.ap_ageing, "perm": OPS},
+    "company_claims": {"title": "Company discount claims", "area": "sales", "params": DATE_RANGE + [{"name": "supplier", "type": "supplier"}, {"name": "status", "type": "select", "options": ["posted", "partially_paid", "paid"]}], "query": fin.company_claims, "perm": FIN},
     "payment_register": {"title": "Payment register", "area": "payables", "params": DATE_RANGE + [{"name": "direction", "type": "select", "options": ["", "in", "out"]}], "query": ops.payment_register, "perm": OPS},
     "due_payments": {"title": "Due payments calendar", "area": "payables", "params": [], "query": ops.due_payments_calendar, "perm": OPS},
     # ---- financial

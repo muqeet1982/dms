@@ -330,3 +330,33 @@ def audit_trail(date_from=None, date_to=None, **_):
         qs = qs.filter(at__date__lte=date_to)
     rows = [{"at": a.at, "actor": a.actor.full_name if a.actor else "", "action": a.action, "object": a.object_repr, "after": a.after} for a in qs[:1000]]
     return {"columns": ["at", "actor", "action", "object"], "rows": rows, "totals": {}}
+
+
+def company_claims(status=None, supplier=None, date_from=None, date_to=None, **_):
+    """Manufacturer discount-share claims per company: raised, recovered and still outstanding."""
+    from apps.sales.models import CompanyClaim
+
+    qs = CompanyClaim.objects.exclude(status="cancelled").select_related("supplier")
+    if status:
+        qs = qs.filter(status=status)
+    if supplier:
+        qs = qs.filter(supplier_id=supplier)
+    if date_from:
+        qs = qs.filter(date__gte=date_from)
+    if date_to:
+        qs = qs.filter(date__lte=date_to)
+    per, names = defaultdict(lambda: defaultdict(Decimal)), {}
+    for c in qs:
+        per[c.supplier_id]["claimed"] += c.total
+        per[c.supplier_id]["recovered"] += c.paid_amount
+        per[c.supplier_id]["outstanding"] += (c.total - c.paid_amount)
+        per[c.supplier_id]["claims"] += 1
+        names[c.supplier_id] = c.supplier
+    rows, tot = [], defaultdict(Decimal)
+    for sid, b in per.items():
+        s = names[sid]
+        rows.append({"code": s.code, "supplier": s.name, "claims": str(int(b["claims"])), "claimed": str(b["claimed"]), "recovered": str(b["recovered"]), "outstanding": str(b["outstanding"])})
+        for k in ("claimed", "recovered", "outstanding"):
+            tot[k] += b[k]
+    rows.sort(key=lambda r: Decimal(r["outstanding"]), reverse=True)
+    return {"columns": ["code", "supplier", "claims", "claimed", "recovered", "outstanding"], "rows": rows, "totals": {k: str(v) for k, v in tot.items()}}

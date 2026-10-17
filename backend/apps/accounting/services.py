@@ -208,6 +208,28 @@ class PostingService:
             PostingService.post(cl, date_=cn.date, memo=f"COGS reversal for {cn.number}", source=cn)
         return je
 
+    @staticmethod
+    def post_company_claim(claim):
+        """The manufacturer owes us its share of the discount: Dr Manufacturer Claims Receivable, Cr incentive income."""
+        recv = account_for("manufacturer_claim", "company_claim")
+        income = account_for("manufacturer_incentive", "company_claim")
+        lines = [
+            Line(recv, debit=claim.total, description=f"Claim {claim.number} – {claim.supplier.name}", partner_type="supplier", partner_id=claim.supplier_id),
+            Line(income, credit=claim.total, description=f"Manufacturer incentive {claim.invoice.number}"),
+        ]
+        return PostingService.post(lines, date_=claim.date, memo=f"Discount claim {claim.number} – {claim.supplier.name}", source=claim)
+
+    @staticmethod
+    def post_claim_netoff(claim, amount, on_date):
+        """Settle a claim by netting it against what we owe the manufacturer: Dr Trade Payables, Cr Claims Receivable."""
+        ap = (claim.supplier.account if claim.supplier.account_id else None) or account_for("ap", "company_claim")
+        recv = account_for("manufacturer_claim", "company_claim")
+        lines = [
+            Line(ap, debit=amount, description=f"Claim {claim.number} netted against purchases", partner_type="supplier", partner_id=claim.supplier_id),
+            Line(recv, credit=amount, description=f"Claim {claim.number} settled by net-off", partner_type="supplier", partner_id=claim.supplier_id),
+        ]
+        return PostingService.post(lines, date_=on_date, memo=f"Claim {claim.number} net-off – {claim.supplier.name}", source=claim)
+
     # ----------------------------------------------------------------- payments
     @staticmethod
     def _money_account(payment):
@@ -240,16 +262,21 @@ class PostingService:
                 partner_acct = s.account
         elif payment.partner_type == "rep":
             partner_acct = account_for("rep_clearing", "payment")
+        elif payment.partner_type == "company":
+            # manufacturer reimbursing its discount share — settles the claims receivable, not AP
+            partner_acct = account_for("manufacturer_claim", "payment")
         else:
             partner_acct = account_for("other_income", "payment") if payment.direction == "in" else account_for("bank_charges", "payment")
         net = payment.amount - payment.withholding_amount
+        # the manufacturer is a supplier on the ledger; "other" carries no partner tag
+        jp = "supplier" if payment.partner_type == "company" else (payment.partner_type if payment.partner_type != "other" else "")
         if payment.direction == "in":
             lines = [Line(money, debit=net, description=f"Receipt {payment.number}")]
             if payment.withholding_amount:
                 lines.append(Line(account_for("withholding_receivable", "payment"), debit=payment.withholding_amount, description="Withholding tax deducted by customer", tax_type=payment.withholding_tax))
-            lines.append(Line(partner_acct, credit=payment.amount, description=f"Receipt {payment.number} {payment.reference}", partner_type=payment.partner_type if payment.partner_type != "other" else "", partner_id=payment.partner_id))
+            lines.append(Line(partner_acct, credit=payment.amount, description=f"Receipt {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id))
         else:
-            lines = [Line(partner_acct, debit=payment.amount, description=f"Payment {payment.number} {payment.reference}", partner_type=payment.partner_type if payment.partner_type != "other" else "", partner_id=payment.partner_id), Line(money, credit=net, description=f"Payment {payment.number}")]
+            lines = [Line(partner_acct, debit=payment.amount, description=f"Payment {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id), Line(money, credit=net, description=f"Payment {payment.number}")]
             if payment.withholding_amount:
                 lines.append(Line(account_for("withholding_payable", "payment"), credit=payment.withholding_amount, description="Withholding tax withheld", tax_type=payment.withholding_tax))
         return PostingService.post(lines, date_=payment.date, memo=f"{'Receipt' if payment.direction == 'in' else 'Payment'} {payment.number} – {payment.partner_name}", source=payment)
@@ -523,6 +550,10 @@ class PaymentService:
             from apps.purchasing.models import PurchaseBill
 
             return [(d, d.total - d.paid_amount, "purchase_bill") for d in PurchaseBill.objects.filter(supplier_id=partner_id, status__in=["posted", "partially_paid"]).order_by("due_date", "bill_date")]
+        if partner_type == "company":
+            from apps.sales.models import CompanyClaim
+
+            return [(d, d.total - d.paid_amount, "company_claim") for d in CompanyClaim.objects.filter(supplier_id=partner_id, status__in=["posted", "partially_paid"]).order_by("date")]
         return []
 
     @staticmethod
@@ -549,7 +580,7 @@ class PaymentService:
 
             cash_account = CashAccount.objects.filter(is_petty=False).first()
         number = next_number("payment_in" if direction == "in" else "payment_out")
-        if partner_type in ("customer", "supplier") and partner_id and not partner_name:
+        if partner_type in ("customer", "supplier", "company") and partner_id and not partner_name:
             from apps.partners.models import Customer, Supplier
 
             obj = (Customer if partner_type == "customer" else Supplier).objects.filter(pk=partner_id).first()
@@ -605,6 +636,10 @@ class PaymentService:
             from apps.purchasing.models import PurchaseBill
 
             return PurchaseBill.objects.get(pk=doc_id)
+        if doc_type == "company_claim":
+            from apps.sales.models import CompanyClaim
+
+            return CompanyClaim.objects.get(pk=doc_id)
         raise DomainError(f"Unknown document type {doc_type}")
 
     @staticmethod

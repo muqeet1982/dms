@@ -107,6 +107,9 @@ class SalesInvoice(DocumentModel):
     due_date = models.DateField(null=True, blank=True)
     subtotal = models.DecimalField(**MONEY)
     discount = models.DecimalField(**MONEY)
+    # The co-funded total discount percent chosen for this invoice (defaults from the customer). When it matches
+    # a DiscountContribution row, the manufacturer's share is recovered as a CompanyClaim (see sales.services).
+    discount_pct = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
     tax1_type = models.ForeignKey("catalog.TaxType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     tax1_total = models.DecimalField(**MONEY)
     tax2_type = models.ForeignKey("catalog.TaxType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -228,3 +231,59 @@ class RepSettlement(DocumentModel):
 
     def __str__(self):
         return self.number
+
+
+class DiscountContribution(TenantModel):
+    """
+    One row of the co-funded-discount table: a total invoice discount split into the share the distributor
+    gives and the share the manufacturer (company) funds, e.g. total 5% = distributor 3% + company 2%.
+    distributor_pct + company_pct must equal total_pct.
+    """
+    total_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    distributor_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    company_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["total_pct"]
+        unique_together = [("tenant", "total_pct")]
+
+    def __str__(self):
+        return f"{self.total_pct}% = {self.distributor_pct}% + {self.company_pct}%"
+
+
+class CompanyClaim(DocumentModel):
+    """
+    The manufacturer's share of the discount on one invoice, for one manufacturer (supplier). One invoice can
+    raise several claims — one per manufacturer whose products it carried. Settled either by a receipt from the
+    company or by netting against what the distributor owes that company on purchases (see sales.services).
+    """
+    STATUS = [("posted", "Open"), ("partially_paid", "Partially recovered"), ("paid", "Recovered"), ("written_off", "Written off"), ("cancelled", "Cancelled")]
+    invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="company_claims")
+    supplier = models.ForeignKey("partners.Supplier", on_delete=models.PROTECT, related_name="company_claims")
+    date = models.DateField(default=timezone.localdate, db_index=True)
+    discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
+    company_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
+    total = models.DecimalField(**MONEY)
+    paid_amount = models.DecimalField(**MONEY)
+    status = models.CharField(max_length=20, choices=STATUS, default="posted", db_index=True)
+    journal = models.ForeignKey("accounting.JournalEntry", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+        unique_together = [("tenant", "number"), ("tenant", "invoice", "supplier")]
+
+    def __str__(self):
+        return self.number
+
+    @property
+    def balance(self):
+        return self.total - self.paid_amount
+
+
+class CompanyClaimLine(TenantModel):
+    claim = models.ForeignKey(CompanyClaim, on_delete=models.CASCADE, related_name="lines")
+    variant = models.ForeignKey("catalog.ProductVariant", on_delete=models.PROTECT, related_name="+")
+    qty = models.DecimalField(**QTY)
+    base_amount = models.DecimalField(**MONEY)
+    company_amount = models.DecimalField(**MONEY)

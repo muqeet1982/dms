@@ -15,7 +15,7 @@ from apps.core.tenancy import get_current_tenant, get_current_user
 from apps.inventory.services import StockService
 from apps.partners.services import CustomerService
 
-from .models import CreditNote, CreditNoteLine, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine, StockReservation
+from .models import CompanyClaim, CreditNote, CreditNoteLine, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine, StockReservation
 
 Q4 = Decimal("0.0001")
 
@@ -474,6 +474,8 @@ class InvoiceService:
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, disc, t1, t2
         inv.tax1_type, inv.tax2_type = tax1_type, tax2_type
         inv.total = subtotal - disc + t1 + t2
+        # the co-funded discount % defaults from the customer; it drives the manufacturer claim on posting
+        inv.discount_pct = Decimal(str(customer.default_discount_pct or 0))
         inv.save()
         if post:
             InvoiceService.post(inv)
@@ -548,6 +550,8 @@ class InvoiceService:
         for line in inv.lines.all():
             line.discount_amount = q4(q4(line.qty * line.unit_price) * pct / 100)
             line.save(update_fields=["discount_amount"])
+        inv.discount_pct = pct  # the co-funded total %; the manufacturer's share is claimed on posting
+        inv.save(update_fields=["discount_pct"])
         InvoiceService.recompute(inv)
         AuditService.log("invoice.discount", inv, after={"action": action, "percent": str(pct)}, actor=actor)
         return inv
@@ -576,6 +580,48 @@ class InvoiceService:
         return inv
 
     @staticmethod
+    def _raise_company_claims(inv):
+        """
+        After an invoice posts, recover the manufacturer's share of its discount. The co-funded total % is
+        inv.discount_pct; the DiscountContribution row for it gives the company fraction (company_pct/total_pct).
+        Each line's share of the discount actually given is attributed to that product's manufacturer, so one
+        invoice can raise several claims — one per manufacturer. Nothing is raised when no co-funding applies.
+        """
+        from collections import defaultdict
+
+        from apps.accounting.services import PostingService
+
+        from .models import CompanyClaim, CompanyClaimLine, DiscountContribution
+
+        if not inv.discount_pct or inv.discount_pct <= 0:
+            return
+        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
+        if row is None or row.company_pct <= 0 or row.total_pct <= 0:
+            return
+        fraction = Decimal(row.company_pct) / Decimal(row.total_pct)  # company's share of the discount given
+        groups = defaultdict(list)  # supplier_id -> (supplier, [(line, company_amount)])
+        for line in inv.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
+            if line.discount_amount <= 0:
+                continue
+            product = line.variant.product
+            supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
+            if supplier is None:
+                continue
+            company_amt = q4(line.discount_amount * fraction)
+            if company_amt <= 0:
+                continue
+            groups.setdefault(supplier.id, (supplier, []))[1].append((line, company_amt))
+        for supplier, items in groups.values():
+            total = sum((amt for _, amt in items), Decimal("0"))
+            if total <= 0:
+                continue
+            claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=row.company_pct, total=total)
+            for line, amt in items:
+                CompanyClaimLine.objects.create(claim=claim, variant=line.variant, qty=line.qty, base_amount=q4(line.qty * line.unit_price), company_amount=amt)
+            claim.journal = PostingService.post_company_claim(claim)
+            claim.save(update_fields=["journal"])
+
+    @staticmethod
     @transaction.atomic
     def post(inv):
         if inv.status != "draft":
@@ -585,6 +631,7 @@ class InvoiceService:
         inv.journal = PostingService.post_sales_invoice(inv)
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])
+        InvoiceService._raise_company_claims(inv)
         if inv.order_id:
             order = inv.order
             if order.status == "delivered" and not order.delivery_notes.exclude(invoice__isnull=False).filter(status__in=["delivered", "partially_delivered"]).exists():
@@ -606,6 +653,12 @@ class InvoiceService:
 
             for je in JournalEntry.objects.filter(source_type="SalesInvoice", source_id=str(inv.pk), status="posted").exclude(pk=inv.journal_id):
                 PostingService.reverse(je, memo=f"Invoice {inv.number} cancelled")
+        # unwind the manufacturer claims this invoice raised (only while they are still unsettled)
+        open_claims = inv.company_claims.exclude(status="cancelled")
+        if open_claims.filter(paid_amount__gt=0).exists():
+            raise DomainError("A manufacturer claim on this invoice has been settled; reverse that first.")
+        for claim in open_claims:
+            CompanyClaimService.cancel(claim, reason=f"Invoice {inv.number} cancelled")
         inv.status = "cancelled"
         inv.notes = (inv.notes + f"\nCancelled: {reason}").strip()
         inv.save(update_fields=["status", "notes", "updated_at"])
@@ -678,6 +731,56 @@ class CreditNoteService:
                 ol.save(update_fields=["qty_returned"])
         AuditService.log("status.posted", cn, after={"total": str(cn.total)})
         return cn
+
+
+class CompanyClaimService:
+    """Settle a manufacturer discount claim — either the company pays (a receipt) or it is netted off against
+    what the distributor owes that manufacturer on purchases. Receipts go through PaymentService.record with
+    partner_type='company'; this service handles the net-off and the write-off."""
+
+    @staticmethod
+    @transaction.atomic
+    def net_off(claim, amount, bill=None, date=None):
+        from apps.accounting.services import PaymentService, PostingService
+
+        if claim.status in ("paid", "cancelled", "written_off"):
+            raise DomainError("This claim is already settled.")
+        amount = q4(amount)
+        if amount <= 0:
+            raise DomainError("Amount must be positive.")
+        if amount > claim.balance + Decimal("0.01"):
+            raise DomainError(f"Amount {amount} exceeds the claim balance {claim.balance}.")
+        if bill is not None:
+            if bill.supplier_id != claim.supplier_id:
+                raise DomainError("That bill belongs to a different manufacturer.")
+            if amount > (bill.total - bill.paid_amount) + Decimal("0.01"):
+                raise DomainError(f"Amount {amount} exceeds the balance of {bill.number}.")
+        on_date = date or timezone.localdate()
+        PostingService.post_claim_netoff(claim, amount, on_date)
+        PaymentService._apply(claim, "company_claim", amount)
+        if bill is not None:
+            PaymentService._apply(bill, "purchase_bill", amount)
+        AuditService.log("claim.netoff", claim, after={"amount": str(amount), "bill": bill.number if bill else None})
+        return claim
+
+    @staticmethod
+    @transaction.atomic
+    def write_off(claim, reason=""):
+        from apps.accounting.services import Line, PostingService, account_for
+
+        if claim.status in ("paid", "cancelled", "written_off"):
+            raise DomainError("This claim is already settled.")
+        bal = claim.balance
+        if bal > 0:
+            # give back the income we recognised and clear the receivable
+            PostingService.post([
+                Line(account_for("manufacturer_incentive", "company_claim"), debit=bal, description=f"Write off claim {claim.number}"),
+                Line(account_for("manufacturer_claim", "company_claim"), credit=bal, description=f"Write off claim {claim.number}", partner_type="supplier", partner_id=claim.supplier_id),
+            ], date_=timezone.localdate(), memo=f"Write off claim {claim.number} – {reason}"[:300], source=claim)
+        claim.status = "written_off"
+        claim.save(update_fields=["status", "updated_at"])
+        AuditService.log("claim.written_off", claim, after={"reason": reason, "amount": str(bal)})
+        return claim
 
 
 def _accuracy(gps):
@@ -756,3 +859,66 @@ class RepCollectionService:
         days = get_current_tenant().setting("rep_unsettled_alert_days") or 3
         cutoff = timezone.localdate() - timedelta(days=int(days))
         return RepCollection.objects.filter(status="held_by_rep", date__lte=cutoff).select_related("rep", "customer")
+
+
+class CompanyClaimService:
+    """Settle a manufacturer's discount-share claim — either by a receipt from them or by netting it against
+    what the distributor owes them on purchases."""
+
+    @staticmethod
+    @transaction.atomic
+    def settle_receipt(claim, *, amount=None, method="bank_transfer", cash_account=None, bank_account=None, date=None, reference=""):
+        from apps.accounting.services import PaymentService
+
+        if claim.status not in ("posted", "partially_paid"):
+            raise DomainError("Claim is not open for settlement.")
+        amount = q4(amount) if amount else claim.balance
+        if amount <= 0 or amount > claim.balance + Decimal("0.01"):
+            raise DomainError(f"Amount must be between 0 and the balance {claim.balance}.")
+        pay = PaymentService.record(
+            direction="in", partner_type="company", partner_id=str(claim.supplier_id), amount=amount,
+            method=method, cash_account=cash_account, bank_account=bank_account, date_=date,
+            reference=reference or f"Discount claim {claim.number}",
+            allocations=[{"document_type": "company_claim", "document_id": str(claim.pk), "amount": amount}],
+        )
+        AuditService.log("claim.receipt", claim, after={"amount": str(amount), "payment": pay.number})
+        return claim
+
+    @staticmethod
+    @transaction.atomic
+    def net_off(claim, *, amount=None, date=None, notes=""):
+        """Reduce the supplier's payable by the claim: Dr Trade Payables, Cr Manufacturer Claims Receivable."""
+        from apps.accounting.services import Line, PaymentService, PostingService, account_for
+
+        if claim.status not in ("posted", "partially_paid"):
+            raise DomainError("Claim is not open for settlement.")
+        amount = q4(amount) if amount else claim.balance
+        if amount <= 0 or amount > claim.balance + Decimal("0.01"):
+            raise DomainError(f"Amount must be between 0 and the balance {claim.balance}.")
+        supplier = claim.supplier
+        ap = supplier.account if supplier.account_id else account_for("ap", "company_claim")
+        recv = account_for("manufacturer_claim", "company_claim")
+        PostingService.post(
+            [Line(ap, debit=amount, description=f"Claim {claim.number} netted against purchases", partner_type="supplier", partner_id=supplier.id),
+             Line(recv, credit=amount, description=f"Claim {claim.number} settled")],
+            date_=date or timezone.localdate(), memo=f"Claim {claim.number} net-off – {supplier.name}", source=claim,
+        )
+        PaymentService._apply(claim, "company_claim", amount)
+        AuditService.log("claim.netoff", claim, after={"amount": str(amount)})
+        return claim
+
+    @staticmethod
+    @transaction.atomic
+    def cancel(claim, reason=""):
+        from apps.accounting.services import PostingService
+
+        if claim.paid_amount > 0:
+            raise DomainError("Claim has been (partly) settled; reverse the settlement first.")
+        if claim.status == "cancelled":
+            return claim
+        if claim.journal_id:
+            PostingService.reverse(claim.journal, memo=f"Claim {claim.number} cancelled")
+        claim.status = "cancelled"
+        claim.save(update_fields=["status", "updated_at"])
+        AuditService.log("status.cancelled", claim, after={"reason": reason})
+        return claim

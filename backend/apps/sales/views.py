@@ -12,11 +12,11 @@ from apps.core.audit import AuditService
 from apps.core.documents import render_doc
 from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, require_perm
-from apps.core.viewsets import DocumentViewSet, ExportableMixin, warehouse_scope
+from apps.core.viewsets import DocumentViewSet, ExportableMixin, TenantModelViewSet, warehouse_scope
 
-from .models import CreditNote, RepCollection, RepSettlement, SalesInvoice, SalesOrder
-from .serializers import CreditNoteSerializer, SalesInvoiceEditSerializer, RepCollectionSerializer, RepSettlementSerializer, SalesInvoiceSerializer, SalesOrderListSerializer, SalesOrderSerializer
-from .services import CreditNoteService, InvoiceService, OrderService, RepCollectionService
+from .models import CompanyClaim, CreditNote, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesOrder
+from .serializers import CompanyClaimSerializer, CreditNoteSerializer, DiscountContributionSerializer, SalesInvoiceEditSerializer, RepCollectionSerializer, RepSettlementSerializer, SalesInvoiceSerializer, SalesOrderListSerializer, SalesOrderSerializer
+from .services import CompanyClaimService, CreditNoteService, InvoiceService, OrderService, RepCollectionService
 
 
 
@@ -446,3 +446,43 @@ class RepSettlementViewSet(DocumentViewSet):
     def perform_create(self, serializer):
         d = serializer.validated_data
         serializer.instance = RepCollectionService.settle(rep=d["rep"], collections=list(d["collections"]), cash_account=d.get("cash_account"), bank_account=d.get("bank_account"), date=d.get("date"), notes=d.get("notes", ""))
+
+
+class DiscountContributionViewSet(TenantModelViewSet):
+    """The co-funded discount table (Settings): add/edit/delete/list the total % → distributor/company split."""
+    serializer_class = DiscountContributionSerializer
+    perm_map = page_perms("settings_discount_contributions")
+    pagination_class = None
+    queryset = DiscountContribution.objects.all()
+
+
+class CompanyClaimViewSet(DocumentViewSet):
+    """The manufacturer's share of invoice discounts, raised automatically on posting. Read-only + settle/cancel."""
+    serializer_class = CompanyClaimSerializer
+    perm_map = page_perms("company_claims", {"settle": "sales.settle_company_claim", "net_off": "sales.settle_company_claim"})
+    http_method_names = ["get", "post", "head", "options"]
+    filterset_fields = ["status", "supplier", "invoice"]
+    search_fields = ["number", "supplier__name", "invoice__number"]
+
+    def get_queryset(self):
+        return CompanyClaim.objects.select_related("supplier", "invoice", "invoice__customer", "journal").prefetch_related("lines__variant")
+
+    @action(detail=True, methods=["post"])
+    def settle(self, request, pk=None):
+        d = request.data
+        CompanyClaimService.settle_receipt(
+            self.get_object(), amount=d.get("amount"), method=d.get("method", "bank_transfer"),
+            cash_account=d.get("cash_account") or None, bank_account=d.get("bank_account") or None,
+            date=d.get("date") or None, reference=d.get("reference", ""),
+        )
+        return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["post"], url_path="net-off")
+    def net_off(self, request, pk=None):
+        CompanyClaimService.net_off(self.get_object(), amount=request.data.get("amount"), date=request.data.get("date") or None, notes=request.data.get("notes", ""))
+        return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        CompanyClaimService.cancel(self.get_object(), reason=request.data.get("reason", ""))
+        return Response(self.get_serializer(self.get_object()).data)

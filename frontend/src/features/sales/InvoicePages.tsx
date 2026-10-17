@@ -45,6 +45,7 @@ export function InvoiceDetailPage() {
   const pays = useQuery({ queryKey: ["invoice-payments", id], queryFn: () => api.get(`/api/v1/invoices/${id}/payments`), enabled: Boolean(id) });
   const { run, busy } = useAction("/api/v1/invoices", id);
   const [cancel, setCancel] = useState(false);
+  const contribs = useQuery({ queryKey: ["crud", "/api/v1/settings/discount-contributions"], queryFn: () => api.get("/api/v1/settings/discount-contributions", { page_size: 100 }), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
   const [edit, setEdit] = useState<{ due_date: string; notes: string; date: string; lines: any[] } | null>(null);
@@ -58,9 +59,12 @@ export function InvoiceDetailPage() {
     <>
       <PageHeader title={inv.number} badge={<StatusBadge status={inv.status} />} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
         actions={<>
-          {inv.status === "draft" && page.can("discount") && (Number(inv.discount) > 0
-            ? <button className="btn btn-outline-secondary" disabled={!!busy} onClick={() => run("discount", { action: "remove" }, { success: "Discount removed from this invoice" })}><i className="ti ti-discount-off me-1" />Remove discount</button>
-            : <button className="btn btn-outline-secondary" disabled={!!busy} onClick={() => run("discount", { action: "apply" }, { success: "Customer discount applied" })}><i className="ti ti-discount-2 me-1" />Apply customer discount</button>)}
+          {inv.status === "draft" && page.can("discount") && <div className="btn-group">
+            <select className="form-select form-select-sm" style={{ width: 150 }} value={String(Number(inv.discount_pct || 0))} onChange={(e) => run("discount", { action: e.target.value === "0" ? "remove" : "apply", percent: e.target.value }, { success: "Discount updated" })} title="Co-funded total discount">
+              <option value="0">No discount</option>
+              {(contribs.data || []).filter((r: any) => r.is_active).map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}% (co {Number(r.company_pct)}%)</option>)}
+            </select>
+          </div>}
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
           {open && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
@@ -79,7 +83,7 @@ export function InvoiceDetailPage() {
         <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem></div>
         <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Amount</th></tr></thead>
           <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(l.discount_amount)}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
-          <tfoot>{Number(inv.discount) > 0 && <tr><td colSpan={6} className="text-end">Discount given</td><td className="num">{money(inv.discount)}</td></tr>}<tr className="fw-bold"><td colSpan={6} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>
+          <tfoot>{Number(inv.discount) > 0 && <tr><td colSpan={6} className="text-end">Discount given{Number(inv.discount_pct) > 0 ? ` (${Number(inv.discount_pct)}%)` : ""}</td><td className="num">{money(inv.discount)}</td></tr>}{Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={6} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}<tr className="fw-bold"><td colSpan={6} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>
       </div></div>
       <DocTabs model="SalesInvoice" id={inv.id} showMovements extra={[{ key: "payments", label: "Payments", render: () => (
         <div>{!pays.data?.payments?.length && !pays.data?.rep_collections?.length && <p className="text-muted fs-13">No payments yet</p>}

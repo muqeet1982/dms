@@ -13,6 +13,7 @@ export const TENANT_MENU: MenuSection[] = [
       { label: "Sales", icon: "ti-shopping-cart-dollar", children: [
         { label: "Orders inbox", to: "/app/sales/inbox", page: "sales_inbox", badgeKey: "inbox" }, { label: "Sales orders", to: "/app/sales/orders", page: "sales_orders" },
         { label: "Invoices", to: "/app/sales/invoices", page: "invoices" }, { label: "Credit notes / returns", to: "/app/sales/credit-notes", page: "credit_notes" },
+        { label: "Company claims", to: "/app/sales/company-claims", page: "company_claims" },
         { label: "Rep collections", to: "/app/sales/rep-collections", page: "rep_collections" }, { label: "Rep settlements", to: "/app/sales/rep-settlements", page: "rep_settlements" },
       ] },
       { label: "Customers", icon: "ti-users-group", children: [
@@ -64,7 +65,7 @@ export const TENANT_MENU: MenuSection[] = [
         { label: "Company profile", to: "/app/settings/company", page: "settings_company" }, { label: "Branding", to: "/app/settings/branding", page: "settings_branding", feature: "branding" },
         { label: "Warehouses & bins", to: "/app/settings/warehouses", page: "settings_warehouses" }, { label: "Locations (racks/bins)", to: "/app/settings/locations", page: "settings_locations" }, { label: "Taxes", to: "/app/settings/taxes", page: "settings_taxes" },
         { label: "Document numbering", to: "/app/settings/numbering", page: "settings_numbering" }, { label: "Posting rules", to: "/app/settings/posting-rules", page: "settings_posting_rules" },
-        { label: "Reason codes", to: "/app/settings/reason-codes", page: "settings_reason_codes" }, { label: "Notifications", to: "/app/settings/notifications" },
+        { label: "Reason codes", to: "/app/settings/reason-codes", page: "settings_reason_codes" }, { label: "Discount contributions", to: "/app/settings/discount-contributions", page: "settings_discount_contributions" }, { label: "Notifications", to: "/app/settings/notifications" },
         { label: "API keys", to: "/app/settings/api-keys", page: "settings_api_keys" }, { label: "Webhooks", to: "/app/settings/webhooks", page: "settings_webhooks" },
         { label: "Imports & exports", to: "/app/settings/imports", page: "settings_imports" }, { label: "Subscription", to: "/app/settings/subscription", page: "settings_subscription" }, { label: "Support", to: "/app/settings/support", page: "settings_support" },
       ] },

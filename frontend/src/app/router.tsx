@@ -7,6 +7,7 @@ import { LegalPublicPage } from "@/features/platform/LegalPublicPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { OrderDetailPage, OrderFormPage, OrdersInboxPage, OrdersPage } from "@/features/sales/OrdersPages";
 import { CreditNoteDetailPage, CreditNoteFormPage, CreditNotesPage, InvoiceDetailPage, InvoicesPage, RepCollectionsPage, RepSettlementsPage } from "@/features/sales/InvoicePages";
+import { CompanyClaimsPage, CompanyClaimDetailPage } from "@/features/sales/CompanyClaimsPage";
 import { CustomerDetailPage, CustomerFormPage, CustomersPage, RoutesPage, TerritoriesPage } from "@/features/partners/CustomerPages";
 import { CoverageMapPage, GeofenceDetailPage, GeofenceFormPage, GeofencesPage } from "@/features/partners/GeofencePages";
 import { StoresPage } from "@/features/partners/StorePages";
@@ -22,7 +23,7 @@ import { BalanceSheetPage, GeneralLedgerPage, IncomeStatementPage, TrialBalanceP
 import { ExpenseCategoriesPage } from "@/features/accounting/ExpenseCategoriesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ActivityLogPage, ProfilePage, RoleFormPage, RolesPage, UserFormPage, UsersPage } from "@/features/users/UsersPages";
-import { ApiKeysPage, BrandingPage, CompanySettingsPage, ImportsPage, NotificationSettingsPage, NumberingPage, PostingRulesPage, ReasonCodesPage, SubscriptionPage, SupportPage, TaxesPage, WarehousesPage, WebhooksPage } from "@/features/settings/SettingsPages";
+import { ApiKeysPage, BrandingPage, CompanySettingsPage, DiscountContributionsPage, ImportsPage, NotificationSettingsPage, NumberingPage, PostingRulesPage, ReasonCodesPage, SubscriptionPage, SupportPage, TaxesPage, WarehousesPage, WebhooksPage } from "@/features/settings/SettingsPages";
 import { RepCollectionsPage as RepPortalCollectionsPage, RepCustomerDetailPage, RepCustomersPage, RepDeliveriesPage, RepHomePage, RepNewOrderPage, RepOrderDetailPage, RepOrdersPage, RepStockPage, RepCheckInPage } from "@/features/rep/RepPages";
 import { MobileAppPage } from "@/features/platform/MobileAppPage";
 import { GetAppPage } from "@/features/platform/GetAppPage";
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
         { path: "sales/orders/:id", element: <RequirePage page="sales_orders"><OrderDetailPage /></RequirePage> }, { path: "sales/orders/:id/edit", element: <RequirePage page="sales_orders" action="edit"><OrderFormPage /></RequirePage> },
         { path: "sales/invoices", element: <RequirePage page="invoices"><InvoicesPage /></RequirePage> }, { path: "sales/invoices/:id", element: <RequirePage page="invoices"><InvoiceDetailPage /></RequirePage> },
         { path: "sales/credit-notes", element: <RequirePage page="credit_notes"><CreditNotesPage /></RequirePage> }, { path: "sales/credit-notes/new", element: <RequirePage page="credit_notes" action="add"><CreditNoteFormPage /></RequirePage> }, { path: "sales/credit-notes/:id", element: <RequirePage page="credit_notes"><CreditNoteDetailPage /></RequirePage> },
+        { path: "sales/company-claims", element: <RequirePage page="company_claims"><CompanyClaimsPage /></RequirePage> }, { path: "sales/company-claims/:id", element: <RequirePage page="company_claims"><CompanyClaimDetailPage /></RequirePage> },
         { path: "sales/rep-collections", element: <RequirePage page="rep_collections"><RepCollectionsPage /></RequirePage> }, { path: "sales/rep-settlements", element: <RequirePage page="rep_settlements"><RepSettlementsPage /></RequirePage> },
         { path: "customers", element: <RequirePage page="customers"><CustomersPage /></RequirePage> }, { path: "customers/new", element: <RequirePage page="customers" action="add"><CustomerFormPage /></RequirePage> },
         { path: "customers/territories", element: <RequirePage page="territories"><TerritoriesPage /></RequirePage> }, { path: "customers/routes", element: <RequirePage page="territories"><RoutesPage /></RequirePage> },
@@ -91,6 +93,7 @@ export const router = createBrowserRouter([
         { path: "users/roles", element: <RequirePage page="roles"><RolesPage /></RequirePage> }, { path: "users/roles/new", element: <RequirePage page="roles" action="add"><RoleFormPage /></RequirePage> }, { path: "users/roles/:id", element: <RequirePage page="roles"><RoleFormPage /></RequirePage> },
         { path: "users/activity", element: <RequirePage page="activity"><ActivityLogPage /></RequirePage> }, { path: "users/:id", element: <RequirePage page="users"><UserFormPage /></RequirePage> },
         { path: "settings/company", element: <RequirePage page="settings_company"><CompanySettingsPage /></RequirePage> }, { path: "settings/branding", element: <RequirePage page="settings_branding"><BrandingPage /></RequirePage> }, { path: "settings/warehouses", element: <RequirePage page="settings_warehouses"><WarehousesPage /></RequirePage> }, { path: "settings/taxes", element: <RequirePage page="settings_taxes"><TaxesPage /></RequirePage> }, { path: "settings/numbering", element: <RequirePage page="settings_numbering"><NumberingPage /></RequirePage> }, { path: "settings/posting-rules", element: <RequirePage page="settings_posting_rules"><PostingRulesPage /></RequirePage> }, { path: "settings/reason-codes", element: <RequirePage page="settings_reason_codes"><ReasonCodesPage /></RequirePage> },
+        { path: "settings/discount-contributions", element: <RequirePage page="settings_discount_contributions"><DiscountContributionsPage /></RequirePage> },
       { path: "settings/locations", element: <RequirePage page="settings_locations"><LocationsPage /></RequirePage> },
         { path: "settings/notifications", element: <NotificationSettingsPage /> }, { path: "settings/api-keys", element: <RequirePage page="settings_api_keys"><ApiKeysPage /></RequirePage> }, { path: "settings/webhooks", element: <RequirePage page="settings_webhooks"><WebhooksPage /></RequirePage> }, { path: "settings/imports", element: <RequirePage page="settings_imports"><ImportsPage /></RequirePage> }, { path: "settings/subscription", element: <RequirePage page="settings_subscription"><SubscriptionPage /></RequirePage> }, { path: "settings/support", element: <RequirePage page="settings_support"><SupportPage /></RequirePage> },
         { path: "*", element: <NotFound /> },

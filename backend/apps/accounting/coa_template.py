@@ -15,6 +15,7 @@ COA = [
     ("1-01-003", "Accounts Receivable", "asset", "1-01"),
     ("1-01-003-0001", "Trade Receivables", "asset", "1-01-003", "receivable"),
     ("1-01-003-0002", "Post-dated Cheques Received", "asset", "1-01-003", "pdc"),
+    ("1-01-003-0003", "Manufacturer Claims Receivable", "asset", "1-01-003", "receivable"),
     ("1-01-004", "Inventory", "asset", "1-01"),
     ("1-01-004-0001", "Stock in Hand", "asset", "1-01-004", "inventory"),
     ("1-01-004-0002", "Stock in Transit", "asset", "1-01-004", "inventory"),
@@ -111,9 +112,10 @@ POSTING_MAP = {
     "inventory": "1-01-004-0001", "in_transit": "1-01-004-0002", "quarantine": "1-01-004-0003", "cogs": "5-01-001-0001", "ar": "1-01-003-0001", "ap": "2-01-001-0001",
     "sales": "4-01-001-0001", "sales_return": "4-01-001-0002", "discount": "4-01-001-0003", "tax1_out": "2-01-002-0001", "tax2_out": "2-01-002-0002", "tax1_in": "1-01-005-0003", "tax2_in": "1-01-005-0004",
     "grni": "2-01-001-0002", "ppv": "5-01-002-0001", "freight_in": "5-01-003-0001", "rep_clearing": "1-01-001-0003", "cash": "1-01-001-0001", "petty_cash": "1-01-001-0002", "bank": "1-01-002-0001",
-    "pdc_received": "1-01-003-0002", "cheques_payable": "2-01-003-0003", "shrinkage": "5-01-004-0001", "expiry_loss": "5-01-005-0001", "damaged_goods": "5-01-006-0001", "transit_damage": "5-01-007-0001",
+    "pdc_received": "1-01-003-0002", "manufacturer_claim": "1-01-003-0003", "cheques_payable": "2-01-003-0003", "shrinkage": "5-01-004-0001", "expiry_loss": "5-01-005-0001", "damaged_goods": "5-01-006-0001", "transit_damage": "5-01-007-0001",
     "samples": "5-02-004-0001", "withholding_payable": "2-01-002-0003", "withholding_receivable": "1-01-005-0005", "advance_customer": "2-01-003-0002", "advance_supplier": "1-01-005-0001",
     "opening_equity": "3-01-001-0005", "retained_earnings": "3-01-001-0003", "current_year_profit": "3-01-001-0004", "bank_charges": "5-03-001-0006", "other_income": "4-02-001-0003", "bad_debts": "5-04-001-0002",
+    "manufacturer_incentive": "4-02-001-0001",
 }
 
 SYSTEM_CODES = set(POSTING_MAP.values())

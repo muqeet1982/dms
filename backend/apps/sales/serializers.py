@@ -1,6 +1,49 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from .models import CreditNote, CreditNoteLine, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine
+from .models import CompanyClaim, CompanyClaimLine, CreditNote, CreditNoteLine, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine
+
+
+class CompanyClaimLineSerializer(serializers.ModelSerializer):
+    variant_name = serializers.CharField(source="variant.name", read_only=True)
+    variant_sku = serializers.CharField(source="variant.sku", read_only=True)
+
+    class Meta:
+        model = CompanyClaimLine
+        fields = ["id", "variant", "variant_name", "variant_sku", "qty", "base_amount", "company_amount"]
+
+
+class CompanyClaimSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.number", read_only=True)
+    customer_name = serializers.CharField(source="invoice.customer.name", read_only=True)
+    journal_number = serializers.CharField(source="journal.number", read_only=True, default="")
+    balance = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    lines = CompanyClaimLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CompanyClaim
+        fields = ["id", "number", "invoice", "invoice_number", "customer_name", "supplier", "supplier_name", "date", "discount_pct", "company_pct", "total", "paid_amount", "balance", "status", "journal", "journal_number", "lines", "created_at"]
+
+
+class DiscountContributionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscountContribution
+        fields = ["id", "total_pct", "distributor_pct", "company_pct", "is_active"]
+
+    def validate(self, attrs):
+        inst = self.instance
+        total = attrs.get("total_pct", getattr(inst, "total_pct", None))
+        dist = attrs.get("distributor_pct", getattr(inst, "distributor_pct", None))
+        comp = attrs.get("company_pct", getattr(inst, "company_pct", None))
+        if total is None or dist is None or comp is None:
+            raise serializers.ValidationError("Total, distributor and company percentages are all required.")
+        if any(v < 0 for v in (total, dist, comp)):
+            raise serializers.ValidationError("Percentages cannot be negative.")
+        if Decimal(dist) + Decimal(comp) != Decimal(total):
+            raise serializers.ValidationError(f"Distributor ({dist}%) + company ({comp}%) must equal the total ({total}%).")
+        return attrs
 
 
 class OrderLineSerializer(serializers.ModelSerializer):
@@ -132,7 +175,12 @@ class SalesInvoiceEditSerializer(serializers.ModelSerializer):
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
     lines = InvoiceLineSerializer(many=True, read_only=True)
+    company_claims_total = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+
+    def get_company_claims_total(self, obj):
+        return str(sum((c.total for c in obj.company_claims.exclude(status="cancelled")), __import__("decimal").Decimal("0")))
+
     customer_code = serializers.CharField(source="customer.code", read_only=True)
     order_number = serializers.CharField(source="order.number", read_only=True, default="")
     delivery_note_number = serializers.CharField(source="delivery_note.number", read_only=True, default="")
@@ -165,7 +213,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "total", "paid_amount", "balance", "status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
