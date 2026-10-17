@@ -32,6 +32,29 @@ class AccountViewSet(TenantModelViewSet):
     pagination_class = None
     queryset = Account.objects.select_related("parent")
 
+    def perform_create(self, serializer):
+        acct = serializer.save()
+        # A posting account added under the Bank Accounts / Cash groups must also exist as the operational
+        # bank/cash record, or it never appears in the payment forms — the owner added "Meezan Test" straight
+        # into the chart and then could not pick it on a receipt. The wrapper is created here, both ways stay
+        # usable, and the account gets the subtype the posting rules key on.
+        if not acct.is_group:
+            lineage = []
+            p = acct.parent
+            while p is not None:
+                lineage.append(p.code)
+                p = p.parent
+            if "1-01-002" in lineage and not BankAccount.objects.filter(account=acct).exists():
+                if not acct.subtype:
+                    acct.subtype = "bank"
+                    acct.save(update_fields=["subtype"])
+                BankAccount.objects.create(name=acct.name, account=acct)
+            elif "1-01-001" in lineage and not CashAccount.objects.filter(account=acct).exists():
+                if not acct.subtype:
+                    acct.subtype = "cash"
+                    acct.save(update_fields=["subtype"])
+                CashAccount.objects.create(name=acct.name, account=acct)
+
     def perform_destroy(self, instance):
         if instance.is_system:
             raise DomainError("System accounts cannot be deleted.")

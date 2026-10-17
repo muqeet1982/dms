@@ -90,3 +90,19 @@ def test_an_other_receipt_credits_the_chosen_account_head(api, tenant):
         assert pay.other_account_id == head.id
         line = JournalLine.objects.get(entry=pay.journal, credit__gt=0)
         assert line.account_id == head.id, (line.account.code, head.code)
+
+
+def test_an_account_added_under_the_bank_group_becomes_a_pickable_bank(api, tenant):
+    """Adding a ledger under Bank Accounts in the chart must create the operational bank record too — the
+    owner added one straight into the chart and could not pick it on a receipt."""
+    from apps.accounting.models import Account, BankAccount
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        group = Account.objects.get(code="1-01-002")
+    r = api.post("/api/v1/accounting/accounts", {"code": "1-01-002-0099", "name": "HBL Test", "parent": str(group.id), "type": "asset", "is_group": False}, format="json")
+    assert r.status_code == 201, r.content
+    with tenant_context(tenant, tenant.owner):
+        acct = Account.objects.get(code="1-01-002-0099")
+        assert acct.subtype == "bank"
+        assert BankAccount.objects.filter(account=acct, name="HBL Test").exists(), "the payment form lists bank records, so one must exist"
