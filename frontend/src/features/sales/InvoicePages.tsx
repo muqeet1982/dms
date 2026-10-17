@@ -66,7 +66,7 @@ export function InvoiceDetailPage() {
             </select>
           </div>}
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
-          {open && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
+          {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
           {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0) })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
@@ -218,19 +218,22 @@ export function CreditNoteFormPage() {
   const nav = useNavigate();
   const sp = new URLSearchParams(window.location.search);
   const invoiceId = sp.get("invoice");
-  const inv = useDoc("/api/v1/invoices", invoiceId);
+  const [form, setForm] = useState<any>({ customer: null, invoice: invoiceId, warehouse: "", date: new Date().toISOString().slice(0, 10), reason: "", applied_to_invoice: true, notes: "" });
+  const [lines, setLines] = useState<(EditLine & { restock?: boolean; condition?: string; reason?: string })[]>([]);
+  // whichever way an invoice is chosen — the URL (from the invoice page) or the dropdown — its items load,
+  // with their full quantities, ready to be trimmed, repriced or removed before issuing the credit note
+  const inv = useDoc("/api/v1/invoices", form.invoice || undefined);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const wh = useWarehouses();
   // restock targets are sellable warehouses — damaged/expired returns are routed to quarantine by the service
   const restockable = wh.rows.filter((w: any) => !["quarantine", "van"].includes(w.type));
-  const [form, setForm] = useState<any>({ customer: null, invoice: invoiceId, warehouse: "", date: new Date().toISOString().slice(0, 10), reason: "", applied_to_invoice: true, notes: "" });
-  const [lines, setLines] = useState<(EditLine & { restock?: boolean; condition?: string; reason?: string })[]>([]);
-  const [init, setInit] = useState(false);
-  if (invoiceId && inv.isLoading) return <Spinner />;
-  if (inv.data && !init) {
-    setInit(true);
+  if (invoiceId && inv.isLoading && !loadedFor) return <Spinner />;
+  if (form.invoice && inv.data && inv.data.id === form.invoice && loadedFor !== form.invoice) {
+    setLoadedFor(form.invoice);
     setForm((f: any) => ({ ...f, customer: inv.data.customer }));
-    setLines(inv.data.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, qty: "0", unit_price: l.unit_price, batch: l.batch, restock: true, condition: "good", reason: "" })));
+    setLines(inv.data.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.description, sku: l.variant_sku, qty: String(Number(l.qty)), unit_price: String(l.unit_price), batch: l.batch, restock: true, condition: "good", reason: "" })));
   }
+
   const submit = async (post: boolean) => {
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
     if (!form.customer || !valid.length) return toast.error("Select a customer and at least one line with quantity");
@@ -246,7 +249,7 @@ export function CreditNoteFormPage() {
       <SaveError error={err} what="credit note" />
       <div className="card mb-3"><div className="card-body">
         <div className="row">
-          <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" value={form.customer} onChange={(v) => setForm({ ...form, customer: v })} mapOption={(c) => ({ id: c.id, label: c.name, sub: c.code })} disabled={Boolean(invoiceId)} /></Field>
+          <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" value={form.customer} onChange={(v) => setForm({ ...form, customer: v })} mapOption={(c) => ({ id: c.id, label: c.name, sub: c.code })} disabled={Boolean(form.invoice)} /></Field>
           <Field label="Against invoice" col="col-md-3"><EntitySelect endpoint="/api/v1/invoices" query={{ returnable: 1, customer: form.customer || undefined }} value={form.invoice} onChange={(v) => setForm({ ...form, invoice: v })} mapOption={(i) => ({ id: i.id, label: i.number, sub: `${i.customer_name} · balance ${money(i.balance)}` })} placeholder="optional" /></Field>
           <Field label="Restock to warehouse" col="col-md-2"><select className="form-select" value={form.warehouse || wh.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{!restockable.length && <option value="">—</option>}{restockable.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
           <Field label="Date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
@@ -258,7 +261,7 @@ export function CreditNoteFormPage() {
         <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} />
         {lines.length > 0 && <div className="table-responsive mt-2"><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th>Restock?</th><th>Condition</th><th>Line reason</th></tr></thead><tbody>{lines.map((l) => <tr key={l.key}><td>{l.variant_name || "—"}</td><td><input type="checkbox" className="form-check-input" checked={(l.condition || "good") === "good" ? (l.restock ?? true) : false} disabled={(l.condition || "good") !== "good"} title={(l.condition || "good") !== "good" ? "Broken or expired goods are written off, not put back in stock" : ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, restock: e.target.checked } : x)))} /></td><td><select className="form-select form-select-sm" value={l.condition || "good"} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, condition: e.target.value, restock: e.target.value === "good" } : x)))}><option value="good">good</option><option value="damaged">damaged</option><option value="expired">expired</option></select></td><td><input className="form-control form-control-sm" value={l.reason || ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, reason: e.target.value } : x)))} /></td></tr>)}</tbody></table></div>}
       </div></div>
-      <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-outline-primary" onClick={() => submit(false)}>Save draft</button><button className="btn btn-primary" onClick={() => submit(true)}>Save & post</button></div>
+      <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-outline-primary" onClick={() => submit(false)}>Save Draft</button><button className="btn btn-primary" onClick={() => submit(true)}>Issue Credit Note</button></div>
     </>
   );
 }
