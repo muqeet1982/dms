@@ -155,9 +155,9 @@ export function InvoiceCreatePage() {
     <>
       <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body">
-        <Alert kind="info">An invoice bills the goods a sales order has issued or delivered. Pick the order — each of its deliveries not yet billed becomes an invoice. To bill an order with no delivery yet, open the order and use its workflow (load form → issue → invoice).</Alert>
+        <Alert kind="info">An invoice bills the goods the warehouse has issued, before dispatch — your flow: order → load form → issue → invoice → dispatch. Only orders at the Issued stage with an unbilled delivery are offered; a delivery completed without an invoice is billed automatically at delivery confirmation.</Alert>
         <div className="row">
-          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued,dispatched,partially_delivered,delivered" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
         </div>
         {order && detail.data && (
           uninvoiced.length
