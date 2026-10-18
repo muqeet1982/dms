@@ -190,6 +190,75 @@ def test_the_shop_licence_numbers_are_stored_instead_of_silently_dropped(rep_app
     assert listed["ntn"] == "1234567-8" and listed["cnic"] == "35202-1234567-1"
 
 
+def test_the_list_rows_say_whether_each_order_can_still_be_edited(rep_app):
+    """The app draws its order list from the list endpoint, so the edit button needs the answer there too."""
+    made = _order(rep_app)
+    assert made.status_code == 201, made.content
+    rows = rep_app["phone"].get("/ext/v1/orders").data["results"]
+    row = next(r for r in rows if r["id"] == made.data["id"])
+    assert row["can_edit"] is True
+    assert row["editable_until"], "and when the window closes"
+
+
+def test_the_date_filters_actually_filter(rep_app, tenant):
+    """`until` and `date_from`/`date_to` used to be read by the app and silently ignored by the server —
+    a filter that does nothing produces confidently wrong daily totals."""
+    made = _order(rep_app)
+    assert made.status_code == 201, made.content
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import SalesOrder
+
+        old = timezone.localdate() - timedelta(days=10)
+        SalesOrder.objects.filter(pk=made.data["id"]).update(order_date=old, updated_at=timezone.now() - timedelta(days=10))
+    fresh = _order(rep_app, qty=7)
+    assert fresh.status_code == 201, fresh.content
+
+    phone = rep_app["phone"]
+    today = timezone.localdate()
+    only_today = phone.get(f"/ext/v1/orders?date_from={today}").data["results"]
+    assert [r["id"] for r in only_today] == [fresh.data["id"]]
+    only_old = phone.get(f"/ext/v1/orders?date_to={today - timedelta(days=5)}").data["results"]
+    assert [r["id"] for r in only_old] == [made.data["id"]]
+    before_now = phone.get("/ext/v1/orders", {"until": (timezone.now() - timedelta(days=5)).isoformat()}).data["results"]
+    assert [r["id"] for r in before_now] == [made.data["id"]]
+
+
+def test_order_photos_carry_what_they_show(rep_app, tenant):
+    """Two photos are required at the counter — shop front and shelf stock — and the office must be able to
+    tell them apart. A labelled entry is {data, kind}; a bare string with attachment_kinds works the same."""
+    import base64 as b64mod
+
+    from apps.core.models import Attachment
+
+    data = "data:image/jpeg;base64," + b64mod.b64encode(b"shop-bytes").decode()
+    made = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(rep_app["customer"].id)},
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 9.0},
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+        "attachments": [{"data": data, "kind": "shop"}, data],
+        "attachment_kinds": [None, "shelf"],
+    }, format="json")
+    assert made.status_code == 201, made.content
+
+    with tenant_context(tenant, tenant.owner):
+        atts = {a.kind: a.name for a in Attachment.objects.filter(model="SalesOrder", object_id=made.data["id"])}
+    assert set(atts) == {"visit_photo:shop", "visit_photo:shelf"}, atts
+    assert atts["visit_photo:shop"].startswith("Shop front — ")
+    assert atts["visit_photo:shelf"].startswith("Shelf stock — ")
+
+
+def test_asking_for_a_pdf_with_the_pdf_accept_header_is_not_refused(rep_app):
+    """`Accept: application/pdf` is the honest header for a PDF endpoint; it used to meet a 406 before the
+    handler ran, because content negotiation only knew JSON."""
+    made = _order(rep_app)
+    assert made.status_code == 201, made.content
+    r = rep_app["phone"].get(f"/ext/v1/orders/{made.data['id']}/pdf", HTTP_ACCEPT="application/pdf")
+    assert r.status_code == 200 and r["Content-Type"] == "application/pdf", (r.status_code, r.headers)
+    # and an error under that same header is still a JSON body, not a 500
+    miss = rep_app["phone"].get(f"/ext/v1/orders/{made.data['id']}/invoice-pdf", HTTP_ACCEPT="application/pdf")
+    assert miss.status_code == 404 and miss.data["type"] == "no_invoice"
+
+
 def test_a_rep_can_fetch_their_own_order_pdf_but_not_an_office_one(rep_app, tenant):
     """The app's print/share sheet needs the document: own order -> PDF; an office order -> 404, same as detail."""
     from apps.sales.services import OrderService

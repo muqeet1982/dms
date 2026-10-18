@@ -77,7 +77,8 @@ def test_dispatch_sheet_is_served_as_a_pdf(api, dispatch):
     r = api.get(f"/api/v1/trips/{trip['id']}/dispatch-sheet")
     assert r.status_code == 200, r.content
     assert _is_pdf(r), "an HTML error page or an empty file is not a dispatch sheet"
-    assert "dispatch-sheet.pdf" in r["Content-Disposition"]
+    # the owner wants downloads named by the document itself: the trip number, nothing else
+    assert f"{trip['number']}.pdf" in r["Content-Disposition"]
 
 
 def test_dispatch_sheet_carries_what_the_driver_needs(api, tenant, dispatch):
@@ -101,7 +102,7 @@ def test_trip_sheet_url_still_serves_the_same_document(api, dispatch):
 
     old = api.get(f"/api/v1/trips/{trip['id']}/trip-sheet")
     assert old.status_code == 200 and _is_pdf(old)
-    assert "dispatch-sheet.pdf" in old["Content-Disposition"], "the old URL must serve the new document, not a second one"
+    assert f"{trip['number']}.pdf" in old["Content-Disposition"], "the old URL must serve the new document, not a second one"
 
 
 def test_sheet_renders_before_anything_is_delivered(api, tenant):

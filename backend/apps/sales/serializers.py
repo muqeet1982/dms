@@ -24,7 +24,7 @@ class CompanyClaimSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CompanyClaim
-        fields = ["id", "number", "invoice", "invoice_number", "customer_name", "supplier", "supplier_name", "date", "discount_pct", "company_pct", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "lines", "created_at"]
+        fields = ["id", "number", "invoice", "invoice_number", "customer_name", "supplier", "supplier_name", "date", "discount_pct", "company_pct", "total", "paid_amount", "balance", "status", "journal", "journal_number", "lines", "created_at"]
 
 
 class DiscountContributionSerializer(serializers.ModelSerializer):

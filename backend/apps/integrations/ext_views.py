@@ -12,6 +12,7 @@ from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -162,16 +163,27 @@ class ExtOrdersView(ExtBase):
         elif supplier is not None:
             qs = qs.filter(supplier=supplier)
         p = request.query_params
+        # since/until bound the sync cursor (updated_at); date_from/date_to bound the business day (order_date)
         if p.get("since"):
             qs = qs.filter(updated_at__gte=p["since"])
+        if p.get("until"):
+            qs = qs.filter(updated_at__lte=p["until"])
+        if _parse_date(p.get("date_from")):
+            qs = qs.filter(order_date__gte=_parse_date(p["date_from"]))
+        if _parse_date(p.get("date_to")):
+            qs = qs.filter(order_date__lte=_parse_date(p["date_to"]))
         if p.get("status"):
             qs = qs.filter(status__in=p["status"].split(","))
         if p.get("customer"):
             qs = qs.filter(customer_id=p["customer"])
         if p.get("external_ref"):
             qs = qs.filter(external_ref=p["external_ref"])
-        qs = qs.order_by("-created_at")[: int(p.get("limit", 100))]
-        return Response({"results": SalesOrderListSerializer(qs, many=True).data})
+        orders = list(qs.order_by("-created_at")[: int(p.get("limit", 100))])
+        rows = SalesOrderListSerializer(orders, many=True).data
+        for row, order in zip(rows, orders):
+            row["can_edit"] = OrderService.rep_can_edit(order)
+            row["editable_until"] = OrderService.edit_window_end(order)
+        return Response({"results": rows})
 
     def post(self, request):
         self.perm(request, "external.submit_order")
@@ -208,8 +220,20 @@ class ExtOrdersView(ExtBase):
         lines = self._resolve_lines(d.get("lines"))
         if not lines:
             raise DomainError("No lines.", status_code=400)
-        # a photo of the shop, taken at the visit — proof the rep stood there, next to the location check
-        photos = [a for a in (d.get("attachments") or []) if a]
+        # photos taken at the visit — proof the rep stood there, next to the location check. Each entry is
+        # either a bare data URI or {"data": …, "kind": "shop"|"shelf"}; a parallel attachment_kinds list
+        # labels bare entries, so older app builds keep working untouched.
+        kinds = d.get("attachment_kinds") or []
+        photos = []
+        for i, a in enumerate(d.get("attachments") or []):
+            if not a:
+                continue
+            if isinstance(a, dict):
+                data, k = a.get("data") or "", a.get("kind") or ""
+            else:
+                data, k = a, (kinds[i] if i < len(kinds) else "")
+            if data:
+                photos.append((data, str(k or "").strip().lower()))
         want_photo = (get_current_tenant().setting("rep_order_photo") if get_current_tenant() else "optional") or "optional"
         if want_photo == "required" and not photos and rep is not None:
             raise DomainError("Take a photo of the shop to submit this order.", code="photo_required", status_code=400)
@@ -223,14 +247,16 @@ class ExtOrdersView(ExtBase):
             accuracy = (d.get("gps") or {}).get("accuracy_m") if isinstance(d.get("gps"), dict) else None
             order.gps_accuracy_m = float(accuracy) if accuracy not in (None, "") else None
             order.save(update_fields=["gps_lat", "gps_lng", "gps_accuracy_m"])
-        for i, att in enumerate(photos):
+        photo_labels = {"shop": "Shop front", "shelf": "Shelf stock"}
+        for i, (att, photo_kind) in enumerate(photos):
             try:
                 header, b64 = att.split(",", 1) if "," in att else ("data:image/jpeg;base64", att)
                 ext = "png" if "png" in header else "jpg"
-                # the name carries when and where it was taken, so the photo is evidence rather than decoration
+                # the name carries what, when and where it was taken, so the photo is evidence rather than decoration
                 stamp = timezone.localtime().strftime("%d %b %Y %H:%M")
                 place = f" at {where[0]:.5f},{where[1]:.5f}" if where else ""
-                Attachment.objects.create(model="SalesOrder", object_id=str(order.id), file=ContentFile(base64.b64decode(b64), name=f"order-{order.number}-{i}.{ext}"), name=f"Shop photo — {stamp}{place}", size=len(b64), content_type=f"image/{ext}", uploaded_by=request.user if getattr(request.user, "pk", None) and not getattr(request, "api_key", None) else None, kind="visit_photo")
+                label = photo_labels.get(photo_kind, photo_kind.replace("_", " ").capitalize() if photo_kind else "Shop photo")
+                Attachment.objects.create(model="SalesOrder", object_id=str(order.id), file=ContentFile(base64.b64decode(b64), name=f"order-{order.number}-{i}.{ext}"), name=f"{label} — {stamp}{place}", size=len(b64), content_type=f"image/{ext}", uploaded_by=request.user if getattr(request.user, "pk", None) and not getattr(request, "api_key", None) else None, kind=f"visit_photo:{photo_kind}" if photo_kind else "visit_photo")
             except Exception:
                 pass
         body = SalesOrderSerializer(order).data
@@ -797,12 +823,29 @@ class ExtMeView(ExtBase):
         return Response({"tenant": {"id": str(request.tenant.id), "name": request.tenant.display_name, "currency": request.tenant.base_currency}, "supplier": {"id": str(supplier.id), "name": supplier.name} if supplier else None, "rep": {"id": str(rep.id), "code": rep.code, "name": rep.name, "target": str(rep.monthly_target)} if rep else None, "permissions": perms, "auth": "api_key" if key else "jwt"})
 
 
+class _ServerPicksTheType(BaseContentNegotiation):
+    """
+    The handler builds the PDF response itself; DRF's negotiation only governs error bodies. Without this,
+    a client sending `Accept: application/pdf` — the honest header for a PDF endpoint — met a 406 before
+    the handler ever ran, because only a JSON renderer was registered.
+    """
+
+    def select_parser(self, request, parsers):
+        return parsers[0] if parsers else None
+
+    def select_renderer(self, request, renderers, format_suffix=None):
+        return (renderers[0], renderers[0].media_type)
+
+
 class ExtOrderPdfView(ExtBase):
     """
     `GET /ext/v1/orders/{id}/pdf` — the rep's own order as the printed document, for the app's print view and
     the WhatsApp/email share sheet. Same scoping as the order detail: only an order that is theirs.
     `GET /ext/v1/orders/{id}/invoice-pdf` — the invoice raised on that order, when one exists.
+    Any `Accept` header is honoured: success is a PDF, an error body is JSON.
     """
+
+    content_negotiation_class = _ServerPicksTheType
 
     def get(self, request, pk, kind="order"):
         from decimal import Decimal
