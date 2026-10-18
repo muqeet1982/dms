@@ -291,9 +291,13 @@ class ExtOrderDetailView(ExtBase):
     def _body(order):
         from apps.sales.services import OrderService
 
+        # labels only, no image data — enough for the app to check its own photo uploads
+        atts = [{"kind": a.kind.split(":", 1)[1] if ":" in a.kind else "", "name": a.name}
+                for a in Attachment.objects.filter(model="SalesOrder", object_id=str(order.id)).order_by("created_at")]
         return {**SalesOrderSerializer(order).data,
                 "can_edit": OrderService.rep_can_edit(order),
-                "editable_until": OrderService.edit_window_end(order)}
+                "editable_until": OrderService.edit_window_end(order),
+                "attachments": atts}
 
     def get(self, request, pk):
         self.perm(request, "external.view_own_orders")
@@ -783,7 +787,8 @@ class ExtMyAreasView(ExtBase):
         from apps.partners.visits import policy as visit_policy
 
         return Response({
-            "policy": tenant.setting("geofence_policy") if tenant else "off",
+            # per rep where the office has set one on their profile, the company default otherwise
+            "policy": GeoFenceService.policy_for(tenant, rep),
             "location_required": bool(tenant.setting("geofence_require_location")) if tenant else False,
             # the app reads every field rule in one call on login
             "tracking": tracking_policy(tenant),

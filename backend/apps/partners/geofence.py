@@ -280,6 +280,13 @@ class GeoFenceService:
         return {"fences": len(fences), "inside": False, "fence": nearest, "distance_m": best}
 
     @staticmethod
+    def policy_for(tenant, rep=None):
+        """The rep's own setting where the office has set one, the company default where it has not."""
+        if rep is not None and getattr(rep, "geofence_policy", ""):
+            return rep.geofence_policy
+        return (tenant.setting("geofence_policy") if tenant else "off") or "off"
+
+    @staticmethod
     def check(*, rep, gps, action, customer=None, document=None, user=None, enforce=True):
         """
         The guard the rest of the system calls. It records what it saw and, under a blocking policy, refuses.
@@ -299,7 +306,7 @@ class GeoFenceService:
         from .models import GeoFenceEvent
 
         tenant = get_current_tenant()
-        policy = (tenant.setting("geofence_policy") if tenant else "off") or "off"
+        policy = GeoFenceService.policy_for(tenant, rep)
         if policy == "off" or rep is None:
             return None
         fences = list(GeoFenceService.fences_for(rep))

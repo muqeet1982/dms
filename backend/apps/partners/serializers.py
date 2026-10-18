@@ -35,7 +35,7 @@ class SupplierRepSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SupplierRep
-        fields = ["id", "supplier", "supplier_name", "user", "user_email", "has_login", "code", "name", "phone", "email", "territory", "territories", "role", "role_name", "monthly_target", "is_active", "create_login", "password", "send_invite", "created_at"]
+        fields = ["id", "supplier", "supplier_name", "user", "user_email", "has_login", "code", "name", "phone", "email", "territory", "territories", "role", "role_name", "monthly_target", "is_active", "geofence_policy", "create_login", "password", "send_invite", "created_at"]
         read_only_fields = ["id", "user", "created_at"]
         extra_kwargs = {"supplier": {"required": False}, "code": {"required": False, "allow_blank": True}}
 

@@ -176,6 +176,49 @@ def test_a_shop_outside_the_area_is_kept_with_the_distance_on_it(rep_app):
     assert order.status_code == 403 and order.data["type"] == "outside_area"
 
 
+def test_a_rep_allowed_to_order_from_anywhere_is_not_fenced(rep_app, tenant):
+    """
+    The owner's per-rep rule: some reps may take an order from any location, others only inside their areas.
+    Setting `geofence_policy` on the rep overrides the company rule for them, and the app reads the effective
+    rule from /ext/v1/my-areas, so an "anywhere" rep gets Submit everywhere with no app change.
+    """
+    # under the company's block rule, an order from Karachi is refused (the shop sits in Gulberg)
+    far = {"lat": KARACHI[0], "lng": KARACHI[1], "accuracy_m": 9.0}
+    refused = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(rep_app["customer"].id)}, "gps": far,
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+    }, format="json")
+    assert refused.status_code == 403 and refused.data["type"] == "outside_area"
+    assert rep_app["phone"].get("/ext/v1/my-areas").data["policy"] == "block"
+
+    with tenant_context(tenant, tenant.owner):
+        rep_app["rep"].geofence_policy = "off"
+        rep_app["rep"].save(update_fields=["geofence_policy"])
+
+    assert rep_app["phone"].get("/ext/v1/my-areas").data["policy"] == "off", "the app reads the rep's own rule"
+    allowed = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(rep_app["customer"].id)}, "gps": far,
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+    }, format="json")
+    assert allowed.status_code == 201, allowed.content
+
+
+def test_the_order_detail_echoes_its_photo_labels(rep_app):
+    """The app has no other way to check its own uploads: labels only, never the image data."""
+    photo = "data:image/jpeg;base64,c2hvcC1ieXRlcw=="
+    made = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(rep_app["customer"].id)},
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 9.0},
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+        "attachments": [{"data": photo, "kind": "shop"}, {"data": photo, "kind": "shelf"}],
+    }, format="json")
+    assert made.status_code == 201, made.content
+    row = rep_app["phone"].get(f"/ext/v1/orders/{made.data['id']}").data
+    assert [a["kind"] for a in row["attachments"]] == ["shop", "shelf"]
+    assert row["attachments"][0]["name"].startswith("Shop front — ")
+    assert all("data" not in a for a in row["attachments"])
+
+
 def test_the_shop_licence_numbers_are_stored_instead_of_silently_dropped(rep_app):
     """NTN and CNIC were accepted with a 201 and thrown away — the worst of the three possible behaviours."""
     r = rep_app["phone"].post("/ext/v1/customers", {

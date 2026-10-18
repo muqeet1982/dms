@@ -81,6 +81,9 @@ class SupplierRep(TenantModel):
     role = models.ForeignKey("accounts.GroupProfile", null=True, blank=True, on_delete=models.SET_NULL, related_name="reps", help_text="External role controlling what the rep sees")
     monthly_target = models.DecimalField(**MONEY)
     is_active = models.BooleanField(default=True)
+    # where this rep may take an order: blank = the company's geofence_policy; a value overrides it for them
+    GEOFENCE_CHOICES = [("off", "Anywhere"), ("warn", "Anywhere, flag outside"), ("block", "Only inside their areas")]
+    geofence_policy = models.CharField(max_length=5, blank=True, choices=GEOFENCE_CHOICES)
 
     class Meta:
         unique_together = [("tenant", "code")]
