@@ -25,7 +25,7 @@ REPS = [
 AREAS = [
     {"name": "Lahore — Gulberg", "rep": "REP-01", "colour": "#F26522",
      "box": {"south": 31.5000, "north": 31.5400, "west": 74.3300, "east": 74.3750}},
-    {"name": "Lahore — Johar Town", "rep": "REP-02", "colour": "#2563EB",
+    {"name": "Lahore — Johar Town", "reps": ["REP-02", "REP-03"], "colour": "#2563EB",
      "box": {"south": 31.4550, "north": 31.4900, "west": 74.2600, "east": 74.3050}},
     {"name": "Lahore — DHA Phase 3-5", "rep": "REP-01", "colour": "#16A34A",
      "box": {"south": 31.4600, "north": 31.5000, "west": 74.3700, "east": 74.4300}},
@@ -120,7 +120,8 @@ class Command(BaseCommand):
 
             # ── the areas, and who covers them ─────────────────────────────────────────────────────
             for spec in AREAS:
-                rep = SupplierRep.objects.filter(code=spec["rep"]).first()
+                # an area can be covered by more than one rep — "reps": [codes], or the single "rep"
+                reps = list(SupplierRep.objects.filter(code__in=spec.get("reps") or [spec.get("rep")]))
                 if "points" in spec:
                     points = spec["points"]
                 else:
@@ -137,13 +138,13 @@ class Command(BaseCommand):
                 GeoFenceService.normalise(fence)
                 fence.save()
                 inside = GeoFenceService.customers_in(fence)
-                if rep is not None:
+                for rep in reps:
                     GeoFenceRep.objects.get_or_create(fence=fence, rep=rep)
                     for shop in inside:
                         shop.assigned_reps.add(rep)
                 self.stdout.write(
                     f"{'added' if created else 'updated'} area {spec['name']}: {len(inside)} shop(s) inside"
-                    f"{f' → {rep.name}' if rep else ' (no rep)'}"
+                    f"{' → ' + ', '.join(r.name for r in reps) if reps else ' (no rep)'}"
                 )
 
             loose = [c.code for c in Customer.objects.filter(code__startswith="FS-")
