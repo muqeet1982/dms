@@ -259,6 +259,51 @@ def test_asking_for_a_pdf_with_the_pdf_accept_header_is_not_refused(rep_app):
     assert miss.status_code == 404 and miss.data["type"] == "no_invoice"
 
 
+def test_the_rep_can_count_where_their_goods_are_without_parsing_prose(rep_app, api, tenant):
+    """
+    The phone's dashboard needs numbers: what waits on the office, and what is on a vehicle right now.
+    `delivery_state` is the dispatch stage as a code (the prose `delivery_status` derives from it), and the
+    dashboard's rep block counts the same rule server-side, so the card and the list cannot disagree.
+    """
+    from apps.delivery.models import Driver, Vehicle
+    from apps.sales.services import OrderService
+
+    waiting = _order(rep_app)
+    moving = _order(rep_app, qty=3)
+    assert waiting.status_code == 201 and moving.status_code == 201
+
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import SalesOrder
+
+        OrderService.confirm(SalesOrder.objects.get(pk=moving.data["id"]))
+        vehicle = Vehicle.objects.create(reg_no="LEB-7777", type="van")
+        driver = Driver.objects.create(name="Basit", phone="03009998877")
+        wh_id = SalesOrder.objects.get(pk=moving.data["id"]).warehouse_id
+
+    pl = api.post(f"/api/v1/sales-orders/{moving.data['id']}/load-form", {}, format="json")
+    assert pl.status_code == 201, pl.content
+    issues = [{"line_id": line["id"], "qty_issued": line["qty_to_pick"]} for line in pl.data["lines"]]
+    assert api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json").status_code == 200
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh_id), "driver": str(driver.id), "vehicle": str(vehicle.id), "order_ids": [moving.data["id"]]}, format="json")
+    assert trip.status_code == 201, trip.content
+
+    phone = rep_app["phone"]
+    rows = {r["id"]: r for r in phone.get("/ext/v1/orders").data["results"]}
+    assert rows[moving.data["id"]]["delivery_state"] == "on_trip"
+    assert rows[moving.data["id"]]["delivery_status"].startswith("On trip ")
+    assert rows[waiting.data["id"]]["delivery_state"] == ""
+    rep = phone.get("/api/v1/dashboard").data["rep"]
+    assert rep["awaiting_office"] == 1, "only the untouched order still waits on the office"
+    assert (rep["on_trip"], rep["out_for_delivery"]) == (1, 0)
+    assert rep["pending"] == 2, "pending stays the wide OPEN set — confirmed and dispatched included"
+
+    assert api.post(f"/api/v1/trips/{trip.data['id']}/start", {"odometer_start": 500}, format="json").status_code == 200
+    rows = {r["id"]: r for r in phone.get("/ext/v1/orders").data["results"]}
+    assert rows[moving.data["id"]]["delivery_state"] == "out_for_delivery"
+    rep = phone.get("/api/v1/dashboard").data["rep"]
+    assert (rep["on_trip"], rep["out_for_delivery"]) == (0, 1)
+
+
 def test_a_rep_can_fetch_their_own_order_pdf_but_not_an_office_one(rep_app, tenant):
     """The app's print/share sheet needs the document: own order -> PDF; an office order -> 404, same as detail."""
     from apps.sales.services import OrderService

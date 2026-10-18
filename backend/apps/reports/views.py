@@ -165,5 +165,9 @@ class TenantDashboardView(APIView):
         if m.supplier_rep_id:
             rep = m.supplier_rep
             my_orders = SalesOrder.objects.filter(rep=rep)
-            data["rep"] = {"orders_month": my_orders.filter(order_date__gte=month_start).count(), "order_value_month": str(my_orders.filter(order_date__gte=month_start).exclude(status__in=["cancelled", "rejected"]).aggregate(s=Sum("total"))["s"] or 0), "target": str(rep.monthly_target), "cash_held": str(RepCollection.objects.filter(rep=rep, status="held_by_rep").aggregate(s=Sum("amount"))["s"] or 0), "customers": rep.customers.count(), "pending": my_orders.filter(status__in=SalesOrder.OPEN_STATUSES).count()}
+            # `pending` is every OPEN status — anything not yet invoiced/delivered/cancelled, confirmed included.
+            # `awaiting_office` is the narrower "stuck on someone else" number a rep can actually act on, and
+            # the trip pair counts the rep's orders by where the goods are (same rule as delivery_state).
+            undelivered = my_orders.exclude(status__in=["delivered", "invoiced", "cancelled", "rejected"])
+            data["rep"] = {"orders_month": my_orders.filter(order_date__gte=month_start).count(), "order_value_month": str(my_orders.filter(order_date__gte=month_start).exclude(status__in=["cancelled", "rejected"]).aggregate(s=Sum("total"))["s"] or 0), "target": str(rep.monthly_target), "cash_held": str(RepCollection.objects.filter(rep=rep, status="held_by_rep").aggregate(s=Sum("amount"))["s"] or 0), "customers": rep.customers.count(), "pending": my_orders.filter(status__in=SalesOrder.OPEN_STATUSES).count(), "awaiting_office": my_orders.filter(status__in=["submitted", "under_review", "on_hold_credit", "on_hold_stock"]).count(), "on_trip": undelivered.filter(trip__status__in=["planned", "loading"]).count(), "out_for_delivery": undelivered.filter(trip__status="out_for_delivery").count()}
         return Response(data)

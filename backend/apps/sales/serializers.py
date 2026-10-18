@@ -77,16 +77,26 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True, default="")
     trip_number = serializers.CharField(source="trip.number", read_only=True, default="")
     delivery_status = serializers.SerializerMethodField()
+    delivery_state = serializers.SerializerMethodField()
+
+    def get_delivery_state(self, obj):
+        """The dispatch stage as a code — "", "on_trip" or "out_for_delivery" — for counting, not reading.
+        The prose `delivery_status` is derived from this, so the two cannot disagree."""
+        if not obj.trip_id or obj.status in ("delivered", "invoiced", "cancelled", "rejected"):
+            return ""
+        if obj.trip.status in ("planned", "loading"):
+            return "on_trip"
+        if obj.trip.status == "out_for_delivery":
+            return "out_for_delivery"
+        return ""
 
     def get_delivery_status(self, obj):
         """The dispatch stage, where it says more than the order status does: a created-but-not-started trip."""
-        if not obj.trip_id or obj.status in ("delivered", "invoiced", "cancelled", "rejected"):
-            return ""
-        t = obj.trip
-        if t.status in ("planned", "loading"):
-            return f"On trip {t.number}"
-        if t.status == "out_for_delivery":
-            return f"Out for delivery · {t.number}"
+        state = self.get_delivery_state(obj)
+        if state == "on_trip":
+            return f"On trip {obj.trip.number}"
+        if state == "out_for_delivery":
+            return f"Out for delivery · {obj.trip.number}"
         return ""
     lines_count = serializers.IntegerField(source="lines.count", read_only=True)
     sales_person = serializers.SerializerMethodField()
@@ -101,7 +111,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):
