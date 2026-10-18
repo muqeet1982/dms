@@ -55,6 +55,7 @@ SHOPS = [
     ("FS-011", "Shah Jamal Beauty Palace", "salon", 31.5262, 74.3270, "Shah Jamal Road, near the darbar", "+923004451211"),
     ("FS-012", "Jamal General Store", "retailer", 31.5284, 74.3258, "Main Bazar, Shah Jamal", "+923004451212"),
     ("FS-013", "Noor Cosmetics Corner", "retailer", 31.5238, 74.3268, "Street 9, Shah Jamal", "+923004451213"),
+    ("FS-014", "Canal View Mart", "retailer", 31.4730, 74.2850, "Block H3, Johar Town", "+923004451214"),
 ]
 
 
