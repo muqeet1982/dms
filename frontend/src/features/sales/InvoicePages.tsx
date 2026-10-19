@@ -1,4 +1,5 @@
 import { DateInput } from "@/components/ui/DateInput";
+import { DiscountPctSelect } from "@/features/sales/OrdersPages";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -149,15 +150,19 @@ export function InvoiceCreatePage() {
   const nav = useNavigate();
   const [order, setOrder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [discOverride, setDiscOverride] = useState<string>("");
   const detail = useDoc("/api/v1/sales-orders", order || undefined);
   const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoiced);
+  // the % the invoice will carry: the order's own (seeded from the customer) unless changed right here
+  const effDisc = discOverride !== "" ? discOverride : detail.data?.discount_pct != null ? String(Number(detail.data.discount_pct)) : "";
   return (
     <>
       <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body">
         <Alert kind="info">An invoice bills the goods the warehouse has issued, before dispatch — your flow: order → load form → issue → invoice → dispatch. Only orders at the Issued stage with an unbilled delivery are offered; a delivery completed without an invoice is billed automatically at delivery confirmation.</Alert>
         <div className="row">
-          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={setOrder} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={(v) => { setOrder(v); setDiscOverride(""); }} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+          {order && <Field label="Discount %" col="col-md-3" hint="from the order (the customer's rate) — change it for this invoice"><DiscountPctSelect value={effDisc} onChange={setDiscOverride} /></Field>}
         </div>
         {order && detail.data && (
           uninvoiced.length
@@ -176,7 +181,7 @@ export function InvoiceCreatePage() {
         <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, {}, true);
+            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, effDisc === "" ? {} : { discount_pct: effDisc }, true);
             const made = Array.isArray(r) ? r : [r];
             toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
             nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");

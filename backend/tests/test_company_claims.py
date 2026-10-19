@@ -194,3 +194,47 @@ def test_invoice_carries_and_edits_the_product_discount(tenant):
         line.refresh_from_db()
         assert line.product_discount_pct == Decimal("5")
         assert line.discount_amount == Decimal("50.0000"), line.discount_amount  # 100 + 1000 x (5-10)% = 50
+
+
+def test_the_customer_rate_rides_the_order_and_can_be_changed_at_every_step(api, tenant):
+    """
+    The owner's rule: the customer's standing discount shows up wherever the sale goes — on the order
+    (changeable there, at create and on edit) and on the invoice issued from it (changeable at issue).
+    """
+    from apps.core.tenancy import tenant_context
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import DiscountContribution
+
+        cust.default_discount_pct = Decimal("5")
+        cust.save(update_fields=["default_discount_pct"])
+        for total, dist, co in (("5", "3", "2"), ("7.5", "5", "2.5"), ("10", "6", "4")):
+            DiscountContribution.objects.get_or_create(total_pct=Decimal(total), defaults={"distributor_pct": Decimal(dist), "company_pct": Decimal(co)})
+
+    # created with no explicit % → the customer's rate lands on the order and its lines
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "lines": [{"variant": str(v.id), "qty": "10"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert Decimal(r.data["discount_pct"]) == Decimal("5")
+    assert Decimal(r.data["lines"][0]["discount_pct"]) == Decimal("5")
+
+    # changed on edit → the lines follow
+    r2 = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"discount_pct": "7.5", "lines": [{"variant": str(v.id), "qty": "10"}]}, format="json")
+    assert r2.status_code == 200, r2.content
+    assert Decimal(r2.data["discount_pct"]) == Decimal("7.5")
+    assert Decimal(r2.data["lines"][0]["discount_pct"]) == Decimal("7.5")
+
+    # issue the goods, then invoice with a different % chosen on the create page
+    assert api.post(f"/api/v1/sales-orders/{r.data['id']}/confirm", {}, format="json").status_code == 200
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    assert pl.status_code == 201, pl.content
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+    assert api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json").status_code == 200
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"discount_pct": "10"}, format="json")
+    assert made.status_code in (200, 201), made.content
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["discount_pct"]) == Decimal("10")
+    assert inv["status"] == "posted"
+    assert Decimal(inv["discount"]) == (Decimal(inv["subtotal"]) * Decimal("10") / 100).quantize(Decimal(inv["discount"]))

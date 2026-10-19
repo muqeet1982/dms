@@ -29,6 +29,8 @@ class SalesOrder(DocumentModel):
     price_list = models.ForeignKey("catalog.PriceList", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     currency = models.CharField(max_length=3, default="PKR")
     apply_customer_discount = models.BooleanField(default=True, help_text="Apply the customer's standing discount to lines that have none; switch off for a one-off order")
+    # the order's own discount %: seeded from the customer, changeable per order; null = legacy order (customer rule)
+    discount_pct = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     subtotal = models.DecimalField(**MONEY)
     discount = models.DecimalField(**MONEY)
     scheme_discount = models.DecimalField(**MONEY)

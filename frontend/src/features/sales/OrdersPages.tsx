@@ -18,6 +18,21 @@ import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 
 const STATUS_OPTIONS = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
 
+/** The co-funded discount % picker: the configured splits plus "No discount"; "" = follow the customer's rate. */
+export function DiscountPctSelect({ value, onChange, autoLabel }: { value: string; onChange: (v: string) => void; autoLabel?: string }) {
+  const contribs = useQuery({ queryKey: ["crud", "/api/v1/settings/discount-contributions"], queryFn: () => api.get("/api/v1/settings/discount-contributions", { page_size: 100 }) });
+  const rows = ((contribs.data as any[]) || []).filter((r: any) => r.is_active);
+  const known = ["0", ...rows.map((r: any) => String(Number(r.total_pct)))];
+  return (
+    <select className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
+      {autoLabel && <option value="">{autoLabel}</option>}
+      <option value="0">No discount</option>
+      {rows.map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}% (company funds {Number(r.company_pct)}%)</option>)}
+      {value !== "" && !known.includes(value) && <option value={value}>{Number(value)}%</option>}
+    </select>
+  );
+}
+
 const orderColumns: Column<any>[] = [
   { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span>{o.external_ref && <div className="text-muted fs-11">{o.external_ref}</div>}</> },
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
@@ -102,7 +117,7 @@ export function OrderDetailPage() {
                 <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: 760 }}>
                   <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Total</th></tr></thead>
                   <tbody>{o.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
-                  <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={7} className="text-end">Discount</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={7} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={7} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
+                  <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={7} className="text-end">Discount{Number(o.discount_pct) > 0 ? ` (${Number(o.discount_pct)}%)` : ""}</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={7} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={7} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
                 </table>
               </div>
               {o.notes && <p className="text-muted fs-13 mt-2 mb-0"><i className="ti ti-note me-1" />{o.notes}</p>}
@@ -170,7 +185,7 @@ export function OrderFormPage() {
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
-    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: o.apply_customer_discount } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: false });
+    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
     if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
     return <Spinner />;
   }
@@ -180,7 +195,7 @@ export function OrderFormPage() {
     if (!valid.length) return toast.error("Add at least one line");
     setSaving(true);
     try {
-      const body = { ...form, warehouse: form.warehouse || null, confirm, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
+      const body = { ...form, warehouse: form.warehouse || null, confirm, discount_pct: form.discount_pct === "" ? null : form.discount_pct, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/sales-orders/${id}`, body) : await api.post("/api/v1/sales-orders", body, true);
       toast.success(id ? "Order updated" : "Order created");
       nav(`/app/sales/orders/${r.id}`);
@@ -192,15 +207,15 @@ export function OrderFormPage() {
       <SaveError error={err} what="order" />
       <div className="card mb-3"><div className="card-body">
         <div className="row">
-          <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" query={{ status: "active" }} value={form.customer} onChange={(v) => setForm({ ...form, customer: v })} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""} · outstanding ${money(c.outstanding)}`, raw: c })} /></Field>
+          <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" query={{ status: "active" }} value={form.customer} onChange={(v, raw) => setForm({ ...form, customer: v, discount_pct: raw ? String(Number(raw.default_discount_pct) || 0) : form.discount_pct })} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""} · outstanding ${money(c.outstanding)}`, raw: c })} /></Field>
           <Field label="Warehouse" col="col-md-2"><select className="form-select" value={form.warehouse || warehouses.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{!warehouses.rows.length && <option value="">—</option>}{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
           <Field label="Sale person" col="col-md-2" hint="linked on the customer — change it there"><SalePersonAuto customer={form.customer} editingRep={form.rep} /></Field>
           <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.order_date} onChange={(e) => setForm({ ...form, order_date: e.target.value })} /></Field>
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
         <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} />
-        <Field label="Customer discount" col="col-md-4" hint="the customer's standing discount is applied to lines with no discount of their own">
-          <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="ocd" checked={Boolean(form.apply_customer_discount)} onChange={(e) => setForm({ ...form, apply_customer_discount: e.target.checked })} /><label className="form-check-label fs-13" htmlFor="ocd">{form.apply_customer_discount === false ? "Not applied on this order" : "Apply on this order"}</label></div>
+        <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
+          <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />
         </Field>
         <Field label="Notes"><textarea className="form-control" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
         {!page.can("override_price") && <div className="form-text">Prices you enter are advisory — the price list applies unless you have the price-override permission.</div>}

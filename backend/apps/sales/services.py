@@ -83,11 +83,19 @@ class OrderService:
         return order
 
     @staticmethod
+    def effective_discount_pct(order):
+        """The order's own % when one was set; the customer's standing rate otherwise (legacy orders)."""
+        if order.discount_pct is not None:
+            return Decimal(str(order.discount_pct))
+        if not getattr(order, "apply_customer_discount", True):
+            return Decimal("0")
+        return Decimal(str(order.customer.default_discount_pct or 0))
+
+    @staticmethod
     def write_lines(order, lines, allow_override=False):
         order.lines.all().delete()
-        # the customer's standing discount applies to lines that carry no discount of their own,
-        # unless this document switched it off (order.apply_customer_discount = False)
-        default_pct = Decimal(str(order.customer.default_discount_pct or 0)) if getattr(order, "apply_customer_discount", True) else Decimal("0")
+        # the order's discount % applies to lines that carry no discount of their own
+        default_pct = OrderService.effective_discount_pct(order)
         for i, l in enumerate(lines):
             packaging = l.get("packaging")
             qty = _base_qty(l["qty"], packaging)
@@ -107,7 +115,7 @@ class OrderService:
     # ---------------------------------------------------------------- create
     @staticmethod
     @transaction.atomic
-    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True):
+    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None):
         tenant = get_current_tenant()
         PlanLimitService.check(tenant, "max_orders_month")
         if rep is None:
@@ -124,7 +132,10 @@ class OrderService:
         from apps.inventory.models import Warehouse
 
         warehouse = warehouse or Warehouse.objects.filter(type="main", is_active=True).first() or Warehouse.objects.filter(is_active=True).first()
-        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, status="draft" if source == "staff" and not auto_confirm else "submitted")
+        if discount_pct is None:
+            # every new order records its % explicitly: the customer's standing rate, or 0 when switched off
+            discount_pct = Decimal(str(customer.default_discount_pct or 0)) if apply_customer_discount else Decimal("0")
+        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, status="draft" if source == "staff" and not auto_confirm else "submitted")
         OrderService.write_lines(order, lines, allow_override)
         if not order.lines.exists():
             raise DomainError("Order has no valid lines.")
@@ -484,8 +495,9 @@ class InvoiceService:
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, disc, t1, t2
         inv.tax1_type, inv.tax2_type = tax1_type, tax2_type
         inv.total = subtotal - disc + t1 + t2
-        # the co-funded discount % defaults from the customer; it drives the manufacturer claim on posting
-        inv.discount_pct = Decimal(str(customer.default_discount_pct or 0))
+        # the co-funded discount % comes from the order (which seeded it from the customer, changeable there);
+        # it drives the manufacturer claim on posting
+        inv.discount_pct = OrderService.effective_discount_pct(dn.order) if dn.order_id else Decimal(str(customer.default_discount_pct or 0))
         inv.save()
         if post:
             InvoiceService.post(inv)
@@ -563,7 +575,8 @@ class InvoiceService:
             raise DomainError("This invoice is already posted — raise a credit note instead of changing its discount.")
         pct = Decimal("0") if action == "remove" else Decimal(str(percent if percent is not None else (inv.customer.default_discount_pct or 0)))
         for line in inv.lines.all():
-            line.discount_amount = q4(q4(line.qty * line.unit_price) * pct / 100)
+            # the product's own % rides along — changing the customer % must not wipe it off the amount
+            line.discount_amount = q4(q4(line.qty * line.unit_price) * (pct + Decimal(str(line.product_discount_pct or 0))) / 100)
             line.save(update_fields=["discount_amount"])
         inv.discount_pct = pct  # the co-funded total %; the manufacturer's share is claimed on posting
         inv.save(update_fields=["discount_pct"])
