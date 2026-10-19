@@ -119,6 +119,9 @@ class Customer(TenantModel):
     city = models.CharField(max_length=80, blank=True)
     gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    # how close a rep must be to take an order here; blank = the company's order_proximity_m (a kiosk and a
+    # cash-and-carry are not the same size)
+    order_radius_m = models.PositiveIntegerField(null=True, blank=True)
     territory = models.ForeignKey(Territory, null=True, blank=True, on_delete=models.SET_NULL, related_name="customers")
     route = models.ForeignKey(Route, null=True, blank=True, on_delete=models.SET_NULL, related_name="customers")
     price_list = models.ForeignKey("catalog.PriceList", null=True, blank=True, on_delete=models.SET_NULL, related_name="customers")

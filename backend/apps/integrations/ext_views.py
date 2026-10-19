@@ -355,7 +355,7 @@ class ExtCustomersView(ExtBase):
         show_outstanding = has_tenant_perm(request, "external.view_customer_outstanding") or has_tenant_perm(request, "customers.view_customer_ledger")
         rows = []
         for c in qs[:2000]:
-            row = {"id": str(c.id), "code": c.code, "name": c.name, "type": c.type, "phone": c.phone, "address": c.address, "city": c.city, "gps": c.gps, "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None, "status": c.status, "is_blocked": c.is_blocked, "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days, "price_list": c.price_list.name if c.price_list_id else None, "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at}
+            row = {"id": str(c.id), "code": c.code, "name": c.name, "type": c.type, "phone": c.phone, "address": c.address, "city": c.city, "gps": c.gps, "order_radius_m": c.order_radius_m, "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None, "status": c.status, "is_blocked": c.is_blocked, "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days, "price_list": c.price_list.name if c.price_list_id else None, "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at}
             if show_outstanding:
                 row["outstanding"] = str(CustomerService.outstanding(c))
                 row["overdue"] = str(CustomerService.overdue(c))

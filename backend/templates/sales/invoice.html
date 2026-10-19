@@ -72,7 +72,7 @@ No tax lines: each Amount in the table already carries its own tax, so the colum
 page can be checked with a pencil. A subtotal before tax would not reconcile with anything shown.
 {% endcomment %}
 <table class="totals">
-  {% if inv.discount %}<tr><td class="l">Discount given</td><td class="r">{{ inv.discount|num }}</td></tr>{% endif %}
+  {% if inv.discount %}<tr><td class="l">Discount given{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">{{ inv.discount|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total</td><td class="r">{{ inv.total|num }}</td></tr>
   {% if inv.paid_amount %}<tr><td class="l">Paid</td><td class="r">{{ inv.paid_amount|num }}</td></tr>{% endif %}
   <tr class="due"><td>Balance due</td><td class="r">{{ inv.balance|num }}</td></tr>

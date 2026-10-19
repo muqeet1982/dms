@@ -60,7 +60,9 @@ class SalesOrder(DocumentModel):
 
     @property
     def is_editable(self):
-        return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock")
+        # confirmed is editable too (owner's rule, 19 Oct 2026: mistakes get fixed, not cancelled) — but only
+        # until the warehouse starts on it; update_lines refuses once a load form exists
+        return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock", "confirmed")
 
 
 class SalesOrderLine(TaxLineMixin, TenantModel):

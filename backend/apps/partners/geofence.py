@@ -326,7 +326,7 @@ class GeoFenceService:
             else:
                 accuracy = (gps or {}).get("accuracy_m") if isinstance(gps, dict) else None
                 d = int(distance_m(point, (float(customer.gps_lat), float(customer.gps_lng))))
-                radius = int(tenant.setting("order_proximity_m") or 50) + min(int(float(accuracy or 0)), 50)
+                radius = int(customer.order_radius_m or tenant.setting("order_proximity_m") or 50) + min(int(float(accuracy or 0)), 50)
                 where = {"fence": None, "distance_m": d}
                 verdict, ok = ("inside", True) if d <= radius else ("outside", policy != "block")
         else:

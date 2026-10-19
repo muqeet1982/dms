@@ -461,3 +461,20 @@ def test_a_login_can_be_limited_to_the_app_or_the_web(rep_app, tenant):
 
     TenantMembership.objects.filter(user=user, tenant=rep_app["tenant"]).update(login_surface="both")
     assert APIClient().post("/api/v1/auth/login", {**creds, "platform": "web"}, format="json").status_code == 200
+
+
+def test_a_big_shop_can_have_a_bigger_radius(rep_app, tenant):
+    """A cash-and-carry's doorway is not 50 m from its centre: order_radius_m on the customer stretches the
+    rule for that shop alone."""
+    far_gps = {"lat": GULBERG[0] + 0.0027, "lng": GULBERG[1], "accuracy_m": 5.0}  # ~300 m out
+    body = {"customer": {"id": str(rep_app["customer"].id)}, "gps": far_gps,
+            "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}]}
+    assert rep_app["phone"].post("/ext/v1/orders", body, format="json").status_code == 403
+
+    with tenant_context(tenant, tenant.owner):
+        rep_app["customer"].order_radius_m = 500
+        rep_app["customer"].save(update_fields=["order_radius_m"])
+    ok = rep_app["phone"].post("/ext/v1/orders", body, format="json")
+    assert ok.status_code == 201, ok.content
+    row = next(c for c in rep_app["phone"].get("/ext/v1/customers").data["results"] if c["id"] == str(rep_app["customer"].id))
+    assert row["order_radius_m"] == 500, "the app reads the shop's own radius to gate Submit with the same maths"

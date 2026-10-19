@@ -78,7 +78,9 @@ export function OrderDetailPage() {
   if (q.isLoading) return <Spinner />;
   const o = q.data;
   if (!o) return null;
-  const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status);
+  // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
+  const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status)
+    || (o.status === "confirmed" && !(o.delivery_notes || []).length && !(o.invoices || []).length);
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   return (
     <>

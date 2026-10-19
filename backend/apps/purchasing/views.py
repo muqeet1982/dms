@@ -194,7 +194,15 @@ class GoodsReceiptViewSet(DocumentViewSet):
     filterset_fields = ["status", "supplier", "warehouse", "po", "billed"]
     search_fields = ["number", "supplier__name", "supplier_challan_no", "po__number"]
     ordering_fields = ["date", "number", "created_at"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def perform_destroy(self, instance):
+        """A duplicate draft gets deleted outright — it has posted nothing. A posted receipt moved stock and
+        money, so its exit is cancel (which reverses both) and the row stays as the trail."""
+        if instance.status != "draft":
+            raise DomainError("This receipt is posted — cancel it instead, which reverses its stock and journal.")
+        AuditService.log("deleted", instance, before={"number": instance.number, "po": instance.po.number if instance.po_id else None})
+        instance.delete()
 
     def get_queryset(self):
         return warehouse_scope(self.request, GoodsReceipt.objects.select_related("supplier", "warehouse", "po", "received_by", "journal").prefetch_related("lines__variant__product", "lines__packaging", "landed_costs"))

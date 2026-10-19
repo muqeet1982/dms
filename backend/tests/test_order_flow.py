@@ -148,3 +148,24 @@ def test_deleting_an_order_needs_the_delete_right(tenant):
     with tenant_context(tenant, tenant.owner):
         client = _client(tenant, ["sales.view_sales_order", "sales.add_sales_order", "sales.delete_sales_order"])
     assert client.delete(f"/api/v1/sales-orders/{made.data['id']}").status_code == 204
+
+
+def test_a_confirmed_order_is_still_editable_until_the_warehouse_starts(api, tenant):
+    """Owner's rule (19 Oct 2026): a mistake in a confirmed order gets fixed, not cancelled — but once a
+    load form exists the warehouse is working from it, and the edit is refused."""
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    assert r.status_code == 201 and r.data["status"] == "confirmed", r.content
+
+    fixed = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "7"}]}, format="json")
+    assert fixed.status_code == 200, fixed.content
+    assert fixed.data["status"] == "confirmed", "an edit corrects the lines, it does not reopen the order"
+    assert str(fixed.data["lines"][0]["qty_ordered"]).startswith("7")
+    assert str(fixed.data["lines"][0]["qty_allocated"]).startswith("7"), "the new quantity holds the stock"
+
+    assert api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json").status_code == 201
+    late = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "1"}]}, format="json")
+    assert late.status_code in (400, 422) and "load form" in late.data["detail"], late.content

@@ -238,3 +238,40 @@ def test_the_customer_rate_rides_the_order_and_can_be_changed_at_every_step(api,
     assert Decimal(inv["discount_pct"]) == Decimal("10")
     assert inv["status"] == "posted"
     assert Decimal(inv["discount"]) == (Decimal(inv["subtotal"]) * Decimal("10") / 100).quantize(Decimal(inv["discount"]))
+
+
+def test_a_wrong_invoice_is_cancelled_and_its_delivery_billed_again_with_the_discount(api, tenant):
+    """
+    The DEPILEX case (19 Oct 2026): an office order made with the old form never applied the customer's
+    standing %, and the posted invoice carried the % in its header with zero in the amounts. The repair
+    path must work: cancel the invoice (which releases its delivery note — a OneToOne that would otherwise
+    block rebilling forever) and issue it again with the % chosen at issue time.
+    """
+    from apps.core.tenancy import tenant_context
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        cust.default_discount_pct = Decimal("10")
+        cust.save(update_fields=["default_discount_pct"])
+
+    # the old form's mistake, reproduced: an order that switched the customer's rate off
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "apply_customer_discount": False, "discount_pct": "0", "lines": [{"variant": str(v.id), "qty": "10"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert api.post(f"/api/v1/sales-orders/{r.data['id']}/confirm", {}, format="json").status_code == 200
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+    assert api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json").status_code == 200
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {}, format="json")
+    first = (made.data[0] if isinstance(made.data, list) else made.data)
+    assert Decimal(first["discount"]) == 0, "the wrong invoice: no discount in the amounts"
+
+    # the repair: cancel, then issue again with the rate the customer should have had
+    assert api.post(f"/api/v1/invoices/{first['id']}/cancel", {"reason": "reissue with discount"}, format="json").status_code == 200
+    redo = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"discount_pct": "10"}, format="json")
+    assert redo.status_code in (200, 201), redo.content
+    second = (redo.data[0] if isinstance(redo.data, list) else redo.data)
+    assert second["id"] != first["id"] and second["status"] == "posted"
+    assert Decimal(second["discount_pct"]) == Decimal("10")
+    assert Decimal(second["discount"]) == (Decimal(second["subtotal"]) * Decimal("10") / 100).quantize(Decimal(second["discount"]))

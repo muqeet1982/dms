@@ -113,7 +113,7 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Customer
-        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "map_url", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "map_url", "order_radius_m", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
         read_only_fields = ["id", "requested_by_rep", "created_at", "updated_at"]
         extra_kwargs = {"code": {"required": False, "allow_blank": True}}
 

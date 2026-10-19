@@ -153,8 +153,13 @@ class OrderService:
     def update_lines(order, lines, allow_override=False):
         if not order.is_editable:
             raise DomainError(f"Order in status {order.status} cannot be edited.")
+        if order.status == "confirmed" and order.pick_lists.exclude(status="cancelled").exists():
+            raise DomainError("The warehouse is already working on this order (a load form exists) — cancel that first, or handle the difference with a return.")
         OrderService.release_reservations(order)
         OrderService.write_lines(order, lines, allow_override)
+        # a confirmed order holds stock against its lines; the new lines must hold it too, not ride the old grip
+        if order.status == "confirmed" and get_current_tenant().setting("reserve_stock_on_confirm"):
+            OrderService.reserve(order)
         AuditService.log("order.lines_changed", order, after={"total": str(order.total)})
         return order
 
@@ -690,7 +695,10 @@ class InvoiceService:
             CompanyClaimService.cancel(claim, reason=f"Invoice {inv.number} cancelled")
         inv.status = "cancelled"
         inv.notes = (inv.notes + f"\nCancelled: {reason}").strip()
-        inv.save(update_fields=["status", "notes", "updated_at"])
+        # release the delivery note (a OneToOne): cancelling is how a wrong invoice gets reissued, and the
+        # slot staying occupied would block that delivery from ever being billed again
+        inv.delivery_note = None
+        inv.save(update_fields=["status", "notes", "delivery_note", "updated_at"])
         AuditService.log("status.cancelled", inv, after={"reason": reason})
         return inv
 

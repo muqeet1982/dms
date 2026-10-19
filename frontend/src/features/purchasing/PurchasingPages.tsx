@@ -968,8 +968,10 @@ export function GrnDetailPage() {
   // posting or cancelling a receipt changes what the order is still owed, so the order's Receiving panel is stale
   const { run, busy } = useAction("/api/v1/goods-receipts", id, [["po-receiving"]]);
   const [cancel, setCancel] = useState(false);
+  const [del, setDel] = useState(false);
   /** Posting is irreversible except by cancelling the whole receipt, so it is never one click. */
   const [posting, setPosting] = useState(false);
+  const nav = useNavigate();
   const g = q.data;
   // The receipt says it is billed but not by which bill, and the bills cannot be filtered by receipt. The
   // supplier's recent bills name the receipts they cover, so the one quoting this receipt is found among them —
@@ -980,7 +982,7 @@ export function GrnDetailPage() {
   return (
     <>
       <PageHeader title={g.number} badge={<StatusBadge status={g.status} />} crumbs={[{ label: "GRNs", to: "/app/purchasing/grns" }, { label: g.number }]}
-        actions={<><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/goods-receipts/${g.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/goods-receipts/${g.id}/pdf`, `${g.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>{g.status === "draft" && pageRights("grns").edit && <Link to={`/app/purchasing/grns/${g.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-pencil me-1" />Edit</Link>}{g.status === "draft" && pageRights("grns").add && <button className="btn btn-success" disabled={!!busy} onClick={() => setPosting(true)}><i className="ti ti-check me-1" />Post</button>}{g.status === "posted" && !g.billed && pageRights("bills").extras.post && <Link to={`/app/purchasing/bills/new?grn=${g.id}&supplier=${g.supplier}`} className="btn btn-primary"><i className="ti ti-file-invoice me-1" />Create bill</Link>}{g.status !== "cancelled" && !g.billed && pageRights("grns").add && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}<button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/goods-receipts/${g.id}/pdf`)}><i className="ti ti-printer me-1" />PDF</button></>} />
+        actions={<><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/goods-receipts/${g.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/goods-receipts/${g.id}/pdf`, `${g.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>{g.status === "draft" && pageRights("grns").edit && <Link to={`/app/purchasing/grns/${g.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-pencil me-1" />Edit</Link>}{g.status === "draft" && pageRights("grns").add && <button className="btn btn-success" disabled={!!busy} onClick={() => setPosting(true)}><i className="ti ti-check me-1" />Post</button>}{g.status === "posted" && !g.billed && pageRights("bills").extras.post && <Link to={`/app/purchasing/bills/new?grn=${g.id}&supplier=${g.supplier}`} className="btn btn-primary"><i className="ti ti-file-invoice me-1" />Create bill</Link>}{g.status !== "cancelled" && !g.billed && pageRights("grns").add && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}{g.status === "draft" && pageRights("grns").delete && <button className="btn btn-outline-danger" onClick={() => setDel(true)}><i className="ti ti-trash me-1" />Delete</button>}<button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/goods-receipts/${g.id}/pdf`)}><i className="ti ti-printer me-1" />PDF</button></>} />
       <div className="card mb-3"><div className="card-body">
         {/* What a receipt is judged by, each on its own: the supplier's challan is the number an argument about a
             delivery is settled with, and when it was posted is when the stock actually moved. */}
@@ -1017,6 +1019,7 @@ export function GrnDetailPage() {
           A posted receipt cannot be edited — correcting one afterwards means cancelling it, which reverses the stock and the journal, and receiving the delivery again.</>}
         onClose={() => setPosting(false)} onConfirm={async () => { await run("post", {}, { success: "Posted — stock received" }); setPosting(false); }} />
       <ConfirmDialog open={cancel} title="Cancel GRN" message="Posted GRNs reverse their stock and journal." withReason danger onClose={() => setCancel(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancel(false); }} />
+      <ConfirmDialog open={del} title="Delete receipt" message={`${g.number} is a draft — it has posted nothing, so deleting removes it entirely. For a posted duplicate, use Cancel instead.`} danger confirmText="Delete" onClose={() => setDel(false)} onConfirm={async () => { try { await api.delete(`/api/v1/goods-receipts/${g.id}`); toast.success("Receipt deleted"); nav("/app/purchasing/grns"); } catch (e: any) { toast.error(e.message); } setDel(false); }} />
     </>
   );
 }
