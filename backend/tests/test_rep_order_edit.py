@@ -491,3 +491,25 @@ def test_a_handset_passed_between_logins_pushes_only_to_the_current_one(rep_app,
 
     holders = list(DeviceToken.objects.filter(token="shared-handset-token-1"))
     assert len(holders) == 1, "the token belongs to exactly one login"
+
+
+def test_the_rep_hears_when_the_office_changes_their_order(rep_app, api, tenant):
+    """An office correction to a rep's order must not be silent — the rep took it at the counter."""
+    from apps.core.models import Notification
+
+    made = _order(rep_app, qty=2)
+    assert made.status_code == 201, made.content
+    r = api.patch(f"/api/v1/sales-orders/{made.data['id']}", {"lines": [{"variant": str(rep_app["variant"].id), "qty": "9"}]}, format="json")
+    assert r.status_code == 200, r.content
+
+    with tenant_context(tenant, tenant.owner):
+        n = Notification.objects.filter(user=rep_app["rep"].user, type="order.edited").order_by("-created_at").first()
+    assert n is not None and made.data["number"] in n.title
+    assert n.data.get("order_id") == made.data["id"]
+
+    # the rep's own correction does not echo back at them
+    own = rep_app["phone"].patch(f"/ext/v1/orders/{made.data['id']}", {"lines": [{"variant_id": str(rep_app["variant"].id), "qty": 3}]}, format="json")
+    assert own.status_code == 200, own.content
+    with tenant_context(tenant, tenant.owner):
+        count = Notification.objects.filter(user=rep_app["rep"].user, type="order.edited").count()
+    assert count == 1, "no self-notification"

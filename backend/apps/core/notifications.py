@@ -16,6 +16,7 @@ NOTIFICATION_TYPES = [
     ("order.confirmed", "Order confirmed"),
     ("order.rejected", "Order rejected"),
     ("order.dispatched", "Order dispatched"),
+    ("order.edited", "Order changed by the office"),
     ("delivery.assigned", "Delivery assigned"),
     ("delivery.completed", "Delivery completed"),
     ("stock.low", "Low stock"),

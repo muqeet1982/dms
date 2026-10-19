@@ -161,6 +161,13 @@ class OrderService:
         if order.status == "confirmed" and get_current_tenant().setting("reserve_stock_on_confirm"):
             OrderService.reserve(order)
         AuditService.log("order.lines_changed", order, after={"total": str(order.total)})
+        # the rep took this order at the counter — an office change behind their back must not be silent
+        editor = get_current_user()
+        if order.rep_id and order.rep.user_id and getattr(editor, "pk", None) != order.rep.user_id:
+            from apps.core.notifications import notify
+
+            notify(order.rep.user, "order.edited", f"Order {order.number} was changed by the office",
+                   f"{order.customer.name} · new total {order.total:.2f}", {"order_id": str(order.id), "screen": "order"})
         return order
 
     # --------------------------------------------------------------- statuses
