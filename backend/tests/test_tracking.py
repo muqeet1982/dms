@@ -105,9 +105,9 @@ def test_a_batch_is_taken_once_however_often_it_is_sent(field):
     """The phone retries batches it is unsure about; the same point must not land twice."""
     batch = {"pings": _pings([NEXT_STREET, GULBERG])}
     first = field["phone"].post("/ext/v1/tracking/pings", batch, format="json")
-    assert first.status_code == 202 and first.data == {"accepted": 2, "duplicates": 0, "rejected": 0}, first.content
+    assert first.status_code == 202 and first.data == {"accepted": 2, "duplicates": 0, "rejected": 0, "dropped": 0}, first.content
     again = field["phone"].post("/ext/v1/tracking/pings", batch, format="json")
-    assert again.data == {"accepted": 0, "duplicates": 2, "rejected": 0}
+    assert again.data == {"accepted": 0, "duplicates": 2, "rejected": 0, "dropped": 0}
 
 
 def test_a_bad_point_is_a_400_that_names_it_and_a_big_batch_is_a_413(field):

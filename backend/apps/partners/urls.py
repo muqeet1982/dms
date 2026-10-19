@@ -20,4 +20,6 @@ urlpatterns = router.urls + [
     path("tracking/live", tracking_views.TrackingLiveView.as_view()),
     path("tracking/users", tracking_views.TrackingTeamView.as_view()),
     path("tracking/users/<str:user_id>", tracking_views.TrackingUserDayView.as_view()),
+    path("shifts", tracking_views.ShiftTimesheetView.as_view()),
+    path("shifts/<str:pk>", tracking_views.ShiftCorrectView.as_view()),
 ]

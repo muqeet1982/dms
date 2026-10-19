@@ -211,6 +211,15 @@ class ExtOrdersView(ExtBase):
                 customer = CustomerService.create({"name": c.get("name") or c["phone"], "phone": c["phone"], "address": c.get("address", ""), "type": c.get("type", "retailer")}, rep=rep)
         if customer is None:
             raise DomainError("Customer not found or not assigned to you.", status_code=404)
+        # the owner's shift rule: no shift started, no order submitted; on a break, come back first
+        if rep is not None and get_current_tenant() and get_current_tenant().setting("require_shift_for_orders"):
+            from apps.partners.shifts import ShiftService
+
+            open_shift = ShiftService.current(rep)
+            if open_shift is None:
+                raise DomainError("Start your shift to send orders.", code="no_shift", status_code=403)
+            if open_shift.status == "break":
+                raise DomainError("You are on a break. Come back from your break to send orders.", code="on_break", status_code=403)
         # an order is taken at the shop: check where the rep is standing against the area they cover
         blocked = GeoFenceService.guard(rep=rep, gps=d.get("gps"), action="order", customer=customer)
         if blocked:
@@ -805,6 +814,14 @@ class ExtMyAreasView(ExtBase):
                            "radius_m": int(tenant.setting("order_proximity_m") or 50) if tenant else 50},
             # the app reads every field rule in one call on login
             "tracking": tracking_policy(tenant),
+            # the shift model (owner, 20 Oct 2026): absent/enabled:false = no shift card, no order gate, clock
+            # tracking as before; enabled = the shift owns the tracker and (optionally) the order gate
+            "shift": {
+                "enabled": bool(tenant and (tenant.setting("tracking_mode") == "shift" or tenant.setting("require_shift_for_orders"))),
+                "require_for_orders": bool(tenant and tenant.setting("require_shift_for_orders")),
+                "auto_end_at": str(tenant.setting("shift_auto_end_at") or "23:59") if tenant else "23:59",
+                "gap_minutes": int(tenant.setting("shift_gap_minutes") or 15) if tenant else 15,
+            },
             "visit": visit_policy(tenant),
             # the shop kinds a new customer may be given — the app renders these rather than shipping a copy
             "customer_types": [{"value": v, "label": label} for v, label in Customer.TYPES],
@@ -900,3 +917,85 @@ class ExtOrderPdfView(ExtBase):
             "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
             "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
         }, o.number, title="SALES ORDER", ref=o.number)
+
+
+def _shift_body(shift, tenant=None):
+    from apps.partners.shifts import ShiftService
+
+    if shift is None:
+        return None
+    return {
+        "id": str(shift.id), "client_id": shift.client_id or None, "status": shift.status,
+        "started_at": shift.started_at, "ended_at": shift.ended_at, "end_reason": shift.end_reason or None,
+        "start_gps": {"lat": float(shift.start_lat), "lng": float(shift.start_lng)} if shift.start_lat is not None else None,
+        "breaks": [{"id": str(b.id), "started_at": b.started_at, "ended_at": b.ended_at} for b in shift.breaks.all()],
+        "last_ping_at": shift.last_ping_at,
+        "tracking_state": ShiftService.tracking_state(shift, tenant),
+        "working_minutes": ShiftService.working_minutes(shift),
+        "corrected": shift.corrected,
+    }
+
+
+class ExtShiftsView(ExtBase):
+    """
+    `GET /ext/v1/shifts/current` — the rep's open shift or null.
+    `POST /ext/v1/shifts` — start one. The app verifies tracking can actually run before allowing the tap and
+    sends those `checks` as evidence; a client `at` up to 12 h old replays a start made in a dead zone.
+    """
+
+    def get(self, request):
+        from apps.partners.shifts import ShiftService
+
+        from apps.partners.models import RepShift
+
+        _supplier, rep = self.context(request)
+        if rep is None:
+            raise DomainError("Shifts belong to field logins.", code="rep_required", status_code=403)
+        shift = ShiftService.current(rep)
+        if shift is None:
+            # today's ended shift, so the app can say "your last shift ended at 2:14 — and why"
+            start_of_day = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+            shift = RepShift.objects.filter(rep=rep, status="ended", started_at__gte=start_of_day).order_by("-started_at").first()
+        return Response({"shift": _shift_body(shift, get_current_tenant())})
+
+    def post(self, request):
+        from apps.partners.shifts import ShiftService
+
+        _supplier, rep = self.context(request)
+        if rep is None:
+            raise DomainError("Shifts belong to field logins.", code="rep_required", status_code=403)
+        d = request.data if isinstance(request.data, dict) else {}
+        gps = d.get("gps") or {}
+        if gps.get("mocked") is True:
+            raise DomainError("This position comes from a fake-GPS app — switch it off to start your shift.", code="mocked_fix", status_code=400)
+        shift = ShiftService.start(
+            rep=rep, user=request.user if getattr(request.user, "pk", None) else None,
+            client_id=str(d.get("client_id") or request.headers.get("Idempotency-Key") or "")[:64],
+            at=d.get("at"), gps=gps, device=d.get("device") or {}, checks=d.get("checks") or {},
+        )
+        return Response({"shift": _shift_body(shift, get_current_tenant())}, status=201)
+
+
+class ExtShiftActionView(ExtBase):
+    """`POST /ext/v1/shifts/{id}/break|resume|end` — all idempotent: repeating a transition returns the shift."""
+
+    def post(self, request, pk, action):
+        from apps.partners.models import RepShift
+        from apps.partners.shifts import ShiftService
+
+        _supplier, rep = self.context(request)
+        shift = None
+        if rep is not None:
+            # a shift started in a dead zone has no server id yet — the app names it, and that name works here
+            shift = RepShift.objects.filter(rep=rep).filter(Q(client_id=pk) | (Q(pk=pk) if _is_uuid(pk) else Q(pk=None))).order_by("-started_at").first()
+        if shift is None:
+            raise DomainError("Shift not found.", status_code=404)
+        d = request.data if isinstance(request.data, dict) else {}
+        if action == "break":
+            shift = ShiftService.break_(shift, at=d.get("at"), gps=d.get("gps"))
+        elif action == "resume":
+            shift = ShiftService.resume(shift, at=d.get("at"), gps=d.get("gps"))
+        else:
+            reason = d.get("reason") if d.get("reason") in dict(RepShift.END_REASONS) else "rep"
+            shift = ShiftService.end(shift, at=d.get("at"), gps=d.get("gps"), reason=reason)
+        return Response({"shift": _shift_body(shift, get_current_tenant())})

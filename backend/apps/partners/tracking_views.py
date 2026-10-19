@@ -249,3 +249,73 @@ class TrackingPurgeView(APIView):
         out = purge(tenant, request.data.get("days"))
         AuditService.log("tracking.purged", tenant, after=out, request=request)
         return Response(out)
+
+
+from apps.core.tenancy import get_current_tenant  # noqa: E402
+
+
+class ShiftTimesheetView(APIView):
+    """
+    `GET /api/v1/shifts?date=&rep=` — one row per shift: the rep's day as the office reads it (effective
+    times, breaks, working minutes, distance, visits, orders, how it ended, and whether it was corrected).
+    `PATCH /api/v1/shifts/{id}` is `ShiftCorrectView` below.
+    """
+
+    permission_classes = [IsTenantUser]
+
+    def get(self, request):
+        if not has_tenant_perm(request, "tracking.view_timesheet"):
+            raise DomainError("Timesheets are an office screen.", code="forbidden", status_code=403)
+        from apps.sales.models import SalesOrder
+
+        from .models import CustomerVisit, RepShift
+        from .shifts import ShiftService
+        from .tracking import TrackingService
+
+        on = parse_date(request.query_params.get("date") or "") or timezone.localdate()
+        start, end = TrackingService.day_range(on)
+        qs = RepShift.objects.filter(started_at__gte=start, started_at__lt=end).select_related("rep", "corrected_by").prefetch_related("breaks")
+        if request.query_params.get("rep"):
+            qs = qs.filter(rep_id=request.query_params["rep"])
+        tenant = get_current_tenant()
+        rows = []
+        for s in qs.order_by("rep__name", "started_at"):
+            window_end = s.ended_at or timezone.now()
+            rows.append({
+                "id": str(s.id), "rep": str(s.rep_id), "rep_name": s.rep.name, "rep_code": s.rep.code,
+                "status": s.status, "tracking_state": ShiftService.tracking_state(s, tenant),
+                "started_at": s.started_at, "ended_at": s.ended_at, "end_reason": s.end_reason or None,
+                "recorded_started_at": s.recorded_started_at, "recorded_ended_at": s.recorded_ended_at,
+                "breaks": [{"id": str(b.id), "started_at": b.started_at, "ended_at": b.ended_at,
+                            "recorded_started_at": b.recorded_started_at, "recorded_ended_at": b.recorded_ended_at} for b in s.breaks.all()],
+                "working_minutes": ShiftService.working_minutes(s),
+                "distance_m": int(TrackingService.distance_of(list(s.pings.order_by("at")))),
+                "visits": CustomerVisit.objects.filter(rep=s.rep, at__gte=s.started_at, at__lt=window_end).count(),
+                "orders": SalesOrder.objects.filter(rep=s.rep, created_at__gte=s.started_at, created_at__lt=window_end).count(),
+                "mocked_pings": s.pings.filter(mocked=True).count(),
+                "checks": s.checks, "device": s.device,
+                "corrected": s.corrected, "corrected_by": getattr(s.corrected_by, "full_name", None),
+                "corrected_at": s.corrected_at, "correction_reason": s.correction_reason,
+            })
+        return Response({"date": on, "results": rows})
+
+
+class ShiftCorrectView(APIView):
+    """`PATCH /api/v1/shifts/{id}` — the office corrects a rep's times. Reason required; originals kept."""
+
+    permission_classes = [IsTenantUser]
+
+    def patch(self, request, pk):
+        if not has_tenant_perm(request, "tracking.change_timesheet"):
+            raise DomainError("Correcting times needs the timesheet edit right.", code="forbidden", status_code=403)
+        from .models import RepShift
+        from .shifts import ShiftService
+
+        shift = RepShift.objects.filter(pk=pk).select_related("rep").first()
+        if shift is None:
+            raise DomainError("Shift not found.", status_code=404)
+        d = request.data or {}
+        ShiftService.correct(shift, started_at=d.get("started_at"), ended_at=d.get("ended_at"),
+                             breaks=d.get("breaks") or [], reason=d.get("reason") or "", actor=request.user)
+        return Response({"id": str(shift.id), "started_at": shift.started_at, "ended_at": shift.ended_at,
+                         "corrected": shift.corrected, "correction_reason": shift.correction_reason})

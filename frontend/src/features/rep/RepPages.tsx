@@ -12,6 +12,43 @@ import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { useVisit, VisitCard } from "./Visit";
 
+/** Start / Break / Back / End — the owner's shift model, on the web portal the same as the app.
+ * No shift started, no order submitted: the server refuses, so this card is how the web rep gets going. */
+export function ShiftCard() {
+  const qc = useQueryClient();
+  const my = useQuery({ queryKey: ["my-areas"], queryFn: () => api.get("/ext/v1/my-areas") });
+  const q = useQuery({ queryKey: ["rep-shift"], queryFn: () => api.get("/ext/v1/shifts/current"), refetchInterval: 60000 });
+  const s = q.data?.shift;
+  if (!my.data?.shift?.enabled) return null;
+  const act = async (path: string, body: any = {}) => {
+    try {
+      let gps: any;
+      try { const pos: any = await new Promise((res, rej) => navigator.geolocation?.getCurrentPosition(res, rej, { timeout: 4000 })); gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy_m: pos.coords.accuracy }; } catch { /* no fix — the server records that too */ }
+      await api.post(path, { ...body, at: new Date().toISOString(), gps });
+      qc.invalidateQueries({ queryKey: ["rep-shift"] });
+    } catch (e: any) { toast.error(e.message); }
+  };
+  const open = s && s.status !== "ended";
+  return (
+    <div className="card mb-3"><div className="card-body d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <strong>{!open ? "Off shift" : s.status === "break" ? "On a break" : "On shift"}</strong>
+        <div className="fs-12 text-muted">
+          {!open && s?.status === "ended" && <>Last shift ended {datetime(s.ended_at)}{s.end_reason === "tracking_lost" ? " — your office stopped receiving your location" : s.end_reason === "auto_cutoff" ? " — closed at the daily cutoff" : ""}</>}
+          {!open && !s && "Start your shift to send orders."}
+          {open && <>Started {datetime(s.started_at)}{s.corrected && " · times corrected by the office"}</>}
+        </div>
+      </div>
+      <div className="d-flex gap-2">
+        {!open && <button className="btn btn-success" onClick={() => act("/ext/v1/shifts", { client_id: (crypto as any).randomUUID?.() || String(Date.now()), device: { model: "web portal", os: navigator.userAgent.slice(0, 40), app_version: "web" }, checks: { location_services: Boolean(navigator.geolocation), background_permission: false, notifications: false, battery_unrestricted: false } })}><i className="ti ti-player-play me-1" />Start Shift</button>}
+        {open && s.status === "on" && <button className="btn btn-outline-secondary" onClick={() => act(`/ext/v1/shifts/${s.id}/break`)}><i className="ti ti-coffee me-1" />Break</button>}
+        {open && s.status === "break" && <button className="btn btn-primary" onClick={() => act(`/ext/v1/shifts/${s.id}/resume`)}><i className="ti ti-player-play me-1" />Back From Break</button>}
+        {open && <button className="btn btn-outline-danger" onClick={() => act(`/ext/v1/shifts/${s.id}/end`, { reason: "rep" })}><i className="ti ti-player-stop me-1" />End Shift</button>}
+      </div>
+    </div></div>
+  );
+}
+
 export function RepHomePage() {
   const me = useAuth((s) => s.me);
   const q = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get("/api/v1/dashboard") });
@@ -21,6 +58,7 @@ export function RepHomePage() {
   return (
     <>
       <PageHeader title={`Hi ${me?.user.full_name?.split(" ")[0]}`} crumbs={[]} actions={<Link to="/rep/orders/new" className="btn btn-primary"><i className="ti ti-shopping-cart-plus me-1" />New order</Link>} />
+      <ShiftCard />
       {r && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Orders this month" value={r.orders_month} icon="ti-clipboard-list" color="primary" sub={`${r.pending} pending`} /></div><div className="col-6 col-md-3"><StatCard label="Order value" value={money(r.order_value_month, 0)} icon="ti-cash" color="success" sub={Number(r.target) ? `target ${money(r.target, 0)}` : ""} /></div><div className="col-6 col-md-3"><StatCard label="Cash with me" value={money(r.cash_held, 0)} icon="ti-wallet" color={Number(r.cash_held) > 0 ? "warning" : "secondary"} to="/rep/collections" /></div><div className="col-6 col-md-3"><StatCard label="My customers" value={r.customers} icon="ti-users" color="info" to="/rep/customers" /></div></div>}
       {r && Number(r.target) > 0 && <div className="card mb-3"><div className="card-body"><div className="d-flex justify-content-between fs-13 mb-1"><span>Monthly target</span><span>{pct.toFixed(0)}%</span></div><div className="progress" style={{ height: 10 }}><div className={`progress-bar ${pct >= 100 ? "bg-success" : "bg-primary"}`} style={{ width: `${pct}%` }} /></div></div></div>}
       <div className="card"><div className="card-header d-flex justify-content-between"><strong>Recent orders</strong><Link to="/rep/orders" className="fs-12">All orders</Link></div><div className="list-group list-group-flush">{orders.data?.results.map((o: any) => <Link key={o.id} to={`/rep/orders/${o.id}`} className="list-group-item list-group-item-action"><div className="d-flex justify-content-between"><span className="fw-medium">{o.customer_name}</span><StatusBadge status={o.status} /></div><div className="fs-12 text-muted">{o.number} · {date(o.order_date)} · {money(o.total)}</div></Link>)}{orders.data && !orders.data.results.length && <div className="p-4"><EmptyState text="No orders yet" action={<Link to="/rep/orders/new" className="btn btn-primary btn-sm">Place your first order</Link>} /></div>}</div></div>

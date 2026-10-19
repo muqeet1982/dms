@@ -183,6 +183,12 @@ class Tenant(models.Model):
         # read their own history (apps/partners/tracking.py).
         "tracking_enabled": True,
         "tracking_mode": "work_hours",
+        # the shift model (owner, 20 Oct 2026): tracking_mode "shift" records exactly while a shift is on,
+        # and require_shift_for_orders refuses POST /ext/v1/orders without one
+        "require_shift_for_orders": False,
+        "shift_gap_minutes": 15,
+        "shift_lost_end_minutes": 30,
+        "shift_auto_end_at": "23:59",
         "tracking_interval_s": 120,
         "tracking_min_distance_m": 50,
         "tracking_from": "09:00",

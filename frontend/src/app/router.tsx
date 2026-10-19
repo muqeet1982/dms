@@ -12,6 +12,7 @@ import { CompanyClaimsPage, CompanyClaimDetailPage } from "@/features/sales/Comp
 import { CustomerDetailPage, CustomerFormPage, CustomersPage, RoutesPage, TerritoriesPage } from "@/features/partners/CustomerPages";
 import { CoverageMapPage, GeofenceDetailPage, GeofenceFormPage, GeofencesPage } from "@/features/partners/GeofencePages";
 import { StoresPage } from "@/features/partners/StorePages";
+import { TimesheetsPage } from "@/features/partners/TimesheetsPage";
 import { VisitsPage } from "@/features/partners/VisitsPage";
 import { SupplierDetailPage, SupplierFormPage, SupplierRepDetailPage, SupplierRepsPage, SuppliersPage } from "@/features/partners/SupplierPages";
 import { DeliveryNoteDetailPage, DeliveryNotesPage, DriversPage, PickListDetailPage, PickListFormPage, PickListsPage, TripDetailPage, TripFormPage, TripsPage, VehiclesPage } from "@/features/delivery/DeliveryPages";
@@ -65,7 +66,7 @@ export const router = createBrowserRouter([
         { path: "sales/rep-collections", element: <RequirePage page="rep_collections"><RepCollectionsPage /></RequirePage> }, { path: "sales/rep-settlements", element: <RequirePage page="rep_settlements"><RepSettlementsPage /></RequirePage> },
         { path: "customers", element: <RequirePage page="customers"><CustomersPage /></RequirePage> }, { path: "customers/new", element: <RequirePage page="customers" action="add"><CustomerFormPage /></RequirePage> },
         { path: "customers/territories", element: <RequirePage page="territories"><TerritoriesPage /></RequirePage> }, { path: "customers/routes", element: <RequirePage page="territories"><RoutesPage /></RequirePage> },
-        { path: "customers/stores", element: <RequirePage page="store_locations"><StoresPage /></RequirePage> }, { path: "tracking/visits", element: <RequirePage page="visits"><VisitsPage /></RequirePage> },
+        { path: "customers/stores", element: <RequirePage page="store_locations"><StoresPage /></RequirePage> }, { path: "tracking/visits", element: <RequirePage page="visits"><VisitsPage /></RequirePage> }, { path: "tracking/timesheets", element: <RequirePage page="timesheets"><TimesheetsPage /></RequirePage> },
         { path: "customers/areas", element: <RequirePage page="geofences"><GeofencesPage /></RequirePage> }, { path: "customers/areas/map", element: <RequirePage page="geofences"><CoverageMapPage /></RequirePage> }, { path: "customers/areas/new", element: <RequirePage page="geofences" action="add"><GeofenceFormPage /></RequirePage> }, { path: "customers/areas/:id", element: <RequirePage page="geofences"><GeofenceDetailPage /></RequirePage> }, { path: "customers/areas/:id/edit", element: <RequirePage page="geofences" action="edit"><GeofenceFormPage /></RequirePage> },
         { path: "customers/:id", element: <RequirePage page="customers"><CustomerDetailPage /></RequirePage> }, { path: "customers/:id/edit", element: <RequirePage page="customers" action="edit"><CustomerFormPage /></RequirePage> },
         { path: "suppliers", element: <RequirePage page="suppliers"><SuppliersPage /></RequirePage> }, { path: "suppliers/new", element: <RequirePage page="suppliers" action="add"><SupplierFormPage /></RequirePage> },

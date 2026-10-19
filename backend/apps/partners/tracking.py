@@ -33,7 +33,7 @@ MAX_BATCH = 200
 
 DEFAULTS = {
     "tracking_enabled": True,
-    "tracking_mode": "work_hours",      # off | work_hours | always
+    "tracking_mode": "work_hours",      # off | work_hours | always | shift (record exactly while a shift is on)
     "tracking_interval_s": 120,
     "tracking_min_distance_m": 50,
     "tracking_from": "09:00",
@@ -117,6 +117,7 @@ def clean_ping(raw, index):
     out["is_charging"] = raw.get("is_charging") if isinstance(raw.get("is_charging"), bool) else None
     out["source"] = raw.get("source") if raw.get("source") in ("background", "foreground", "manual") else "background"
     out["app_version"] = str(raw.get("app_version") or "")[:20]
+    out["mocked"] = raw.get("mocked") is True   # Android names a fake-GPS fix; the office gets to see it
     return out
 
 
@@ -124,14 +125,26 @@ class TrackingService:
     @staticmethod
     def record(user, rep, pings):
         """
-        Store a batch. Returns {accepted, duplicates, rejected}. Points already seen are counted, not re-written —
-        the phone resends anything it is unsure about.
+        Store a batch. Returns {accepted, duplicates, rejected, dropped}. Points already seen are counted, not
+        re-written — the phone resends anything it is unsure about. In shift mode, a point only lands while the
+        rep's shift is ON: a break is deliberate silence (the owner's privacy call), and off-shift points are
+        dropped the same way.
         """
-        from apps.core.tenancy import get_current_tenant_id
+        from apps.core.tenancy import get_current_tenant, get_current_tenant_id
 
         from .models import LocationPing
 
         tenant_id = get_current_tenant_id()
+        tenant = get_current_tenant()
+        shift = None
+        dropped = 0
+        if tenant is not None and tenant.setting("tracking_mode") == "shift" and rep is not None:
+            from .shifts import ShiftService
+
+            shift = ShiftService.current(rep)
+            if shift is None or shift.status != "on":
+                return {"accepted": 0, "duplicates": 0, "rejected": 0, "dropped": len(pings),
+                        "reason": "on_break" if shift is not None else "no_shift"}
         seen = set(
             LocationPing.objects.filter(user=user, client_id__in=[p["client_id"] for p in pings])
             .values_list("client_id", flat=True)
@@ -142,10 +155,16 @@ class TrackingService:
                 continue
             seen.add(p["client_id"])     # the same batch can carry a point twice
             # bulk_create skips Model.save(), so the tenant has to be stamped here
-            fresh.append(LocationPing(tenant_id=tenant_id, user=user, rep=rep, **p))
+            fresh.append(LocationPing(tenant_id=tenant_id, user=user, rep=rep, shift=shift, **p))
         if fresh:
             LocationPing.objects.bulk_create(fresh, batch_size=200, ignore_conflicts=True)
-        return {"accepted": len(fresh), "duplicates": len(pings) - len(fresh), "rejected": 0}
+        if shift is not None and fresh:
+            newest = max(p.at for p in fresh)
+            if shift.last_ping_at is None or newest > shift.last_ping_at:
+                shift.last_ping_at = newest
+                shift.lost_alerted_at = None      # the phone spoke again — the alert is spent
+                shift.save(update_fields=["last_ping_at", "lost_alerted_at"])
+        return {"accepted": len(fresh), "duplicates": len(pings) - len(fresh), "rejected": 0, "dropped": dropped}
 
     @staticmethod
     def day_range(on_date, tenant=None):

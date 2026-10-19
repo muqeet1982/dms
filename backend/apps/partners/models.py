@@ -269,6 +269,8 @@ class LocationPing(TenantModel):
     is_charging = models.BooleanField(null=True, blank=True)
     source = models.CharField(max_length=12, choices=SOURCES, default="background")
     app_version = models.CharField(max_length=20, blank=True)
+    shift = models.ForeignKey("partners.RepShift", null=True, blank=True, on_delete=models.SET_NULL, related_name="pings")
+    mocked = models.BooleanField(default=False, help_text="The device said this fix came from a fake-GPS app")
 
     class Meta:
         ordering = ["at"]
@@ -352,3 +354,70 @@ class CustomerVisit(TenantModel):
     @property
     def gps(self):
         return {"lat": float(self.gps_lat), "lng": float(self.gps_lng)} if self.gps_lat is not None else None
+
+
+class RepShift(TenantModel):
+    """
+    A rep's working day as the rep declares it: started on the phone, broken for lunch, ended — and the owner's
+    rules hang off it: tracking runs exactly while a shift is on (never during a break), and no shift means no
+    order. The `checks` the app ran before allowing the start (permissions, battery, location services) are
+    stored as the evidence that tracking *could* run when the shift began.
+
+    Times come in two layers: `recorded_*` is what the phone said and is never touched; the unprefixed fields
+    are the effective times, which the office may correct (who, when and why are kept, because corrected
+    attendance is the kind of record people dispute later).
+    """
+
+    STATUS = [("on", "On shift"), ("break", "On break"), ("ended", "Ended")]
+    END_REASONS = [
+        ("rep", "Ended by the rep"), ("tracking_off", "Tracking switched off"), ("location_off", "Location switched off"),
+        ("permission_revoked", "Location permission revoked"), ("tracking_lost", "Tracking went silent"),
+        ("auto_cutoff", "Still open at the daily cutoff"), ("office", "Ended by the office"),
+    ]
+
+    rep = models.ForeignKey(SupplierRep, on_delete=models.CASCADE, related_name="shifts")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="rep_shifts")
+    client_id = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=6, choices=STATUS, default="on", db_index=True)
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=20, choices=END_REASONS, blank=True)
+    recorded_started_at = models.DateTimeField()
+    recorded_ended_at = models.DateTimeField(null=True, blank=True)
+    start_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    start_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    end_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    end_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    device = models.JSONField(default=dict, blank=True)
+    checks = models.JSONField(default=dict, blank=True, help_text="What the app verified before allowing the start")
+    last_ping_at = models.DateTimeField(null=True, blank=True)
+    lost_alerted_at = models.DateTimeField(null=True, blank=True)
+    corrected_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    corrected_at = models.DateTimeField(null=True, blank=True)
+    correction_reason = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        unique_together = [("tenant", "rep", "client_id")]
+        indexes = [models.Index(fields=["tenant", "status"]), models.Index(fields=["tenant", "rep", "started_at"])]
+
+    @property
+    def corrected(self):
+        if self.started_at != self.recorded_started_at or (self.recorded_ended_at and self.ended_at != self.recorded_ended_at):
+            return True
+        return any(b.corrected for b in self.breaks.all())
+
+
+class RepShiftBreak(TenantModel):
+    shift = models.ForeignKey(RepShift, on_delete=models.CASCADE, related_name="breaks")
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    recorded_started_at = models.DateTimeField()
+    recorded_ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["started_at"]
+
+    @property
+    def corrected(self):
+        return self.started_at != self.recorded_started_at or (self.recorded_ended_at and self.ended_at != self.recorded_ended_at)

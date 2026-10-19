@@ -249,6 +249,7 @@ CELERY_BEAT_SCHEDULE = {
     "inventory-alerts": {"task": "apps.inventory.tasks.compute_inventory_alerts", "schedule": 60 * 60 * 6},
     "retry-webhooks": {"task": "apps.integrations.tasks.retry_failed_webhooks", "schedule": 60 * 5},
     "purge-location-history-daily": {"task": "apps.partners.tasks.purge_location_history", "schedule": 60 * 60 * 24},
+    "sweep-shifts": {"task": "apps.partners.tasks.sweep_shifts", "schedule": 60 * 5},
 }
 
 # ---------------------------------------------------------------------------

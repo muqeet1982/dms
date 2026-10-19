@@ -49,6 +49,10 @@ export function CompanySettingsPage() {
       { value: "warn", label: "Allow it, but record it on the out-of-area report" },
       { value: "off", label: "Do not check at all" }] },
     { name: "geofence_require_location", label: "Refuse when the app sends no location at all", type: "checkbox", col: "col-md-6", hint: "turn on once every rep's app sends GPS, otherwise an old app is locked out" },
+    { name: "require_shift_for_orders", label: "A rep must be on shift to send orders", type: "checkbox", col: "col-md-6", hint: "Start/Break/End on the rep's home screen; no shift, no order" },
+    { name: "shift_gap_minutes", label: "Alert when tracking silent for (min)", type: "number", col: "col-md-3" },
+    { name: "shift_lost_end_minutes", label: "End the shift after a further (min)", type: "number", col: "col-md-3" },
+    { name: "shift_auto_end_at", label: "Auto-end open shifts at", col: "col-md-3", hint: "24h clock, e.g. 23:59" },
     { name: "rep_order_photo", label: "Photo of the shop with a rep's order", type: "select", col: "col-md-6", options: [
       { value: "optional", label: "Optional — taken when the rep has one" },
       { value: "required", label: "Required — no photo, no order" },
