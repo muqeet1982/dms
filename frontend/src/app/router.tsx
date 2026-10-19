@@ -107,7 +107,7 @@ export const router = createBrowserRouter([
     children: [{ path: "/rep/print-view", element: <PrintViewPage /> }, {
       path: "/rep", element: <AppShell sections={REP_MENU} notificationsTo="/rep/notifications" />,
       children: [
-        { index: true, element: <RepHomePage /> }, { path: "customers", element: <RepCustomersPage /> }, { path: "customers/:id", element: <RepCustomerDetailPage /> }, { path: "orders", element: <RepOrdersPage /> }, { path: "orders/new", element: <RepNewOrderPage /> }, { path: "orders/:id", element: <RepOrderDetailPage /> },
+        { index: true, element: <RepHomePage /> }, { path: "customers", element: <RepCustomersPage /> }, { path: "customers/:id", element: <RepCustomerDetailPage /> }, { path: "orders", element: <RepOrdersPage /> }, { path: "orders/new", element: <RepNewOrderPage /> }, { path: "orders/:id/edit", element: <RepNewOrderPage /> }, { path: "orders/:id", element: <RepOrderDetailPage /> },
         { path: "deliveries", element: <RepDeliveriesPage /> }, { path: "collections", element: <RepPortalCollectionsPage /> }, { path: "stock", element: <RepStockPage /> }, { path: "check-in", element: <RepCheckInPage /> }, { path: "notifications", element: <NotificationsPage /> }, { path: "profile", element: <ProfilePage /> }, { path: "*", element: <NotFound /> },
       ],
     }],

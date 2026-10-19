@@ -74,10 +74,21 @@ export function RepNewOrderPage() {
   const nav = useNavigate();
   const sp = new URLSearchParams(window.location.search);
   const { can } = usePerms();
+  // /rep/orders/:id/edit reuses this page: same basket, but Save corrects the existing order (PATCH)
+  const { id: editId } = useParams();
   const [customer, setCustomer] = useState<string | null>(sp.get("customer"));
   const [cart, setCart] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [notes, setNotes] = useState("");
+  const editing = useQuery({ queryKey: ["rep-order", editId], queryFn: () => api.get(`/ext/v1/orders/${editId}`), enabled: Boolean(editId) });
+  const [seeded, setSeeded] = useState(false);
+  if (editId && editing.data && !seeded) {
+    const o = editing.data;
+    setCustomer(o.customer);
+    setNotes(o.notes || "");
+    setCart(o.lines.map((l: any) => ({ key: l.id, variant_id: l.variant, name: l.variant_name, sku: l.variant_sku, packaging: undefined, packaging_id: undefined, mult: 1, price: l.unit_price ? Number(l.unit_price) : null, qty: Number(l.qty_ordered) })));
+    setSeeded(true);
+  }
   const [deliveryDate, setDeliveryDate] = useState("");
   const [scan, setScan] = useState("");
   const visit = useVisit();   // where the rep is standing, and the photo of the shop
@@ -88,6 +99,14 @@ export function RepNewOrderPage() {
   const submit = async () => {
     if (!customer || !cart.length) return toast.error("Choose a customer and add items");
     try {
+      if (editId) {
+        const r = await api.patch(`/ext/v1/orders/${editId}`, {
+          notes, requested_delivery_date: deliveryDate || undefined,
+          lines: cart.map((c) => ({ variant_id: c.variant_id, qty: c.qty, packaging: c.packaging || undefined })),
+        });
+        toast.success(`Order ${r.number} updated`);
+        return nav(`/rep/orders/${r.id}`);
+      }
       const r = await api.post("/ext/v1/orders", {
         customer: { id: customer }, requested_delivery_date: deliveryDate || undefined, notes,
         gps: visit.gps || undefined,
@@ -100,8 +119,8 @@ export function RepNewOrderPage() {
   };
   return (
     <>
-      <PageHeader title="New order" crumbs={[]} />
-      <VisitCard visit={visit} />
+      <PageHeader title={editId ? `Correct ${editing.data?.number || "order"}` : "New order"} crumbs={[]} />
+      {editId ? <Alert kind="info">You are correcting this order — the whole basket below replaces its lines when you save. No location check on a correction.</Alert> : <VisitCard visit={visit} />}
       <div className="card mb-3"><div className="card-body"><Field label="Customer *"><EntitySelect endpoint="/ext/v1/customers" value={customer} onChange={setCustomer} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""}` })} /></Field><div className="row"><Field label="Requested delivery" col="col-6"><DateInput className="form-control" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} /></Field><Field label="Notes" col="col-6"><input className="form-control" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field></div></div></div>
       <div className="row g-3">
         <div className="col-lg-7">
@@ -109,7 +128,7 @@ export function RepNewOrderPage() {
             <div className="list-group list-group-flush" style={{ maxHeight: 560, overflowY: "auto" }}>{!customer && <div className="p-4 text-muted text-center">Select a customer to see prices</div>}{products.data?.results.map((p: any) => <div key={p.id} className="list-group-item d-flex justify-content-between align-items-center gap-2"><div><div className="fw-medium fs-13">{p.name}</div><div className="fs-11 text-muted">{p.sku}{p.unit_size ? ` · ${p.unit_size}` : ""}{p.packing > 1 ? ` · ${p.packing}/ctn` : ""} · {p.brand_name}{p.price ? ` · ${money(p.price)} / ${p.base_uom}` : ""}{p.retail_price && Number(p.retail_price) > 0 ? ` · R.P ${money(p.retail_price)}` : ""}</div></div><div className="d-flex gap-1 flex-wrap justify-content-end"><button className="btn btn-sm btn-outline-primary" onClick={() => add(p)}>+1 {p.base_uom}</button>{p.packagings?.map((pk: any) => <button key={pk.id} className="btn btn-sm btn-outline-secondary" onClick={() => add(p, pk)}>+{pk.name} ({Number(pk.qty_in_base)})</button>)}</div></div>)}</div></div>
         </div>
         <div className="col-lg-5">
-          <div className="card"><div className="card-header d-flex justify-content-between"><strong>Cart</strong><span>{cart.length} items</span></div><div className="card-body p-0"><table className="table table-sm fs-13 mb-0"><tbody>{cart.map((c) => <tr key={c.key}><td>{c.name}<div className="fs-11 text-muted">{c.packaging ? `${c.packaging} ×${c.mult}` : "unit"}{c.price !== null ? ` · ${money(c.price)}` : ""}</div></td><td style={{ width: 120 }}><div className="input-group input-group-sm"><button className="btn btn-outline-secondary" onClick={() => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: Math.max(0, x.qty - 1) } : x)).filter((x) => x.qty > 0))}>−</button><input className="form-control text-center" value={c.qty} onChange={(e) => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: Number(e.target.value) || 0 } : x)))} /><button className="btn btn-outline-secondary" onClick={() => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: x.qty + 1 } : x)))}>+</button></div></td><td className="num">{c.price !== null ? money(c.price * c.qty) : ""}</td></tr>)}{!cart.length && <tr><td className="text-muted text-center py-4">Cart is empty</td></tr>}</tbody>{cart.length > 0 && can("external.view_prices") && <tfoot><tr className="fw-bold"><td colSpan={2} className="text-end">Approx. total (before tax/schemes)</td><td className="num">{money(total)}</td></tr></tfoot>}</table></div><div className="card-footer"><button className="btn btn-primary w-100" disabled={!cart.length || !customer} onClick={submit}><i className="ti ti-send me-1" />Submit order</button><div className="form-text text-center">Final prices, schemes and taxes are calculated by the distributor.</div></div></div>
+          <div className="card"><div className="card-header d-flex justify-content-between"><strong>Cart</strong><span>{cart.length} items</span></div><div className="card-body p-0"><table className="table table-sm fs-13 mb-0"><tbody>{cart.map((c) => <tr key={c.key}><td>{c.name}<div className="fs-11 text-muted">{c.packaging ? `${c.packaging} ×${c.mult}` : "unit"}{c.price !== null ? ` · ${money(c.price)}` : ""}</div></td><td style={{ width: 120 }}><div className="input-group input-group-sm"><button className="btn btn-outline-secondary" onClick={() => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: Math.max(0, x.qty - 1) } : x)).filter((x) => x.qty > 0))}>−</button><input className="form-control text-center" value={c.qty} onChange={(e) => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: Number(e.target.value) || 0 } : x)))} /><button className="btn btn-outline-secondary" onClick={() => setCart(cart.map((x) => (x.key === c.key ? { ...x, qty: x.qty + 1 } : x)))}>+</button></div></td><td className="num">{c.price !== null ? money(c.price * c.qty) : ""}</td></tr>)}{!cart.length && <tr><td className="text-muted text-center py-4">Cart is empty</td></tr>}</tbody>{cart.length > 0 && can("external.view_prices") && <tfoot><tr className="fw-bold"><td colSpan={2} className="text-end">Approx. total (before tax/schemes)</td><td className="num">{money(total)}</td></tr></tfoot>}</table></div><div className="card-footer"><button className="btn btn-primary w-100" disabled={!cart.length || !customer} onClick={submit}><i className="ti ti-send me-1" />{editId ? "Save correction" : "Submit order"}</button><div className="form-text text-center">Final prices, schemes and taxes are calculated by the distributor.</div></div></div>
         </div>
       </div>
     </>
@@ -138,7 +157,14 @@ export function RepOrderDetailPage() {
   if (!o) return null;
   return (
     <>
-      <PageHeader title={o.number} badge={<StatusBadge status={o.status} />} crumbs={[]} actions={o.status === "submitted" && can("external.cancel_own_order") && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel order</button>} />
+      <PageHeader title={o.number} badge={<StatusBadge status={o.status} />} crumbs={[]} actions={<>
+        <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/ext/v1/orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
+        <button className="btn btn-outline-secondary" onClick={() => api.download(`/ext/v1/orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
+        {o.invoices?.length > 0 && <button className="btn btn-outline-secondary" onClick={() => api.download(`/ext/v1/orders/${o.id}/invoice-pdf`)}><i className="ti ti-file-invoice me-1" />Invoice PDF</button>}
+        {o.can_edit && <Link to={`/rep/orders/${o.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-pencil me-1" />Correct order</Link>}
+        {o.status === "submitted" && can("external.cancel_own_order") && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel order</button>}
+      </>} />
+      {o.can_edit && o.editable_until && <div className="fs-12 text-muted mb-2"><i className="ti ti-clock me-1" />Corrections allowed until {datetime(o.editable_until)}.</div>}
       {o.rejection_reason && <Alert kind="danger">{o.rejection_reason}</Alert>}{o.hold_reason && <Alert kind="warning">{o.hold_reason}</Alert>}
       <div className="card mb-3"><div className="card-body fs-13"><div><strong>{o.customer_name}</strong> · {date(o.order_date)}{o.requested_delivery_date ? ` · deliver by ${date(o.requested_delivery_date)}` : ""}</div>{o.trip_number && <div className="text-muted">Trip {o.trip_number} · {o.driver_name} · {o.vehicle_reg}</div>}{o.notes && <div className="text-muted">{o.notes}</div>}
         <table className="table table-sm fs-12 mt-2 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Free</th>{can("external.view_prices") && <th className="num">Price</th>}{can("external.view_prices") && <th className="num">Total</th>}<th className="num">Delivered</th></tr></thead><tbody>{o.lines.map((l: any) => <tr key={l.id}><td>{l.variant_name}<div className="fs-11 text-muted">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.free_qty)}</td>{can("external.view_prices") && <td className="num">{money(l.unit_price)}</td>}{can("external.view_prices") && <td className="num">{money(l.line_total)}</td>}<td className="num">{qty(l.qty_delivered)}</td></tr>)}</tbody>{can("external.view_prices") && <tfoot><tr className="fw-bold"><td colSpan={4} className="text-end">Total (incl. tax)</td><td className="num">{money(o.total)}</td><td /></tr></tfoot>}</table></div></div>
