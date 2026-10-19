@@ -148,6 +148,9 @@ class MyDeviceViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         s = self.get_serializer(data=request.data)
         s.is_valid(raise_exception=True)
+        # a phone pushes to whoever is signed in on it NOW. Registering claims the token off any previous
+        # login — without this, a handset passed between reps keeps receiving the first rep's notifications.
+        DeviceToken.objects.filter(token=s.validated_data["token"]).exclude(user=request.user).delete()
         obj, _ = DeviceToken.objects.update_or_create(user=request.user, token=s.validated_data["token"], defaults={k: v for k, v in s.validated_data.items() if k != "token"})
         return Response(DeviceTokenSerializer(obj).data, status=201)
 

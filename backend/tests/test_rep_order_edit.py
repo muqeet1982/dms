@@ -478,3 +478,16 @@ def test_a_big_shop_can_have_a_bigger_radius(rep_app, tenant):
     assert ok.status_code == 201, ok.content
     row = next(c for c in rep_app["phone"].get("/ext/v1/customers").data["results"] if c["id"] == str(rep_app["customer"].id))
     assert row["order_radius_m"] == 500, "the app reads the shop's own radius to gate Submit with the same maths"
+
+
+def test_a_handset_passed_between_logins_pushes_only_to_the_current_one(rep_app, api, tenant):
+    """One phone, one FCM token. Registering it claims it off the previous login — otherwise the first
+    rep's notifications keep arriving on a handset somebody else now holds."""
+    from apps.core.models import DeviceToken
+
+    body = {"platform": "android", "token": "shared-handset-token-1", "device_name": "Demo handset"}
+    assert rep_app["phone"].post("/api/v1/me/devices", body, format="json").status_code == 201
+    assert api.post("/api/v1/me/devices", body, format="json").status_code == 201
+
+    holders = list(DeviceToken.objects.filter(token="shared-handset-token-1"))
+    assert len(holders) == 1, "the token belongs to exactly one login"
