@@ -124,6 +124,9 @@ class TrackingLiveView(APIView):
                 "accuracy_m": ping.accuracy_m, "battery_pct": ping.battery_pct,
                 "stale_s": int((now - ping.at).total_seconds()),
                 "moving": bool(ping.speed_mps and ping.speed_mps > 1.0),
+                # which build this phone last ran — the owner reads this list to know when every rep is on a
+                # shift-capable app and the order gate can be switched on
+                "app_version": ping.app_version or None,
             })
         return Response({"as_of": now, "users": sorted(users, key=lambda u: u["user_name"])})
 
