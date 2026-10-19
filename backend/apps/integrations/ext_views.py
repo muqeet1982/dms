@@ -390,6 +390,16 @@ class ExtCustomersView(ExtBase):
                               code="bad_customer", status_code=400, errors={"type": [kind]})
 
         gps = d.get("gps") or {}
+        # the shop's pin: a pasted maps link (or "lat, lng") wins over where the rep is standing
+        pin = {"lat": gps.get("lat"), "lng": gps.get("lng")}
+        if d.get("map_url"):
+            from apps.partners.maplink import parse_location
+
+            found = parse_location(d["map_url"])
+            if found is None:
+                raise DomainError("map_url could not be read — share a Google Maps link or \"lat, lng\".",
+                                  code="bad_customer", status_code=400, errors={"map_url": [str(d["map_url"])[:200]]})
+            pin = {"lat": found[0], "lng": found[1]}
         # A new shop is an observation, not a transaction: a rep is told about one in the next market, or adds
         # it from the office at the end of the day, or the area has grown and nobody has redrawn the polygon.
         # Refusing the write would destroy the record — and the shop arrives `pending`, so the office has the
@@ -401,7 +411,7 @@ class ExtCustomersView(ExtBase):
             # a rep copies these off the shop's licence, punctuated however it is printed, so they are kept as
             # typed — they were being accepted and silently dropped
             "ntn": (d.get("ntn") or "").strip(), "strn": (d.get("strn") or "").strip(), "cnic": (d.get("cnic") or "").strip(),
-            "gps_lat": gps.get("lat"), "gps_lng": gps.get("lng"),
+            "gps_lat": pin["lat"], "gps_lng": pin["lng"],
         }, rep=rep)
         if event is not None:
             Customer.objects.filter(pk=c.pk).update(
@@ -790,6 +800,9 @@ class ExtMyAreasView(ExtBase):
             # per rep where the office has set one on their profile, the company default otherwise
             "policy": GeoFenceService.policy_for(tenant, rep),
             "location_required": bool(tenant.setting("geofence_require_location")) if tenant else False,
+            # what the policy is measured against: at the shop's own pin, or inside the areas below
+            "order_rule": {"mode": "shop_proximity" if (tenant.setting("order_location_rule") if tenant else "shop") == "shop" else "area",
+                           "radius_m": int(tenant.setting("order_proximity_m") or 50) if tenant else 50},
             # the app reads every field rule in one call on login
             "tracking": tracking_policy(tenant),
             "visit": visit_policy(tenant),

@@ -169,6 +169,10 @@ class Tenant(models.Model):
         # once every app in the field sends `gps` on orders and collections — until then it would lock out the
         # ones that do not, and a missing fix would be the easy way around the rule.
         "geofence_require_location": True,
+        # where an order (or collection) may be taken: "shop" = at the customer's pin (the owner's rule since
+        # 19 Oct 2026, within order_proximity_m), "area" = inside the rep's assigned working areas
+        "order_location_rule": "shop",
+        "order_proximity_m": 50,
         # a photo of the shop taken at the visit: off | optional | required
         "rep_order_photo": "optional",
         # checking in at a shop with no order — the photo is the evidence, so it is required by default and

@@ -44,7 +44,7 @@ export function UserFormPage() {
   const preview = usePreviewAccess(form?.roles || [], Boolean(form));
   if (id && q.isLoading) return <Spinner />;
   // Role ids arrive as strings on the membership but as numbers in the role list, so every comparison is on String().
-  if (!form) { setForm(q.data ? { full_name: q.data.full_name, email: q.data.email || "", phone: q.data.phone || "", roles: (q.data.roles || []).map(String), warehouses: q.data.warehouses, status: q.data.status, rep_mode: q.data.supplier_rep ? "keep" : "existing", rep_id: null, rep_supplier: null } : { full_name: "", email: "", phone: "", roles: [], warehouses: [], password: "", password_confirm: "", send_invite: false, rep_mode: "existing", rep_id: null, rep_supplier: null }); return <Spinner />; }
+  if (!form) { setForm(q.data ? { full_name: q.data.full_name, email: q.data.email || "", phone: q.data.phone || "", roles: (q.data.roles || []).map(String), warehouses: q.data.warehouses, status: q.data.status, login_surface: q.data.login_surface || "both", rep_mode: q.data.supplier_rep ? "keep" : "existing", rep_id: null, rep_supplier: null } : { full_name: "", email: "", phone: "", roles: [], warehouses: [], password: "", password_confirm: "", send_invite: false, login_surface: "both", rep_mode: "existing", rep_id: null, rep_supplier: null }); return <Spinner />; }
   const u = q.data;
   const roleRows: any[] = roles.data || [];
   // `needs_rep` is the server's own reading of the selection, so the rep control appears on exactly the
@@ -78,6 +78,7 @@ export function UserFormPage() {
       if (page.can("manage_access")) {
         body.roles = form.roles;
         body.warehouses = form.warehouses;
+        body.login_surface = form.login_surface || "both";
         // Only while the server says a rep is needed. `rep_for_supplier` is harmlessly ignored without a field
         // role, but `supplier_rep` is unique on the membership and its uniqueness is checked during field
         // validation — before the view can ignore it — so a pick left behind by an unticked field role would
@@ -122,6 +123,13 @@ export function UserFormPage() {
         {page.can("manage_access") && <Field label="Roles *" col="col-12">{roles.data ? <RolePicker roles={roleRows} value={form.roles} onChange={(ids) => { setRoleError(null); setForm({ ...form, roles: ids }); }} /> : <Spinner />}{roleError && <div className="text-danger fs-12 mt-1"><i className="ti ti-alert-circle me-1" />{roleError}</div>}</Field>}
         {page.can("manage_access") && hasField && <Field label="Rep record *" col="col-12"><RepLink form={form} setForm={setForm} currentRep={u?.rep_name} error={repError} fieldRoles={fieldRoleNames} /></Field>}
         {page.can("manage_access") && willUnlinkRep && <div className="col-12"><Alert kind="warning">Saving with no field role unlinks <strong>{u.rep_name}</strong> from this login. The rep record and its history stay; this person simply stops being a rep and loses the mobile app.</Alert></div>}
+        {page.can("manage_access") && <Field label="Can sign in on" col="col-md-6" hint="where this login works — the mobile app, the web, or both">
+          <select className="form-select" value={form.login_surface || "both"} onChange={(e) => setForm({ ...form, login_surface: e.target.value })}>
+            <option value="both">App and web (default)</option>
+            <option value="app">Mobile app only</option>
+            <option value="web">Web only</option>
+          </select>
+        </Field>}
         {page.can("manage_access") && <Field label="Warehouse scope" col="col-md-6" hint="Leave all unchecked for access to every warehouse"><div className="d-flex flex-wrap gap-3">{warehouses.data?.map((w) => <div className="form-check" key={w.id}><input className="form-check-input" type="checkbox" id={`w-${w.id}`} checked={form.warehouses.includes(w.id)} onChange={(e) => setForm({ ...form, warehouses: e.target.checked ? [...form.warehouses, w.id] : form.warehouses.filter((x: string) => x !== w.id) })} /><label htmlFor={`w-${w.id}`} className="form-check-label">{w.name}</label></div>)}</div></Field>}
       </div><div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>{(id ? page.edit : page.add) && <button className="btn btn-primary" onClick={save}>Save user</button>}</div></div></div>
       {(id || page.can("manage_access")) && <AccessPanel roleIds={form.roles} savedRoleIds={u?.roles || []} access={access.data} preview={preview.data} hasField={hasField} repLabel={keepingRep ? u.rep_name : form.rep_mode === "new" && form.rep_supplier ? "a new rep record on save" : form.rep_mode === "existing" && form.rep_id ? "the rep picked above" : ""} repChosen={repChosen} />}

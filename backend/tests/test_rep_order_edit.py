@@ -167,13 +167,23 @@ def test_a_shop_outside_the_area_is_kept_with_the_distance_on_it(rep_app):
     assert r.data["inside_area"] is False
     assert r.data["distance_m"] > 1_000_000, r.data["distance_m"]
 
-    # and an order from that same spot is still refused — the distinction is the point
+    # and an order from that same spot now goes through: since the shop-proximity rule (19 Oct 2026) the
+    # gate is the SHOP, not the polygon — the rep is standing at the new shop, so the sale is real
     order = rep_app["phone"].post("/ext/v1/orders", {
         "customer": {"id": r.data["id"]},
         "gps": {"lat": KARACHI[0], "lng": KARACHI[1], "accuracy_m": 12.0},
         "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
     }, format="json")
-    assert order.status_code == 403 and order.data["type"] == "outside_area"
+    assert order.status_code == 201, order.content
+
+    # but ordering for that far shop from back in Gulberg is refused — not at the shop
+    away = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": r.data["id"]},
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 9.0},
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+    }, format="json")
+    assert away.status_code == 403 and away.data["type"] == "outside_area"
+    assert "from Far Away Beauty" in away.data["detail"]
 
 
 def test_a_rep_allowed_to_order_from_anywhere_is_not_fenced(rep_app, tenant):
@@ -201,6 +211,66 @@ def test_a_rep_allowed_to_order_from_anywhere_is_not_fenced(rep_app, tenant):
         "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
     }, format="json")
     assert allowed.status_code == 201, allowed.content
+
+
+def test_the_gate_is_the_shop_not_the_area(rep_app, tenant):
+    """
+    The owner's rule since 19 Oct 2026: an order is taken AT the shop — within order_proximity_m (50 by
+    default) of its pin, stretched by the phone's own GPS accuracy. Areas no longer decide; a shop with no
+    pin cannot be measured against, so it is allowed and the unchecked verdict is recorded instead.
+    """
+    c = rep_app["customer"]
+
+    def order_from(lat, lng, accuracy=9.0, customer=None):
+        return rep_app["phone"].post("/ext/v1/orders", {
+            "customer": {"id": str((customer or c).id)},
+            "gps": {"lat": lat, "lng": lng, "accuracy_m": accuracy},
+            "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+        }, format="json")
+
+    # ~30 m from the pin (one degree of latitude ≈ 111.3 km): at the shop
+    near = order_from(GULBERG[0] + 0.00027, GULBERG[1])
+    assert near.status_code == 201, near.content
+
+    # ~200 m away: not at the shop, and the refusal says so in metres
+    far = order_from(GULBERG[0] + 0.0018, GULBERG[1])
+    assert far.status_code == 403 and far.data["type"] == "outside_area", far.content
+    assert "from " + c.name in far.data["detail"]
+
+    # ~80 m away but the fix itself is only good to 40 m: the allowance covers it
+    rough = order_from(GULBERG[0] + 0.00072, GULBERG[1], accuracy=40)
+    assert rough.status_code == 201, rough.content
+
+    # a shop with no pin is never refused for location — there is nothing to measure against
+    with tenant_context(tenant, tenant.owner):
+        from apps.partners.models import Customer
+
+        unpinned = Customer.objects.create(code="C-NOPIN", name="Unpinned Store")
+        unpinned.assigned_reps.add(rep_app["rep"])
+    blind = order_from(KARACHI[0], KARACHI[1], customer=unpinned)
+    assert blind.status_code == 201, blind.content
+
+    # the app reads the rule from my-areas, so it can gate Submit offline with the same maths
+    rule = rep_app["phone"].get("/ext/v1/my-areas").data["order_rule"]
+    assert rule == {"mode": "shop_proximity", "radius_m": 50}
+
+
+def test_a_new_shop_can_be_pinned_from_a_maps_link(rep_app):
+    """The rep has the shop's location as a shared Google Maps link, not as numbers — the link wins over
+    where they are standing."""
+    r = rep_app["phone"].post("/ext/v1/customers", {
+        "name": "Linked Pin Store", "type": "retailer",
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 10.0},
+        "map_url": "https://www.google.com/maps/place/Shop/@31.0,74.0,17z/data=!3d31.4710000!4d74.2800000",
+    }, format="json")
+    assert r.status_code == 201, r.content
+    row = next(x for x in rep_app["phone"].get("/ext/v1/customers").data["results"] if x["id"] == r.data["id"])
+    assert (round(float(row["gps"]["lat"]), 4), round(float(row["gps"]["lng"]), 4)) == (31.471, 74.28)
+
+    bad = rep_app["phone"].post("/ext/v1/customers", {
+        "name": "Bad Link Store", "type": "retailer", "map_url": "https://example.com/not-a-map",
+    }, format="json")
+    assert bad.status_code == 400 and bad.data["type"] == "bad_customer"
 
 
 def test_the_order_detail_echoes_its_photo_labels(rep_app):
@@ -366,3 +436,28 @@ def test_a_rep_can_fetch_their_own_order_pdf_but_not_an_office_one(rep_app, tena
         other.rep = None
         other.save(update_fields=["rep"])
     assert rep_app["phone"].get(f"/ext/v1/orders/{other.pk}/pdf").status_code == 404
+
+
+def test_a_login_can_be_limited_to_the_app_or_the_web(rep_app, tenant):
+    """The owner decides where each login works: app, web, or both. The client says what it is at login
+    (`client`/`platform`, or its User-Agent); a nameless client is never refused on surface."""
+    from rest_framework.test import APIClient
+
+    from apps.accounts.models import TenantMembership, User
+
+    user = User.objects.get(email="edit@probe.pk")
+    TenantMembership.objects.filter(user=user, tenant=rep_app["tenant"]).update(login_surface="app")
+
+    creds = {"identifier": "edit@probe.pk", "password": "Abcd-1234"}
+    web = APIClient().post("/api/v1/auth/login", {**creds, "platform": "web"}, format="json")
+    assert web.status_code == 403 and web.data["type"] == "wrong_surface", web.content
+    assert "mobile app" in web.data["detail"]
+
+    app = APIClient().post("/api/v1/auth/login", {**creds, "client": "app"}, format="json")
+    assert app.status_code == 200, app.content
+
+    nameless = APIClient().post("/api/v1/auth/login", creds, format="json")
+    assert nameless.status_code == 200, "an unidentifiable client must not be locked out"
+
+    TenantMembership.objects.filter(user=user, tenant=rep_app["tenant"]).update(login_surface="both")
+    assert APIClient().post("/api/v1/auth/login", {**creds, "platform": "web"}, format="json").status_code == 200

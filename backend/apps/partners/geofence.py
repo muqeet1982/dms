@@ -309,17 +309,35 @@ class GeoFenceService:
         policy = GeoFenceService.policy_for(tenant, rep)
         if policy == "off" or rep is None:
             return None
-        fences = list(GeoFenceService.fences_for(rep))
-        if not fences:
-            return None
-
+        rule = (tenant.setting("order_location_rule") if tenant else "shop") or "shop"
         point = coords(gps)
-        where = GeoFenceService.locate(rep, point) if point else {"inside": False, "fence": None, "distance_m": None}
         require_fix = tenant.setting("geofence_require_location") if tenant else True
-        if point is None:
-            verdict, ok = "no_fix", not (policy == "block" and require_fix)
+
+        if rule == "shop" and action in ("order", "collection") and customer is not None:
+            # the owner's rule since 19 Oct 2026: the gate is the SHOP, not an assigned area — the rep must be
+            # standing at the customer's pin (within order_proximity_m, stretched by the fix's own accuracy)
+            if customer.gps_lat is None or customer.gps_lng is None:
+                # a shop with no pin cannot be measured against — record that it went unchecked, never refuse
+                where = {"fence": None, "distance_m": None}
+                verdict, ok = "skipped", True
+            elif point is None:
+                where = {"fence": None, "distance_m": None}
+                verdict, ok = "no_fix", not (policy == "block" and require_fix)
+            else:
+                accuracy = (gps or {}).get("accuracy_m") if isinstance(gps, dict) else None
+                d = int(distance_m(point, (float(customer.gps_lat), float(customer.gps_lng))))
+                radius = int(tenant.setting("order_proximity_m") or 50) + min(int(float(accuracy or 0)), 50)
+                where = {"fence": None, "distance_m": d}
+                verdict, ok = ("inside", True) if d <= radius else ("outside", policy != "block")
         else:
-            verdict, ok = ("inside", True) if where["inside"] else ("outside", policy != "block")
+            fences = list(GeoFenceService.fences_for(rep))
+            if not fences:
+                return None
+            where = GeoFenceService.locate(rep, point) if point else {"inside": False, "fence": None, "distance_m": None}
+            if point is None:
+                verdict, ok = "no_fix", not (policy == "block" and require_fix)
+            else:
+                verdict, ok = ("inside", True) if where["inside"] else ("outside", policy != "block")
 
         fields = dict(
             rep=rep, user=user or (get_current_user() if getattr(get_current_user(), "is_authenticated", False) else None),
@@ -344,11 +362,18 @@ class GeoFenceService:
         else:
             near = where.get("fence")
             how_far = f"{where['distance_m'] / 1000:.1f} km" if (where.get("distance_m") or 0) >= 1000 else f"{where.get('distance_m') or 0} m"
-            error = DomainError(
-                f"You are {how_far} outside {near.name if near else 'your work area'}. This can only be recorded inside the area you cover.",
-                code="outside_area", status_code=403,
-                errors={"distance_m": [where.get("distance_m")], "fence": [near.name if near else ""]},
-            )
+            if rule == "shop" and customer is not None and near is None:
+                error = DomainError(
+                    f"You are {how_far} from {customer.name}. Go to the shop to submit this — or save it and submit when you arrive.",
+                    code="outside_area", status_code=403,
+                    errors={"distance_m": [where.get("distance_m")], "shop": [customer.name], "fence": [""]},
+                )
+            else:
+                error = DomainError(
+                    f"You are {how_far} outside {near.name if near else 'your work area'}. This can only be recorded inside the area you cover.",
+                    code="outside_area", status_code=403,
+                    errors={"distance_m": [where.get("distance_m")], "fence": [near.name if near else ""]},
+                )
         error.geofence_event = event
         raise error
 

@@ -39,6 +39,20 @@ from .serializers import (
 from .services import RoleService, SessionService, UserService
 
 
+def _client_kind(request):
+    """app | web | "" — what is signing in. The payload's own word wins; the User-Agent is the fallback,
+    and an unrecognisable client (scripts, old builds) is never refused on surface."""
+    said = str((request.data or {}).get("client") or (request.data or {}).get("platform") or "").lower()
+    if said in ("app", "web"):
+        return said
+    ua = request.META.get("HTTP_USER_AGENT", "")
+    if "Mozilla" in ua:
+        return "web"
+    if any(k in ua.lower() for k in ("okhttp", "dart", "cfnetwork", "flutter")):
+        return "app"
+    return ""
+
+
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
     throttle_scope = "auth"
@@ -46,6 +60,16 @@ class LoginView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
+            # a login can be limited to the app or the web per membership; refuse only when every company
+            # this person belongs to shuts this surface out
+            kind = _client_kind(request)
+            if kind:
+                surfaces = set(TenantMembership.objects.filter(user_id=response.data["user"]["id"], status="active")
+                               .values_list("login_surface", flat=True))
+                if surfaces and "both" not in surfaces and kind not in surfaces:
+                    AuditService.log("auth.login_refused_surface", model="User", object_id=response.data["user"]["id"], request=request, after={"client": kind})
+                    other = "the mobile app" if "app" in surfaces else "the web portal"
+                    return Response({"type": "wrong_surface", "detail": f"This login is for {other} only. Ask the office to allow {'web' if kind == 'web' else 'app'} access."}, status=403)
             AuditService.log("auth.login", model="User", object_id=response.data["user"]["id"], request=request)
         return response
 

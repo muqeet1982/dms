@@ -90,6 +90,12 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Where they are", "ti-map-pin"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "territory", label: "Territory", type: "entity", endpoint: "/api/v1/territories", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3" },
     { ...sec("Where they are", "ti-map-pin"), name: "route", label: "Delivery route", type: "entity", endpoint: "/api/v1/routes", mapOption: (r) => ({ id: r.id, label: r.name, sub: r.territory_name }), col: "col-md-3" },
+    { ...sec("Where they are", "ti-map-pin"), name: "assigned_reps", label: "Sale person(s)", type: "custom", col: "col-md-12", default: [],
+      hint: "the shop only shows in these reps' app and portal — without one, no rep can see it or order for it",
+      render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
+    { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin on the map", type: "custom", col: "col-md-12",
+      render: (v, _set, values, setField) => <StorePinPicker lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
+    { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "Longitude", type: "number", col: "col-md-3", icon: "ti-map-pin", hint: "set by the map above" },
 
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", hint: "co-funded total % (match a Settings → Discount contributions row); defaults onto invoices, changeable there", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
@@ -106,11 +112,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger (Dr receivables / Cr opening equity), so it shows in their statement and ageing."), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
     { ...sec("Opening balance", "ti-scale"), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
 
-    { ...sec("Reps, location & notes", "ti-dots", undefined, true), name: "assigned_reps", label: "Sales reps attached to this customer", type: "custom", col: "col-md-12", default: [], render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
-    { ...sec("Reps, location & notes", "ti-dots", undefined, true), name: "gps_lat", label: "Where the shop is", type: "custom", col: "col-md-12",
-      render: (v, _set, values, setField) => <StorePinPicker lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
-    { ...sec("Reps, location & notes", "ti-dots", undefined, true), name: "gps_lng", label: "Longitude", type: "number", col: "col-md-3", icon: "ti-map-pin", hint: "set by the map above" },
-    { ...sec("Reps, location & notes", "ti-dots", undefined, true), name: "notes", label: "Internal notes", type: "textarea", col: "col-md-12" },
+    { ...sec("Notes", "ti-dots", undefined, true), name: "notes", label: "Internal notes", type: "textarea", col: "col-md-12" },
   ];
 }
 

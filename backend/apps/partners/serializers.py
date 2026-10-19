@@ -96,10 +96,24 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
     tax_class_override_name = serializers.CharField(source="tax_class_override.name", read_only=True, default="")
     outstanding = serializers.SerializerMethodField()
     rep_names = serializers.SerializerMethodField()
+    # a pasted Google Maps link (short links included) or "lat, lng" — becomes the shop's pin
+    map_url = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs) if hasattr(super(), "validate") else attrs
+        link = attrs.pop("map_url", "")
+        if link:
+            from .maplink import parse_location
+
+            found = parse_location(link)
+            if found is None:
+                raise serializers.ValidationError({"map_url": "Could not read a location from that — paste a Google Maps link or \"lat, lng\"."})
+            attrs["gps_lat"], attrs["gps_lng"] = found
+        return attrs
 
     class Meta:
         model = Customer
-        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "map_url", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
         read_only_fields = ["id", "requested_by_rep", "created_at", "updated_at"]
         extra_kwargs = {"code": {"required": False, "allow_blank": True}}
 

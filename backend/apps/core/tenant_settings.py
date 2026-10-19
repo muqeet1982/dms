@@ -31,7 +31,7 @@ SETTINGS_KEYS = {
     "registration_no": "", "license_no": "", "default_credit_days": 0, "min_shelf_life_days": 0, "allow_negative_stock": False,
     "price_change_policy": "flag", "require_delivery_otp": False, "whatsapp": "", "facebook": "", "instagram": "", "linkedin": "",
     # field work: the rules the rep app is held to (see apps/partners/geofence.py)
-    "geofence_policy": "block", "geofence_require_location": True, "rep_order_photo": "optional", "rep_visit_photo": "required",
+    "geofence_policy": "block", "geofence_require_location": True, "order_location_rule": "shop", "order_proximity_m": 50, "rep_order_photo": "optional", "rep_visit_photo": "required",
     "tracking_enabled": True, "tracking_mode": "work_hours", "tracking_interval_s": 120, "tracking_min_distance_m": 50,
     "tracking_from": "09:00", "tracking_to": "19:00", "tracking_retention_days": 90, "tracking_notice": "",
 }

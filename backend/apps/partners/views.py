@@ -175,6 +175,8 @@ class CustomerViewSet(TenantModelViewSet):
         # the Store locations map has its own switches in the role matrix
         "map": "customers.view_store_location",
         "pin": "customers.change_store_location",
+        # reading coordinates out of a pasted maps link gives nothing away — anyone who can see customers may use it
+        "parse_location": "customers.view_customer",
     })
     search_fields = ["name", "business_name", "code", "phone", "alt_mobile", "landline", "email", "contact_person", "address", "city", "ntn", "strn", "cnic"]
     filterset_fields = ["type", "status", "territory", "route", "price_list", "is_blocked", "assigned_reps", "city"]
@@ -234,6 +236,16 @@ class CustomerViewSet(TenantModelViewSet):
                          "fences": [{"id": str(f.id), "name": f.name, "colour": f.colour, "type": f.type,
                                      "centre_lat": f.centre_lat, "centre_lng": f.centre_lng, "radius_m": f.radius_m,
                                      "points": f.points, "reps": [{"id": str(r.id), "name": r.name} for r in f.reps.all()]} for f in fences]})
+
+    @action(detail=False, methods=["post"], url_path="parse-location")
+    def parse_location(self, request):
+        """POST {text}: a Google Maps link (short links followed server-side) or "lat, lng" → {lat, lng}."""
+        from .maplink import parse_location as parse
+
+        found = parse(request.data.get("text") or request.data.get("url") or "")
+        if found is None:
+            raise DomainError("Could not read a location from that — paste a Google Maps link or \"lat, lng\".", code="bad_location", status_code=400)
+        return Response({"lat": found[0], "lng": found[1]})
 
     @action(detail=True, methods=["post"], url_path="pin")
     def pin(self, request, pk=None):

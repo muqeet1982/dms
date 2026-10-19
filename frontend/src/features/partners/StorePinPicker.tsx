@@ -23,6 +23,16 @@ export function StorePinPicker({ lat, lng, name, onChange }: {
   const find = async () => {
     const text = q.trim() || name || "";
     if (text.length < 3) return toast.error("Type an address or a landmark to search for.");
+    // a pasted Google Maps link or bare "lat, lng" is a location, not a search term
+    if (/maps|goo\.gl|g\.co|^-?\d{1,3}\.\d+\s*[, ]\s*-?\d{1,3}\.\d+$/.test(text)) {
+      setBusy(true);
+      try {
+        const r = await api.post("/api/v1/customers/parse-location", { text });
+        put(r.lat, r.lng);
+        toast.success("Pin set from the link");
+      } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+      return;
+    }
     setBusy(true);
     try {
       const r = await api.get("/api/v1/geofences/search", { q: text });
@@ -38,7 +48,7 @@ export function StorePinPicker({ lat, lng, name, onChange }: {
     <div className="mb-2">
       <div className="d-flex flex-wrap gap-2 mb-2">
         <div className="input-group" style={{ maxWidth: 420 }}>
-          <input className="form-control" placeholder="Search an address or landmark" value={q} onChange={(e) => setQ(e.target.value)}
+          <input className="form-control" placeholder="Search an address — or paste a Google Maps link or lat, lng" value={q} onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); find(); } }} />
           <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={find}><i className="ti ti-search" /></button>
         </div>

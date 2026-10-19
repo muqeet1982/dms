@@ -225,7 +225,7 @@ class TenantUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TenantMembership
-        fields = ["id", "user_id", "email", "phone", "full_name", "is_active", "user_type", "is_owner", "status", "roles", "role_names", "warehouses", "last_login", "joined_at", "password", "send_invite", "supplier_rep", "rep_for_supplier", "rep_name"]
+        fields = ["id", "user_id", "email", "phone", "full_name", "is_active", "user_type", "is_owner", "status", "roles", "role_names", "warehouses", "login_surface", "last_login", "joined_at", "password", "send_invite", "supplier_rep", "rep_for_supplier", "rep_name"]
         read_only_fields = ["id", "is_owner", "joined_at"]
 
     def __init__(self, *args, **kwargs):

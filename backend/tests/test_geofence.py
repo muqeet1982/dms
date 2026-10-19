@@ -26,6 +26,10 @@ def field(api, tenant):
     with tenant_context(tenant, tenant.owner):
         from apps.partners.models import Customer, GeoFence, GeoFenceRep, SupplierRep
 
+        # this file proves the AREA machinery, which lives behind a setting since the owner's 19 Oct 2026
+        # switch to shop-proximity — the shop rule has its own tests in test_rep_order_edit.py
+        tenant.settings = {**(tenant.settings or {}), "order_location_rule": "area"}
+        tenant.save(update_fields=["settings"])
         rep = SupplierRep.objects.create(supplier=supplier, code="R-1", name="Area Rep")
         customer.gps_lat, customer.gps_lng = Decimal(str(GULBERG[0])), Decimal(str(GULBERG[1]))
         customer.save(update_fields=["gps_lat", "gps_lng"])

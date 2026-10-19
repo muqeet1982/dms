@@ -96,6 +96,9 @@ class TenantMembership(models.Model):
     status = models.CharField(max_length=10, choices=STATUS, default="active")
     groups = models.ManyToManyField(Group, blank=True, related_name="memberships")
     supplier_rep = models.OneToOneField("partners.SupplierRep", null=True, blank=True, on_delete=models.SET_NULL, related_name="membership")
+    # where this login may sign in: the mobile app, the web, or both (the owner sets it per user)
+    LOGIN_SURFACES = [("both", "App and web"), ("app", "Mobile app only"), ("web", "Web only")]
+    login_surface = models.CharField(max_length=4, choices=LOGIN_SURFACES, default="both")
     joined_at = models.DateTimeField(auto_now_add=True)
     permissions_version = models.PositiveIntegerField(default=1)
 
