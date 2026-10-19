@@ -307,6 +307,9 @@ class CustomerVisit(TenantModel):
         ("price_issue", "Price or scheme problem"),
         ("quality_issue", "Complaint about the product"),
         ("other", "Something else"),
+        # the app closes a call the rep walked away from (next day, or checking in elsewhere) — filterable,
+        # so "walked away" is never mistaken for "not interested"
+        ("no_outcome", "Walked away without recording"),
     ]
 
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="visits")

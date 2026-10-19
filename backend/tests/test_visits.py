@@ -438,3 +438,26 @@ def test_a_rep_can_sell_to_a_shop_the_office_has_not_approved_yet(rep_app):
         "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 3}],
     }, format="json")
     assert order.status_code == 201, order.content
+
+
+def test_a_walked_away_call_is_filterable_not_disguised_as_something_else(rep_app):
+    """The app closes a call the rep abandoned (next day, or checking in elsewhere). `no_outcome` keeps that
+    distinguishable from "not interested" — prose in a note cannot be filtered on."""
+    r = _check_in(rep_app, no_order_reason="no_outcome", client_id="walked-1",
+                  closed_at=timezone.now().isoformat(),
+                  note="Left on an earlier day without recording an outcome; closed by the app.")
+    assert r.status_code in (200, 201, 202), r.content
+
+    reasons = [x["value"] for x in rep_app["phone"].get("/ext/v1/my-areas").data["visit"]["reasons"]]
+    assert "no_outcome" in reasons, "the app renders the server's own list, so the value must be published"
+
+
+def test_areas_leave_the_rep_payload_under_the_shop_rule(rep_app, tenant):
+    """The owner retired employee area geofencing: under shop_proximity my-areas sends no areas at all,
+    and a company switched back to area mode gets them again for the offline gate."""
+    assert rep_app["phone"].get("/ext/v1/my-areas").data["areas"] == []
+
+    with tenant_context(tenant, tenant.owner):
+        tenant.settings = {**(tenant.settings or {}), "order_location_rule": "area"}
+        tenant.save(update_fields=["settings"])
+    assert len(rep_app["phone"].get("/ext/v1/my-areas").data["areas"]) >= 1

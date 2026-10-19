@@ -808,7 +808,10 @@ class ExtMyAreasView(ExtBase):
             "visit": visit_policy(tenant),
             # the shop kinds a new customer may be given — the app renders these rather than shipping a copy
             "customer_types": [{"value": v, "label": label} for v, label in Customer.TYPES],
-            "areas": [{
+            # the owner retired employee area geofencing (19 Oct 2026): under shop_proximity nothing a rep
+            # does involves an area, so none are sent; a company switched back to "area" gets them again,
+            # because the app's offline gate needs the polygons
+            "areas": [] if (tenant.setting("order_location_rule") if tenant else "shop") == "shop" else [{
                 "id": str(f.id), "name": f.name, "type": f.type, "colour": f.colour,
                 "centre": {"lat": float(f.centre_lat), "lng": float(f.centre_lng)} if f.centre_lat is not None else None,
                 "radius_m": f.radius_m, "points": f.points, "area_km2": area_km2(f),
