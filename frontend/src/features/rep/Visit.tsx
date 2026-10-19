@@ -110,22 +110,20 @@ export function VisitCard({ visit, required }: { visit: Visit; required?: boolea
     reader.onload = () => visit.setPhoto(String(reader.result));
     reader.readAsDataURL(f);
   };
-  const tone = visit.inside === true ? "success" : visit.inside === false ? "danger" : "secondary";
+  // the owner's rules (20 Oct 2026): areas say nothing to a rep, and "at the shop" is a state EARNED by
+  // checking in — never claimed from a GPS fix. This strip states position facts only.
+  const tone = visit.status === "ok" ? "success" : visit.status === "denied" ? "warning" : "secondary";
   return (
     <div className={`card mb-3 border-${tone}`}><div className="card-body py-2">
       <div className="d-flex flex-wrap align-items-center gap-3">
         <div className="flex-grow-1">
           <div className="fs-13 fw-medium">
             {visit.status === "locating" && <><i className="ti ti-current-location me-1 text-primary" />Finding where you are…</>}
-            {visit.status === "denied" && <><i className="ti ti-map-pin-off me-1 text-warning" />Location is off — turn it on so the order counts for your area</>}
-            {visit.status === "ok" && visit.inside === true && <><i className="ti ti-circle-check me-1 text-success" />You are inside {visit.areaName}</>}
-            {visit.status === "ok" && visit.inside === false && <><i className="ti ti-alert-triangle me-1 text-danger" />
-              {visit.distance_m ? `${(visit.distance_m / 1000).toFixed(1)} km outside ${visit.areaName}` : `Outside ${visit.areaName || "your area"}`}</>}
-            {visit.status === "ok" && visit.inside === null && <><i className="ti ti-map-pin me-1 text-muted" />Location ready</>}
+            {visit.status === "denied" && <><i className="ti ti-map-pin-off me-1 text-warning" />Location is off — turn it on so your visit and orders are recorded properly</>}
+            {visit.status === "ok" && <><i className="ti ti-map-pin me-1 text-success" />Location is on</>}
           </div>
           <div className="fs-11 text-muted">
             {visit.gps ? `${visit.gps.lat.toFixed(5)}, ${visit.gps.lng.toFixed(5)}${visit.accuracy ? ` · ±${visit.accuracy} m` : ""}` : "no location yet"}
-            {visit.inside === false && visit.areas?.policy === "block" && " · orders here will be refused"}
           </div>
         </div>
         {visit.status !== "ok" && <button className="btn btn-sm btn-outline-primary" onClick={visit.locate}><i className="ti ti-refresh me-1" />Try again</button>}
