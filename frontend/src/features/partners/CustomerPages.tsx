@@ -18,6 +18,24 @@ import { StorePinPicker } from "./StorePinPicker";
 
 const TYPES = [{ value: "retailer", label: "Retailer" }, { value: "salon", label: "Salon" }, { value: "wholesaler", label: "Wholesaler" }, { value: "lmt", label: "LMT" }, { value: "other", label: "Other" }];
 
+function LocationsEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
+  const row = (r: any, i: number, patch: any) => { const next = [...value]; next[i] = { ...r, ...patch }; onChange(next); };
+  return (
+    <div>
+      {value.map((r, i) => (
+        <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={i}>
+          <input className="form-control form-control-sm" style={{ width: 180 }} placeholder="Shop name *" value={r.name ?? ""} onChange={(e) => row(r, i, { name: e.target.value })} />
+          <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Address" value={r.address ?? ""} onChange={(e) => row(r, i, { address: e.target.value })} />
+          <input className="form-control form-control-sm" style={{ width: 260 }} placeholder="Maps link or lat, lng" value={r.map_url ?? (r.gps_lat ? `${r.gps_lat}, ${r.gps_lng}` : "")} onChange={(e) => row(r, i, { map_url: e.target.value, gps_lat: null, gps_lng: null })} />
+          <input type="number" className="form-control form-control-sm" style={{ width: 90 }} placeholder="radius m" value={r.order_radius_m ?? ""} onChange={(e) => row(r, i, { order_radius_m: e.target.value })} />
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => onChange(value.filter((_, j) => j !== i))}><i className="ti ti-trash" /></button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => onChange([...value, { name: "", address: "", map_url: "", order_radius_m: "" }])}><i className="ti ti-plus me-1" />Add Shop</button>
+    </div>
+  );
+}
+
 export function CustomersPage() {
   const stats = useQuery({ queryKey: ["customer-stats"], queryFn: () => api.get("/api/v1/customers/stats") });
   const { can } = usePerms();
@@ -102,6 +120,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
       </> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
     { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "how close a rep must be to order here" },
+    { ...sec("Where they are", "ti-map-pin"), name: "locations_write", label: "More shops of this customer", type: "custom", col: "col-md-12", default: [],
+      hint: "a multi-shop account: orders can be taken at any of these; each delivery goes to the shop the order was taken at",
+      render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
 
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", hint: "co-funded total % (match a Settings → Discount contributions row); defaults onto invoices, changeable there", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
@@ -132,7 +153,7 @@ export function CustomerFormPage() {
     <>
       <PageHeader title={id ? `Edit ${q.data?.name}` : "New customer"} crumbs={[{ label: "Customers", to: "/app/customers" }, { label: id ? "Edit" : "New" }]} />
       <div className="card"><div className="card-body">
-        <ResourceForm fields={customerFields(can)} initial={q.data} onCancel={() => nav(-1)}
+        <ResourceForm fields={customerFields(can)} initial={q.data ? { ...q.data, locations_write: (q.data.locations || []).map((l: any) => ({ name: l.name, address: l.address, gps_lat: l.gps_lat, gps_lng: l.gps_lng, order_radius_m: l.order_radius_m ?? "" })) } : q.data} onCancel={() => nav(-1)}
           onSubmit={async (v) => { const r = id ? await api.patch(`/api/v1/customers/${id}`, v) : await api.post("/api/v1/customers", v); toast.success("Saved"); nav(`/app/customers/${r.id}`); }} />
       </div></div>
     </>

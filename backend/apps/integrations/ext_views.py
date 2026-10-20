@@ -211,6 +211,14 @@ class ExtOrdersView(ExtBase):
                 customer = CustomerService.create({"name": c.get("name") or c["phone"], "phone": c["phone"], "address": c.get("address", ""), "type": c.get("type", "retailer")}, rep=rep)
         if customer is None:
             raise DomainError("Customer not found or not assigned to you.", status_code=404)
+        # which of the account's shops: the app's explicit pick, else wherever the rep is standing
+        location = None
+        if d.get("location_id"):
+            location = customer.locations.filter(pk=d["location_id"], is_active=True).first()
+            if location is None:
+                raise DomainError("That shop does not belong to this customer.", code="bad_location", status_code=400)
+        else:
+            location = GeoFenceService.nearest_location(customer, d.get("gps"))
         # the owner's shift rule: no shift started, no order submitted; on a break, come back first
         if rep is not None and get_current_tenant() and get_current_tenant().setting("require_shift_for_orders"):
             from apps.partners.shifts import ShiftService
@@ -247,7 +255,7 @@ class ExtOrdersView(ExtBase):
         if want_photo == "required" and not photos and rep is not None:
             raise DomainError("Take a photo of the shop to submit this order.", code="photo_required", status_code=400)
         source = "api" if getattr(request, "api_key", None) else "rep_app"
-        order = OrderService.create(customer=customer, lines=lines, source=source, rep=rep, supplier=supplier, requested_delivery_date=d.get("requested_delivery_date"), notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), allow_override=False)
+        order = OrderService.create(customer=customer, lines=lines, source=source, rep=rep, supplier=supplier, location=location, requested_delivery_date=d.get("requested_delivery_date"), notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), allow_override=False)
         GeoFenceService.link(rep, "order", order)
         where = coords(d.get("gps"))
         # the position the order was taken at is kept on the order itself, not just checked and dropped
@@ -364,7 +372,7 @@ class ExtCustomersView(ExtBase):
         show_outstanding = has_tenant_perm(request, "external.view_customer_outstanding") or has_tenant_perm(request, "customers.view_customer_ledger")
         rows = []
         for c in qs[:2000]:
-            row = {"id": str(c.id), "code": c.code, "name": c.name, "type": c.type, "phone": c.phone, "address": c.address, "city": c.city, "gps": c.gps, "order_radius_m": c.order_radius_m, "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None, "status": c.status, "is_blocked": c.is_blocked, "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days, "price_list": c.price_list.name if c.price_list_id else None, "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at}
+            row = {"id": str(c.id), "code": c.code, "name": c.name, "type": c.type, "phone": c.phone, "address": c.address, "city": c.city, "gps": c.gps, "order_radius_m": c.order_radius_m, "locations": [{"id": str(l.id), "name": l.name, "address": l.address, "gps": l.gps, "order_radius_m": l.order_radius_m} for l in c.locations.filter(is_active=True)], "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None, "status": c.status, "is_blocked": c.is_blocked, "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days, "price_list": c.price_list.name if c.price_list_id else None, "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at}
             if show_outstanding:
                 row["outstanding"] = str(CustomerService.outstanding(c))
                 row["overdue"] = str(CustomerService.overdue(c))

@@ -532,3 +532,45 @@ def test_a_new_shop_needs_its_ntn_or_cnic(rep_app, api, tenant):
         "gps": {"lat": GULBERG[0], "lng": GULBERG[1]},
     }, format="json")
     assert ok.status_code == 201, ok.content
+
+
+def test_a_multi_shop_customer_can_be_sold_at_any_of_its_shops(rep_app, tenant):
+    """
+    One account, several shops (21 Oct 2026): the at-the-shop check passes at ANY of the account's pins
+    (each with its own radius), the order records WHICH shop it was taken at, and that shop is where the
+    delivery goes. An account with no extra locations behaves exactly as before.
+    """
+    from apps.partners.models import CustomerLocation
+
+    c = rep_app["customer"]
+    with tenant_context(tenant, tenant.owner):
+        branch = CustomerLocation.objects.create(customer=c, name="Johar Town Branch", address="Block G1",
+                                                 gps_lat="31.4712", gps_lng="74.2795", order_radius_m=80)
+
+    def order_at(lat, lng, extra=None):
+        return rep_app["phone"].post("/ext/v1/orders", {
+            "customer": {"id": str(c.id)}, "gps": {"lat": lat, "lng": lng, "accuracy_m": 8.0},
+            "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}], **(extra or {}),
+        }, format="json")
+
+    # at the second shop — far from the account's own pin — the order passes and names the branch
+    at_branch = order_at(31.4712, 74.2795)
+    assert at_branch.status_code == 201, at_branch.content
+    assert at_branch.data["location_name"] == "Johar Town Branch"
+
+    # at the account's own pin it still passes, with no location stamped
+    at_main = order_at(GULBERG[0], GULBERG[1])
+    assert at_main.status_code == 201 and not at_main.data["location_name"]
+
+    # between the two shops: refused, with the distance to the nearest one
+    nowhere = order_at(31.50, 74.31)
+    assert nowhere.status_code == 403 and nowhere.data["type"] == "outside_area"
+
+    # an explicit pick that is not this customer's shop is refused by name
+    bad = order_at(31.4712, 74.2795, {"location_id": "01a00000-0000-7000-8000-000000000000"})
+    assert bad.status_code == 400 and bad.data["type"] == "bad_location"
+
+    # the rep's customer rows carry the shops, so the app can offer the pick and gate offline
+    row = next(x for x in rep_app["phone"].get("/ext/v1/customers").data["results"] if x["id"] == str(c.id))
+    assert [l["name"] for l in row["locations"]] == ["Johar Town Branch"]
+    assert row["locations"][0]["order_radius_m"] == 80

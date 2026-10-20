@@ -76,7 +76,7 @@ thead{display:table-header-group}
     <td class="r">{{ s.note.order.number }} &middot; {{ tenant.base_currency }} {{ s.order_total }}</td>
   </tr></table></div>
   <div class="who">
-    <strong>{{ s.note.customer.address|default:"—" }}</strong><br>
+    <strong>{% if s.note.order.location %}{{ s.note.order.location.name }}{% if s.note.order.location.address %} — {{ s.note.order.location.address }}{% endif %}{% else %}{{ s.note.customer.address|default:"—" }}{% endif %}</strong><br>
     <span class="muted">{{ s.note.customer.code }}
       &middot; {{ s.note.customer.phone|default:"no phone" }}{% if s.note.customer.alt_mobile %} / {{ s.note.customer.alt_mobile }}{% endif %}
       {% if s.note.customer.contact_person %}&middot; ask for {{ s.note.customer.contact_person }}{% endif %}

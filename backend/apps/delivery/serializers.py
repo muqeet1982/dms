@@ -88,7 +88,14 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     order_total = serializers.DecimalField(source="order.total", max_digits=18, decimal_places=4, read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     customer_phone = serializers.CharField(source="customer.phone", read_only=True)
-    customer_address = serializers.CharField(source="customer.address", read_only=True)
+    customer_address = serializers.SerializerMethodField()
+
+    def get_customer_address(self, obj):
+        # a multi-shop account's goods go to the SHOP the order was taken at, not the head office
+        loc = obj.order.location if obj.order_id else None
+        if loc is not None:
+            return f"{loc.name} — {loc.address}" if loc.address else loc.name
+        return obj.customer.address
     customer_gps = serializers.SerializerMethodField()
     gps = serializers.SerializerMethodField()   # where the driver was when the stop was signed for
     trip_number = serializers.CharField(source="trip.number", read_only=True, default="")

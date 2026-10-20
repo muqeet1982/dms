@@ -127,7 +127,7 @@ class OrderService:
     # ---------------------------------------------------------------- create
     @staticmethod
     @transaction.atomic
-    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None):
+    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None, location=None):
         tenant = get_current_tenant()
         PlanLimitService.check(tenant, "max_orders_month")
         if rep is None:
@@ -147,7 +147,7 @@ class OrderService:
         if discount_pct is None:
             # every new order records its % explicitly: the customer's standing rate, or 0 when switched off
             discount_pct = Decimal(str(customer.default_discount_pct or 0)) if apply_customer_discount else Decimal("0")
-        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, status="draft" if source == "staff" and not auto_confirm else "submitted")
+        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, location=location, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, status="draft" if source == "staff" and not auto_confirm else "submitted")
         OrderService.write_lines(order, lines, allow_override)
         if not order.lines.exists():
             raise DomainError("Order has no valid lines.")

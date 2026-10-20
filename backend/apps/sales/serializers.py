@@ -78,6 +78,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     trip_number = serializers.CharField(source="trip.number", read_only=True, default="")
     delivery_status = serializers.SerializerMethodField()
     delivery_state = serializers.SerializerMethodField()
+    location_name = serializers.CharField(source="location.name", read_only=True, default="")
 
     def get_delivery_state(self, obj):
         """The dispatch stage as a code — "", "on_trip" or "out_for_delivery" — for counting, not reading.
@@ -111,7 +112,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "location", "location_name", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):

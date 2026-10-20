@@ -98,6 +98,49 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
     rep_names = serializers.SerializerMethodField()
     # a pasted Google Maps link (short links included) or "lat, lng" — becomes the shop's pin
     map_url = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # a multi-shop account's other places: read as `locations`, written whole via `locations_write`
+    locations = serializers.SerializerMethodField()
+    locations_write = serializers.ListField(child=serializers.DictField(), write_only=True, required=False)
+
+    def get_locations(self, obj):
+        return [{"id": str(l.id), "name": l.name, "address": l.address, "city": l.city,
+                 "gps_lat": l.gps_lat, "gps_lng": l.gps_lng, "order_radius_m": l.order_radius_m,
+                 "is_active": l.is_active} for l in obj.locations.all()]
+
+    def _save_locations(self, customer, rows):
+        from .maplink import parse_location
+        from .models import CustomerLocation
+
+        customer.locations.all().delete()
+        for r in rows:
+            name = str(r.get("name") or "").strip()
+            if not name:
+                continue
+            lat, lng = r.get("gps_lat"), r.get("gps_lng")
+            if (lat in (None, "") or lng in (None, "")) and r.get("map_url"):
+                found = parse_location(r["map_url"])
+                if found:
+                    lat, lng = found
+            CustomerLocation.objects.create(
+                customer=customer, name=name[:120], address=str(r.get("address") or ""), city=str(r.get("city") or "")[:80],
+                gps_lat=lat or None, gps_lng=lng or None,
+                order_radius_m=int(r["order_radius_m"]) if str(r.get("order_radius_m") or "").strip().isdigit() else None,
+                is_active=r.get("is_active", True) in (True, "true", 1, "1"),
+            )
+
+    def create(self, validated_data):
+        rows = validated_data.pop("locations_write", None)
+        obj = super().create(validated_data)
+        if rows is not None:
+            self._save_locations(obj, rows)
+        return obj
+
+    def update(self, instance, validated_data):
+        rows = validated_data.pop("locations_write", None)
+        obj = super().update(instance, validated_data)
+        if rows is not None:
+            self._save_locations(obj, rows)
+        return obj
 
     def validate(self, attrs):
         attrs = super().validate(attrs) if hasattr(super(), "validate") else attrs
@@ -119,7 +162,7 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Customer
-        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "map_url", "order_radius_m", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "gps_lat", "gps_lng", "map_url", "order_radius_m", "locations", "locations_write", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
         read_only_fields = ["id", "requested_by_rep", "created_at", "updated_at"]
         extra_kwargs = {"code": {"required": False, "allow_blank": True}}
 

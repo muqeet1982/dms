@@ -155,6 +155,33 @@ class Customer(TenantModel):
         return {"lat": self.gps_lat, "lng": self.gps_lng} if self.gps_lat is not None else None
 
 
+class CustomerLocation(TenantModel):
+    """
+    One shop of a multi-shop customer (21 Oct 2026). The Customer stays the ACCOUNT — who owes, credit,
+    NTN/CNIC, discount, sale persons — and locations are its places: each with a name, its own pin and its
+    own order radius. A customer with no rows here behaves exactly as before (its own pin is the shop).
+    """
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="locations")
+    name = models.CharField(max_length=120)
+    address = models.TextField(blank=True)
+    city = models.CharField(max_length=80, blank=True)
+    gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    order_radius_m = models.PositiveIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.customer_id} · {self.name}"
+
+    @property
+    def gps(self):
+        return {"lat": float(self.gps_lat), "lng": float(self.gps_lng)} if self.gps_lat is not None else None
+
+
 class GeoFence(TenantModel):
     """
     A working area on the map, drawn once and handed to the reps who cover it.

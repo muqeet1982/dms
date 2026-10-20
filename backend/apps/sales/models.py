@@ -16,6 +16,8 @@ class SalesOrder(DocumentModel):
     ]
     OPEN_STATUSES = ["submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered"]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="orders")
+    # which of the customer's shops this order was taken at (multi-shop accounts); null = the customer's own pin
+    location = models.ForeignKey("partners.CustomerLocation", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
     supplier = models.ForeignKey("partners.Supplier", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders", help_text="Manufacturer whose rep raised the order")
     rep = models.ForeignKey("partners.SupplierRep", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
     source = models.CharField(max_length=10, choices=SOURCES, default="staff")

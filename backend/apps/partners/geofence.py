@@ -287,6 +287,32 @@ class GeoFenceService:
         return (tenant.setting("geofence_policy") if tenant else "off") or "off"
 
     @staticmethod
+    def shop_pins(customer, tenant=None):
+        """Every place this account can be sold at: [(location|None, (lat, lng), radius_m)] — the customer's
+        own pin plus its active locations, each with its own radius falling back to the company's."""
+        from apps.core.tenancy import get_current_tenant
+
+        tenant = tenant or get_current_tenant()
+        default_r = int(tenant.setting("order_proximity_m") or 50) if tenant else 50
+        pins = []
+        if customer.gps_lat is not None and customer.gps_lng is not None:
+            pins.append((None, (float(customer.gps_lat), float(customer.gps_lng)), int(customer.order_radius_m or default_r)))
+        for loc in customer.locations.filter(is_active=True):
+            if loc.gps_lat is not None:
+                pins.append((loc, (float(loc.gps_lat), float(loc.gps_lng)), int(loc.order_radius_m or default_r)))
+        return pins
+
+    @staticmethod
+    def nearest_location(customer, gps, tenant=None):
+        """Which of the account's shops the rep is standing at (or closest to) — for stamping the order."""
+        point = coords(gps)
+        pins = GeoFenceService.shop_pins(customer, tenant)
+        if point is None or not pins:
+            return None
+        best = min(pins, key=lambda p: distance_m(point, p[1]))
+        return best[0]
+
+    @staticmethod
     def check(*, rep, gps, action, customer=None, document=None, user=None, enforce=True):
         """
         The guard the rest of the system calls. It records what it saw and, under a blocking policy, refuses.
@@ -315,8 +341,10 @@ class GeoFenceService:
 
         if rule == "shop" and action in ("order", "collection") and customer is not None:
             # the owner's rule since 19 Oct 2026: the gate is the SHOP, not an assigned area — the rep must be
-            # standing at the customer's pin (within order_proximity_m, stretched by the fix's own accuracy)
-            if customer.gps_lat is None or customer.gps_lng is None:
+            # standing at one of the customer's pins (a multi-shop account passes at ANY of its shops, each
+            # measured with its own radius), stretched by the fix's own accuracy
+            pins = GeoFenceService.shop_pins(customer, tenant)
+            if not pins:
                 # a shop with no pin cannot be measured against — record that it went unchecked, never refuse
                 where = {"fence": None, "distance_m": None}
                 verdict, ok = "skipped", True
@@ -324,11 +352,15 @@ class GeoFenceService:
                 where = {"fence": None, "distance_m": None}
                 verdict, ok = "no_fix", not (policy == "block" and require_fix)
             else:
-                accuracy = (gps or {}).get("accuracy_m") if isinstance(gps, dict) else None
-                d = int(distance_m(point, (float(customer.gps_lat), float(customer.gps_lng))))
-                radius = int(customer.order_radius_m or tenant.setting("order_proximity_m") or 50) + min(int(float(accuracy or 0)), 50)
-                where = {"fence": None, "distance_m": d}
-                verdict, ok = ("inside", True) if d <= radius else ("outside", policy != "block")
+                accuracy = min(int(float(((gps or {}).get("accuracy_m") if isinstance(gps, dict) else None) or 0)), 50)
+                best_d, inside = None, False
+                for _loc, pin, radius in pins:
+                    d = int(distance_m(point, pin))
+                    best_d = d if best_d is None or d < best_d else best_d
+                    if d <= radius + accuracy:
+                        inside = True
+                where = {"fence": None, "distance_m": best_d}
+                verdict, ok = ("inside", True) if inside else ("outside", policy != "block")
         else:
             fences = list(GeoFenceService.fences_for(rep))
             if not fences:
