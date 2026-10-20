@@ -33,7 +33,7 @@ export function CustomersPage() {
         {(c.alt_mobile || c.landline) && <div className="text-muted fs-11">{[c.alt_mobile, c.landline].filter(Boolean).join(" · ")}</div>}
         {c.contact_person && <div className="text-muted fs-11">{c.contact_person}</div>}</>
     ) },
-    { key: "city", header: "City / route", render: (c) => <>{c.city || "—"}<div className="text-muted fs-11">{[c.territory_name, c.route_name].filter(Boolean).join(" · ")}</div></> },
+    { key: "city", header: "City", render: (c) => c.city || "—" },
     { key: "rep_names", header: "Sale person", render: (c) => c.rep_names?.join(", ") || <span className="text-muted">—</span> },
     { key: "outstanding", header: "Outstanding", num: true, render: (c) => (
       <><span className={Number(c.outstanding) > Number(c.credit_limit) && Number(c.credit_limit) > 0 ? "text-danger fw-semibold" : Number(c.outstanding) > 0 ? "fw-semibold" : "text-muted"}>{money(c.outstanding, 0)}</span>
@@ -43,7 +43,7 @@ export function CustomersPage() {
   ];
   return (
     <ListPage title="Customers" endpoint="/api/v1/customers" columns={cols} rowLink={(c) => `/app/customers/${c.id}`} page="customers" createTo="/app/customers/new" createLabel="Add customer" defaultOrdering="name" searchPlaceholder="Search name, code, phone, address…"
-      filters={[{ name: "assigned_reps", label: "Sale person", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r: any) => ({ id: r.id, label: r.name, sub: r.supplier_name }) }, { name: "type", label: "Type", type: "select", options: TYPES }, { name: "status", label: "Status", type: "select", options: ["active", "pending", "blocked", "inactive"].map((s) => ({ value: s, label: s })) }, { name: "territory", label: "Territory", type: "entity", endpoint: "/api/v1/territories", mapOption: (t) => ({ id: t.id, label: t.name }) }, { name: "route", label: "Route", type: "entity", endpoint: "/api/v1/routes", mapOption: (r) => ({ id: r.id, label: r.name }) }]}
+      filters={[{ name: "assigned_reps", label: "Sale person", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r: any) => ({ id: r.id, label: r.name, sub: r.supplier_name }) }, { name: "type", label: "Type", type: "select", options: TYPES }, { name: "status", label: "Status", type: "select", options: ["active", "pending", "blocked", "inactive"].map((s) => ({ value: s, label: s })) }]}
       actions={<button className="btn btn-outline-success" onClick={() => api.download("/api/v1/exports/customers", "customers.csv")}><i className="ti ti-file-type-csv me-1" />Export</button>}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Total" value={stats.data.total} icon="ti-users" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Active" value={stats.data.active} icon="ti-user-check" color="success" /></div><div className="col-6 col-md-3"><StatCard label="Pending approval" value={stats.data.pending} icon="ti-user-question" color="warning" /></div><div className="col-6 col-md-3"><StatCard label="Blocked" value={stats.data.blocked} icon="ti-user-off" color="danger" /></div></div>} />
   );
@@ -88,16 +88,20 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
 
     { ...sec("Where they are", "ti-map-pin"), name: "address", label: "Shop address", type: "textarea", col: "col-md-6" },
     { ...sec("Where they are", "ti-map-pin"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "territory", label: "Territory", type: "entity", endpoint: "/api/v1/territories", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3" },
-    { ...sec("Where they are", "ti-map-pin"), name: "route", label: "Delivery route", type: "entity", endpoint: "/api/v1/routes", mapOption: (r) => ({ id: r.id, label: r.name, sub: r.territory_name }), col: "col-md-3" },
     { ...sec("Where they are", "ti-map-pin"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       hint: "the shop only shows in these reps' app and portal — without one, no rep can see it or order for it",
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin on the map", type: "custom", col: "col-md-12",
-      render: (v, _set, values, setField) => <StorePinPicker lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "Longitude", type: "number", col: "col-md-3", icon: "ti-map-pin", hint: "set by the map above" },
-    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", hint: "how close a rep must be to order here — blank = company rule (50 m)" },
+      render: (v, _set, values, setField) => <>
+        <StorePinPicker lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} />
+        <div className="row mt-2">
+          <div className="col-md-3"><label className="form-label fs-13">Latitude</label><input type="number" step="0.0000001" className="form-control" value={v ?? ""} onChange={(e) => setField("gps_lat", e.target.value === "" ? null : Number(e.target.value))} /></div>
+          <div className="col-md-3"><label className="form-label fs-13">Longitude</label><input type="number" step="0.0000001" className="form-control" value={values.gps_lng ?? ""} onChange={(e) => setField("gps_lng", e.target.value === "" ? null : Number(e.target.value))} /></div>
+        </div>
+      </> },
+    { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
+    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "how close a rep must be to order here" },
 
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", hint: "co-funded total % (match a Settings → Discount contributions row); defaults onto invoices, changeable there", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
     { ...sec("Prices, credit & discount", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
@@ -168,7 +172,7 @@ export function CustomerDetailPage() {
       <div className="row g-3 mb-3">
         <div className="col-6 col-md-4"><StatCard label="Outstanding" value={money(c.outstanding, 0)} icon="ti-receipt" color={Number(c.outstanding) > 0 ? "warning" : "success"} /></div>
         <div className="col-6 col-md-4"><StatCard label="Credit limit" value={money(c.credit_limit, 0)} icon="ti-credit-card" color="primary" sub={`${c.credit_days} credit days`} /></div>
-        <div className="col-6 col-md-4"><StatCard label="Territory" value={c.territory_name || "—"} icon="ti-map-pin" color="secondary" sub={c.route_name} /></div>
+        <div className="col-6 col-md-4"><StatCard label="Sale Person" value={(c.rep_names || []).join(", ") || "—"} icon="ti-user-star" color="secondary" /></div>
       </div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3">
         <InfoItem label="Code">{c.code}</InfoItem><InfoItem label="Type">{titleCase(c.type)}</InfoItem><InfoItem label="Contact">{c.contact_person || "—"}<div className="fs-12 text-muted">{c.phone} {c.phone2} {c.email}</div></InfoItem><InfoItem label="Address">{c.address || "—"}<div className="fs-12 text-muted">{c.city}</div></InfoItem>
