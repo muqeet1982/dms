@@ -28,7 +28,7 @@ COMPANY_FIELDS = ["legal_name", "display_name", "address", "city", "phone", "ema
 # Free-form company/document options kept in Tenant.settings
 SETTINGS_KEYS = {
     "invoice_footer": "", "quote_footer": "", "po_footer": "", "bank_details": "", "contact_person": "", "support_phone": "",
-    "registration_no": "", "license_no": "", "default_credit_days": 0, "min_shelf_life_days": 0, "allow_negative_stock": False,
+    "registration_no": "", "license_no": "", "default_credit_days": 45, "min_shelf_life_days": 0, "allow_negative_stock": False,
     "price_change_policy": "flag", "require_delivery_otp": False, "whatsapp": "", "facebook": "", "instagram": "", "linkedin": "",
     # field work: the rules the rep app is held to (see apps/partners/geofence.py)
     "geofence_policy": "block", "geofence_require_location": True, "order_location_rule": "shop", "order_proximity_m": 50, "rep_order_photo": "optional", "rep_visit_photo": "required",

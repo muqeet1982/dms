@@ -169,6 +169,9 @@ class Tenant(models.Model):
         # once every app in the field sends `gps` on orders and collections — until then it would lock out the
         # ones that do not, and a missing fix would be the easy way around the rule.
         "geofence_require_location": True,
+        # a new invoice falls due this many days after its date when the customer has no credit days of
+        # their own (owner's figure, 20 Oct 2026)
+        "default_credit_days": 45,
         # where an order (or collection) may be taken: "shop" = at the customer's pin (the owner's rule since
         # 19 Oct 2026, within order_proximity_m), "area" = inside the rep's assigned working areas
         "order_location_rule": "shop",

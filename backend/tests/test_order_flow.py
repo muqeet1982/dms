@@ -169,3 +169,23 @@ def test_a_confirmed_order_is_still_editable_until_the_warehouse_starts(api, ten
     assert api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json").status_code == 201
     late = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "1"}]}, format="json")
     assert late.status_code in (400, 422) and "load form" in late.data["detail"], late.content
+
+
+def test_an_invoice_falls_due_in_45_days_unless_the_customer_has_terms(api, tenant):
+    """The owner's figure: no credit days on the customer means 45 days, not due-on-issue."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    assert not cust.credit_days, "the fixture customer carries no terms of its own"
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+    api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert inv["due_date"] == str(timezone.localdate() + timedelta(days=45)), inv["due_date"]
