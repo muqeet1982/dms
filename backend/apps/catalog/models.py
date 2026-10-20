@@ -134,6 +134,8 @@ class Product(TenantModel):
     # the product's own standing discount, applied on every sales line of this product (editable per line);
     # deliberately separate from the customer's co-funded discount — the manufacturer does not co-fund it
     discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))  # T.P — trade price (what we charge salons / retailers)
+    # the standard discount only bites from this many units on a line (owner's rule, 21 Oct 2026); 0 = always
+    discount_min_qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0"))
     retail_price = models.DecimalField(**MONEY)  # R.P — retail price / MRP printed for the end consumer
     price_effective_date = models.DateField(null=True, blank=True, help_text="Date of the price list these prices came from")
     min_stock = models.DecimalField(**QTY)
@@ -254,3 +256,37 @@ class Scheme(TenantModel):
 
     def __str__(self):
         return self.name
+
+
+class ProductOffer(TenantModel):
+    """
+    A dated discount on one product: % off from min_qty units, between two dates inclusive. While an offer
+    matches (date in window, line qty at the minimum), it REPLACES the product's standard discount — the
+    owner's rule, 21 Oct 2026. Several matching offers resolve to the best one for the customer.
+    """
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="offers")
+    discount_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    min_qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0"))
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["start_date"]
+
+    def matches(self, qty, on):
+        return self.is_active and self.start_date <= on <= self.end_date and qty >= self.min_qty
+
+
+def product_discount_for(product, qty, on_date=None):
+    """The % this line earns: the best matching dated offer, else the standard % once qty reaches its minimum."""
+    from django.utils import timezone
+
+    on = on_date or timezone.localdate()
+    offered = [o.discount_pct for o in product.offers.all() if o.matches(qty, on)]
+    if offered:
+        return max(offered)
+    if product.discount_pct and qty >= (product.discount_min_qty or 0):
+        return product.discount_pct
+    return Decimal("0")

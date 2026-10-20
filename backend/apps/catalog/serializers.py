@@ -94,6 +94,15 @@ class VariantSkuMixin:
 
 class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
     product_discount_pct = serializers.DecimalField(source="product.discount_pct", max_digits=6, decimal_places=3, read_only=True)
+    product_discount_min_qty = serializers.DecimalField(source="product.discount_min_qty", max_digits=14, decimal_places=3, read_only=True)
+    product_offers = serializers.SerializerMethodField()
+
+    def get_product_offers(self, obj):
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        return [{"discount_pct": str(o.discount_pct), "min_qty": str(o.min_qty), "start_date": o.start_date, "end_date": o.end_date}
+                for o in obj.product.offers.all() if o.is_active and o.end_date >= today]
     packagings = PackagingSerializer(many=True, read_only=True)
     barcodes = BarcodeSerializer(many=True, read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
@@ -110,13 +119,52 @@ class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
 
     class Meta:
         model = ProductVariant
-        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "packagings", "barcodes", "stock_on_hand"]
+        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "product_discount_min_qty", "product_offers", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "packagings", "barcodes", "stock_on_hand"]
         read_only_fields = ["id", "avg_cost"]
         extra_kwargs = {"product": {"required": False}}
 
 
 class ProductSerializer(serializers.ModelSerializer):
     variants = ProductVariantSerializer(many=True, read_only=True)
+    # dated offers: [{discount_pct, min_qty, start_date, end_date}] — writing replaces the whole set
+    offers = serializers.SerializerMethodField()
+    offers_write = serializers.ListField(child=serializers.DictField(), write_only=True, required=False)
+
+    def get_offers(self, obj):
+        return [{"id": str(o.id), "discount_pct": str(o.discount_pct), "min_qty": str(o.min_qty),
+                 "start_date": o.start_date, "end_date": o.end_date, "is_active": o.is_active} for o in obj.offers.all()]
+
+    def _save_offers(self, product, rows):
+        from decimal import Decimal, InvalidOperation
+
+        from django.utils.dateparse import parse_date
+
+        from .models import ProductOffer
+
+        product.offers.all().delete()
+        for r in rows:
+            try:
+                pct = Decimal(str(r.get("discount_pct") or 0))
+                start, end = parse_date(str(r.get("start_date") or "")), parse_date(str(r.get("end_date") or ""))
+                if pct <= 0 or start is None or end is None or end < start:
+                    continue
+                ProductOffer.objects.create(product=product, discount_pct=pct, min_qty=Decimal(str(r.get("min_qty") or 0)), start_date=start, end_date=end)
+            except (InvalidOperation, ValueError):
+                continue
+
+    def create(self, validated_data):
+        rows = validated_data.pop("offers_write", None)
+        product = super().create(validated_data)
+        if rows is not None:
+            self._save_offers(product, rows)
+        return product
+
+    def update(self, instance, validated_data):
+        rows = validated_data.pop("offers_write", None)
+        product = super().update(instance, validated_data)
+        if rows is not None:
+            self._save_offers(product, rows)
+        return product
     brand_name = serializers.CharField(source="brand.name", read_only=True, default="")
     category_name = serializers.CharField(source="category.name", read_only=True, default="")
     supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
@@ -128,7 +176,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
+        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "discount_min_qty", "offers", "offers_write", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
         extra_kwargs = {"sku": {"required": False}}
 

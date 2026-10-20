@@ -39,6 +39,9 @@ def _order_dispatched(order, **_):
 
 @on("order.delivered")
 def _order_delivered(order, **_):
+    # the office hears a delivery too, not just the rep — the owner reads these in the bell (21 Oct 2026)
+    notify_permission("delivery.view_all_trips", "delivery.completed", f"Delivered: {order.number}",
+                      f"{order.customer.name} · {order.total:.2f}", {"order_id": str(order.id), "screen": "order"})
     u = _rep_user(order)
     if u:
         notify(u, "delivery.completed", f"Order {order.number} delivered", f"{order.customer.name}", {"order_id": str(order.id), "screen": "order"})

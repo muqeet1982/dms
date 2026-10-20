@@ -78,8 +78,9 @@ export function OrderDetailPage() {
   const o = q.data;
   if (!o) return null;
   // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
+  // a confirmed order is the owner's to change, nobody else's — the server refuses anyone else too
   const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status)
-    || (o.status === "confirmed" && !(o.delivery_notes || []).length && !(o.invoices || []).length);
+    || (o.status === "confirmed" && Boolean(isOwner) && !(o.delivery_notes || []).length && !(o.invoices || []).length);
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   return (
     <>
@@ -196,7 +197,7 @@ export function OrderFormPage() {
     if (!valid.length) return toast.error("Add at least one line");
     setSaving(true);
     try {
-      const body = { ...form, warehouse: form.warehouse || null, confirm, discount_pct: form.discount_pct === "" ? null : form.discount_pct, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
+      const body = { ...form, warehouse: form.warehouse || null, confirm, discount_pct: form.discount_pct === "" ? null : form.discount_pct, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct === undefined || l.product_discount_pct === "" ? undefined : l.product_discount_pct, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/sales-orders/${id}`, body) : await api.post("/api/v1/sales-orders", body, true);
       toast.success(id ? "Order updated" : "Order created");
       nav(`/app/sales/orders/${r.id}`);
@@ -214,7 +215,7 @@ export function OrderFormPage() {
           <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.order_date} onChange={(e) => setForm({ ...form, order_date: e.target.value })} /></Field>
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
-        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} />
+        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1, in_stock: 1 }} />
         <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
           <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />
         </Field>

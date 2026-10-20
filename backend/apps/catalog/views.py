@@ -159,6 +159,8 @@ class VariantViewSet(TenantModelViewSet):
 
     def get_queryset(self):
         qs = ProductVariant.objects.select_related("product", "product__brand", "product__category", "product__base_uom").prefetch_related("packagings", "barcodes")
+        if self.request.query_params.get("in_stock") == "1":
+            qs = qs.annotate(_onhand=Sum("stock_levels__qty_on_hand")).filter(_onhand__gt=0)
         if self.request.query_params.get("with_stock") == "1":
             qs = qs.annotate(stock_on_hand=Sum("stock_levels__qty_on_hand"))
         # `for_supplier` is the purchase-order line search: this supplier's products, *plus* anything nobody has

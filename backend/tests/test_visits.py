@@ -374,7 +374,7 @@ def test_a_retried_new_shop_is_one_shop(rep_app):
     The app queues a new shop and retries a lost connection. Without an idempotency key that is two shops,
     two codes and two ledgers for one shopkeeper — which is what the mobile team measured.
     """
-    body = {"name": "Naya Beauty Centre", "type": "retailer", "phone": "03001234567",
+    body = {"name": "Naya Beauty Centre", "type": "retailer", "phone": "03001234567", "cnic": "35202-1234567-1",
             "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 9.0}}
     first = rep_app["phone"].post("/ext/v1/customers", body, format="json", HTTP_IDEMPOTENCY_KEY="newshop-1")
     assert first.status_code == 201, first.content
@@ -427,7 +427,7 @@ def test_the_shop_a_rep_cannot_find_in_search_is_found_before_it_is_duplicated(r
 def test_a_rep_can_sell_to_a_shop_the_office_has_not_approved_yet(rep_app):
     """A rep adds a shop and takes its first order on the same visit — only `blocked` stops a sale."""
     new = rep_app["phone"].post("/ext/v1/customers", {
-        "name": "First Order Shop", "type": "retailer",
+        "name": "First Order Shop", "type": "retailer", "cnic": "35202-1234567-1",
         "gps": {"lat": GULBERG[0], "lng": GULBERG[1]},
     }, format="json")
     assert new.status_code == 201 and new.data["status"] == "pending"

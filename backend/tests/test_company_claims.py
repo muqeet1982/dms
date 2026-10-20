@@ -275,3 +275,33 @@ def test_a_wrong_invoice_is_cancelled_and_its_delivery_billed_again_with_the_dis
     assert second["id"] != first["id"] and second["status"] == "posted"
     assert Decimal(second["discount_pct"]) == Decimal("10")
     assert Decimal(second["discount"]) == (Decimal(second["subtotal"]) * Decimal("10") / 100).quantize(Decimal(second["discount"]))
+
+
+def test_discounts_allowed_carries_only_the_distributors_share(tenant):
+    """
+    The owner's rule (21 Oct 2026): "Discounts Allowed is Trafco's head — only its own points land there."
+    A 5% invoice (distributor 3 + company 2) debits Discounts Allowed 3% of the sale; the company's 2%
+    debits the Distribution Margin head, which the claim journal credits straight back — so that head nets
+    zero, the receivable carries the manufacturer's debt, and netting it off minuses the trade payable.
+    """
+    from apps.core.tenancy import tenant_context
+
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        _posted_invoice(tenant, cust, v, pct="5")   # base 1000, discount 50 = own 30 + funded 20
+        disc_d, disc_c = _role_bal_doc("discount", "sales_invoice")
+        assert disc_d == Decimal("30"), (disc_d, disc_c)
+        inc_d, inc_c = _role_bal("manufacturer_incentive")
+        assert (inc_d, inc_c) == (Decimal("20"), Decimal("20")), "funded share in and claimed out — nets zero"
+        assert _role_bal("manufacturer_claim")[0] == Decimal("20")
+
+
+def _role_bal_doc(role, doc_type):
+    from apps.accounting.models import JournalLine
+    from apps.accounting.services import account_for
+
+    acct = account_for(role, doc_type)
+    agg = JournalLine.objects.filter(account=acct, entry__status="posted").aggregate(d=Sum("debit"), c=Sum("credit"))
+    return (agg["d"] or Decimal("0"), agg["c"] or Decimal("0"))

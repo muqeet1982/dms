@@ -189,3 +189,20 @@ def test_an_invoice_falls_due_in_45_days_unless_the_customer_has_terms(api, tena
     made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     assert inv["due_date"] == str(timezone.localdate() + timedelta(days=45)), inv["due_date"]
+
+
+def test_a_product_with_nothing_available_cannot_be_put_on_an_order(api, tenant):
+    """The owner's rule: zero stock = not addable at all; a partial shortage still holds at confirmation."""
+    from apps.catalog.models import Product, ProductVariant
+
+    from apps.core.tenancy import tenant_context
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        bare = Product.objects.create(name="Ghost Shampoo", sku="GHOST-1", base_uom=v.product.base_uom, tax_class=v.product.tax_class)
+        ghost = ProductVariant.objects.create(product=bare, name="Ghost Shampoo", sku="GHOST-1-V")
+
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id),
+                                          "lines": [{"variant": str(ghost.id), "qty": "1"}]}, format="json")
+    assert r.status_code in (400, 422), r.content
+    assert "out of stock" in r.data["detail"], r.data

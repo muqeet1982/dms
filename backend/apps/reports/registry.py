@@ -39,6 +39,7 @@ REPORTS = {
     "returns_to_supplier": {"title": "Returns to supplier", "area": "purchasing", "params": DATE_RANGE, "query": ops.returns_to_supplier, "perm": OPS},
     # ---- inventory
     "stock_summary": {"title": "Stock summary (in stock / dispatched / delivered)", "area": "inventory", "params": WAREHOUSE, "query": ops.stock_summary, "perm": OPS},
+    "stock_report": {"title": "Stock report (opening / purchase / issuance / wastage / return / closing)", "area": "inventory", "params": DATE_RANGE + [{"name": "category", "type": "category"}, {"name": "search", "type": "text"}, {"name": "show_zero", "type": "checkbox"}], "query": ops.stock_report, "perm": OPS},
     "stock_ledger": {"title": "Stock ledger per item", "area": "inventory", "params": DATE_RANGE + WAREHOUSE + [{"name": "variant", "type": "variant"}], "query": ops.stock_ledger, "perm": OPS},
     "movement_summary": {"title": "Movement summary by type", "area": "inventory", "params": DATE_RANGE + WAREHOUSE, "query": ops.movement_summary, "perm": OPS},
     "stock_valuation": {"title": "Stock valuation", "area": "inventory", "params": WAREHOUSE, "query": ops.stock_valuation, "perm": "inventory.view_valuation"},

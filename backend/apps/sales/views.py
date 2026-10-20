@@ -89,7 +89,7 @@ class SalesOrderViewSet(DocumentViewSet):
         return qs
 
     def _lines(self, lines):
-        return [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l.get("unit_price"), "discount_pct": l.get("discount_pct", 0), "price_per_packaging": l.get("price_per_packaging", False)} for l in lines]
+        return [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l.get("unit_price"), "discount_pct": l.get("discount_pct", 0), "product_discount_pct": l.get("product_discount_pct"), "price_per_packaging": l.get("price_per_packaging", False)} for l in lines]
 
     def perform_create(self, serializer):
         d = serializer.validated_data
@@ -109,6 +109,9 @@ class SalesOrderViewSet(DocumentViewSet):
         m = self.request.membership
         if not order.is_editable:
             raise DomainError(f"Order in status {order.status} cannot be edited.")
+        # the owner's rule (21 Oct 2026): a confirmed order is the owner's to change, nobody else's
+        if order.status == "confirmed" and not m.is_owner:
+            raise DomainError("Only the owner can change a confirmed order.", status_code=403)
         d = serializer.validated_data
         lines = d.pop("lines", None)
         can_override = m.has_perm("sales.override_price") or m.is_owner
@@ -352,7 +355,8 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
     def pdf(self, request, pk=None):
         inv = self.get_object()
         lines = list(inv.lines.select_related("variant__product", "batch").order_by("sequence"))
-        return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines}, inv.number,
+        extra = InvoiceService.present_lines(inv, lines)
+        return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number,
                           title="SALES INVOICE", ref=inv.number)
 
     @action(detail=True, methods=["post"])

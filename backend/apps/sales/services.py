@@ -96,15 +96,27 @@ class OrderService:
         order.lines.all().delete()
         # the order's discount % applies to lines that carry no discount of their own
         default_pct = OrderService.effective_discount_pct(order)
+        from apps.inventory.services import StockService
+
         for i, l in enumerate(lines):
             packaging = l.get("packaging")
             qty = _base_qty(l["qty"], packaging)
             if qty <= 0:
                 continue
+            # the owner's rule (21 Oct 2026): a product with nothing available cannot be put on an order at
+            # all — a PARTIAL shortage still goes to on_hold_stock at confirmation, where the office decides
+            if order.warehouse_id and StockService.available(l["variant"], order.warehouse) <= 0:
+                raise DomainError(f"{l['variant'].name} is out of stock — it cannot be added to an order.", code="out_of_stock", status_code=400)
             req = l.get("unit_price")
             if req is not None and l.get("price_per_packaging") and packaging:
                 req = Decimal(req) / packaging.qty_in_base
-            SalesOrderLine.objects.create(order=order, variant=l["variant"], packaging=packaging, qty_ordered=qty, requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"), discount_pct=l.get("discount_pct", 0) or 0, product_discount_pct=l.get("product_discount_pct", l["variant"].product.discount_pct) or 0, sequence=i)
+            prod_pct = l.get("product_discount_pct")
+            if prod_pct is None:
+                # the product's own rule decides: dated offer first, else the standard % from its minimum qty
+                from apps.catalog.models import product_discount_for
+
+                prod_pct = product_discount_for(l["variant"].product, qty, order.order_date)
+            SalesOrderLine.objects.create(order=order, variant=l["variant"], packaging=packaging, qty_ordered=qty, requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"), discount_pct=l.get("discount_pct", 0) or 0, product_discount_pct=prod_pct or 0, sequence=i)
         if default_pct:
             for line in order.lines.all():
                 if not line.discount_pct:
@@ -620,27 +632,24 @@ class InvoiceService:
         return inv
 
     @staticmethod
-    def _raise_company_claims(inv):
+    def company_shares(inv):
         """
-        After an invoice posts, recover the manufacturer's share of its discount. The co-funded total % is
-        inv.discount_pct; the DiscountContribution row for it gives the company's percentage points of the sale.
-        Each line's share of the discount actually given is attributed to that product's manufacturer, so one
-        invoice can raise several claims — one per manufacturer. Nothing is raised when no co-funding applies.
+        The manufacturer-funded part of this invoice's discount, per supplier, from the DiscountContribution
+        row for inv.discount_pct. The invoice posting and the claim journals both read THIS, so the split in
+        Discounts Allowed can never drift from what is actually claimed.
         """
         from collections import defaultdict
 
-        from apps.accounting.services import PostingService
+        from .models import DiscountContribution
 
-        from .models import CompanyClaim, CompanyClaimLine, DiscountContribution
-
+        groups = defaultdict(list)  # supplier_id -> [(supplier, line, company_amount)]
         if not inv.discount_pct or inv.discount_pct <= 0:
-            return
+            return groups
         row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
         if row is None or row.company_pct <= 0 or row.total_pct <= 0:
-            return
+            return groups
         # the company funds its percentage points OF THE SALE (5% = 3 + 2): its share is base x company%,
         # so a product's own discount (not co-funded) never inflates the claim
-        groups = defaultdict(list)  # supplier_id -> (supplier, [(line, company_amount)])
         for line in inv.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
             if line.discount_amount <= 0:
                 continue
@@ -651,13 +660,51 @@ class InvoiceService:
             company_amt = q4(q4(line.qty * line.unit_price) * row.company_pct / 100)
             if company_amt <= 0:
                 continue
-            groups.setdefault(supplier.id, (supplier, []))[1].append((line, company_amt))
-        for supplier, items in groups.values():
-            total = sum((amt for _, amt in items), Decimal("0"))
+            groups[supplier.pk].append((supplier, line, company_amt))
+        return groups
+
+    @staticmethod
+    def present_lines(inv, lines):
+        """
+        How the printed invoice reads (owner's rule, 21 Oct 2026): a line's Discount column carries only the
+        product's OWN discount; the customer-level % appears once, after the subtotal — never inside the
+        item lines. Display amounts add the customer part back, so the column sums to the subtotal that the
+        discount row is then taken from, and the page still checks with a pencil.
+        """
+        customer_part = Decimal("0")
+        for l in lines:
+            prod = q4(q4(l.qty * l.unit_price) * (l.product_discount_pct or 0) / 100)
+            prod = min(prod, l.discount_amount or Decimal("0"))
+            cust = (l.discount_amount or Decimal("0")) - prod
+            l.prod_discount = prod
+            l.display_amount = (l.line_total or Decimal("0")) + cust
+            customer_part += cust
+        return {"customer_discount": q4(customer_part), "display_subtotal": q4((inv.total or Decimal("0")) + customer_part)}
+
+    @staticmethod
+    def _raise_company_claims(inv):
+        """
+        After an invoice posts, recover the manufacturer's share of its discount. Each line's share is
+        attributed to that product's manufacturer, so one invoice can raise several claims. Nothing is
+        raised when no co-funding applies.
+        """
+        from apps.accounting.services import PostingService
+
+        from .models import CompanyClaim, CompanyClaimLine
+
+        from .models import DiscountContribution
+
+        groups = InvoiceService.company_shares(inv)
+        if not groups:
+            return
+        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
+        for items in groups.values():
+            supplier = items[0][0]
+            total = sum((amt for _, _, amt in items), Decimal("0"))
             if total <= 0:
                 continue
             claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=row.company_pct, total=total)
-            for line, amt in items:
+            for _, line, amt in items:
                 CompanyClaimLine.objects.create(claim=claim, variant=line.variant, qty=line.qty, base_amount=q4(line.qty * line.unit_price), company_amount=amt)
             claim.journal = PostingService.post_company_claim(claim)
             claim.save(update_fields=["journal"])

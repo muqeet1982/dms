@@ -161,7 +161,20 @@ class PostingService:
         gross = inv.subtotal
         lines.append(Line(account_for("sales", "sales_invoice"), credit=gross, description=f"Sales {inv.number}", cost_centre=inv.cost_centre))
         if inv.discount:
-            lines.append(Line(account_for("discount", "sales_invoice"), debit=inv.discount, description=f"Discount {inv.number}"))
+            # the owner's rule (21 Oct 2026): Discounts Allowed carries ONLY the distributor's own share of
+            # the discount (total% − company% from the discount table). The manufacturer-funded remainder
+            # debits the Distribution Margin head, which the claim journal credits right back — so that head
+            # shows the funded flow, the distributor's P&L bears only its own points, and the claim
+            # receivable carries the manufacturer's debt until the payable is netted or a receipt arrives.
+            from apps.sales.services import InvoiceService
+
+            funded = sum((amt for items in InvoiceService.company_shares(inv).values() for _, _, amt in items), Decimal("0"))
+            funded = min(funded, inv.discount)
+            own = inv.discount - funded
+            if own > 0:
+                lines.append(Line(account_for("discount", "sales_invoice"), debit=own, description=f"Discount {inv.number} — own share"))
+            if funded > 0:
+                lines.append(Line(account_for("manufacturer_incentive", "company_claim"), debit=funded, description=f"Discount {inv.number} — manufacturer share"))
         for idx, (amt, tt) in enumerate([(inv.tax1_total, inv.tax1_type), (inv.tax2_total, inv.tax2_type)]):
             if amt:
                 acct = (tt.output_account if tt and tt.output_account_id else None) or account_for(f"tax{idx + 1}_out", "sales_invoice")

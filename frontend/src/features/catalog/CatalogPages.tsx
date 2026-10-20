@@ -45,7 +45,10 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "supplier", label: "Supplier (manufacturer)", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }), col: "col-md-3" }, { name: "base_uom", label: "Base unit", type: "entity", endpoint: "/api/v1/uoms", mapOption: (u) => ({ id: u.id, label: `${u.code} — ${u.name}` }), required: true, col: "col-md-3" },
   { name: "unit_size", label: "Unit / size", col: "col-md-3", placeholder: "60ml, 1L, 500g, pcs" }, { name: "packing", label: "Units per box", type: "number", col: "col-md-3", default: 1, hint: "How many units in one box / carton" }, { name: "box_upc", label: "Box UPC (barcode on the box)", col: "col-md-3", hint: "One scan = one box", inputMode: "numeric", autoComplete: "off", showIf: (v) => Number(v.packing) > 1 }, { name: "location", label: "Location (rack / shelf / bin)", type: "custom", col: "col-md-3", render: (v, set) => <LocationField value={v || null} onChange={set} /> }, { name: "tax_class", label: "Tax class", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3" },
   { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: "T.P — trade price", type: "money", col: "col-md-3", default: 0 }, { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
-  { name: "discount_pct", label: "Product discount %", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "always applied on this product's sales lines (changeable per line); separate from the customer's co-funded discount", validate: (v: any) => (Number(v) > 100 ? "Cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
+  { name: "discount_pct", label: "Product discount %", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "applies on this product's sales lines once the minimum quantity is reached; separate from the customer's co-funded discount", validate: (v: any) => (Number(v) > 100 ? "Cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
+  { name: "discount_min_qty", label: "Discount from (qty)", type: "number", col: "col-md-2", default: 0, hint: "0 = always" },
+  { name: "offers_write", label: "Dated offers (override the standard discount while they match)", type: "custom", col: "col-md-12", default: [],
+    render: (v: any, set: any) => <OffersEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
   ...(isNew
     ? ([{ name: "opening_qty", label: "Opening quantity", type: "number", col: "col-md-3", hint: "Stock already on hand — posted as an opening movement" },
         { name: "opening_warehouse", label: "Opening stock warehouse", type: "entity", endpoint: "/api/v1/settings/warehouses", mapOption: (w: any) => ({ id: w.id, label: w.name, sub: w.code }), col: "col-md-3", hint: "blank = the location's warehouse / main" },
@@ -56,6 +59,27 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "min_stock", label: "Min stock", type: "number", col: "col-md-3", default: 0 }, { name: "max_stock", label: "Max stock", type: "number", col: "col-md-3", default: 0 }, { name: "reorder_qty", label: "Reorder qty", type: "number", col: "col-md-3", default: 0 }, { name: "shelf_life_days", label: "Shelf life (days)", type: "number", col: "col-md-3" },
   { name: "is_batch_tracked", label: "Batch (lot) tracked", type: "checkbox", col: "col-md-3", hint: "Stock is held per batch (lot) number, and movements have to say which batch. On a goods receipt a blank batch falls back to the supplier challan number." }, { name: "is_expiry_tracked", label: "Expiry tracked", type: "checkbox", col: "col-md-3", hint: "Receiving this product will insist on the expiry date from the carton, and the near-expiry alerts, the expiry report and first-expiry-first-out picking all read it." }, { name: "description", label: "Description", type: "textarea", col: "col-md-9" },
 ];
+
+function OffersEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
+  const row = (r: any, i: number, patch: any) => { const next = [...value]; next[i] = { ...r, ...patch }; onChange(next); };
+  return (
+    <div>
+      {value.map((r, i) => (
+        <div className="d-flex gap-2 align-items-center mb-1" key={i}>
+          <input type="number" step="0.01" className="form-control form-control-sm" style={{ width: 90 }} placeholder="%" value={r.discount_pct ?? ""} onChange={(e) => row(r, i, { discount_pct: e.target.value })} />
+          <span className="fs-12 text-muted">% from</span>
+          <input type="number" className="form-control form-control-sm" style={{ width: 90 }} placeholder="qty" value={r.min_qty ?? ""} onChange={(e) => row(r, i, { min_qty: e.target.value })} />
+          <span className="fs-12 text-muted">qty ·</span>
+          <input type="date" className="form-control form-control-sm" style={{ width: 150 }} value={r.start_date ?? ""} onChange={(e) => row(r, i, { start_date: e.target.value })} />
+          <span className="fs-12 text-muted">to</span>
+          <input type="date" className="form-control form-control-sm" style={{ width: 150 }} value={r.end_date ?? ""} onChange={(e) => row(r, i, { end_date: e.target.value })} />
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => onChange(value.filter((_, j) => j !== i))}><i className="ti ti-trash" /></button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => onChange([...value, { discount_pct: "", min_qty: "0", start_date: "", end_date: "" }])}><i className="ti ti-plus me-1" />Add Offer</button>
+    </div>
+  );
+}
 
 export function ProductsPage() {
   const productsPage = usePage("products");
@@ -86,7 +110,7 @@ export function ProductFormPage() {
     <>
       <PageHeader title={id ? `Edit ${q.data?.name}` : "New product"} crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: id ? "Edit" : "New" }]} />
       <div className="card"><div className="card-body">
-        <ResourceForm fields={productFields(!id)} initial={q.data} onCancel={() => nav(-1)} onSubmit={async (v) => { const r = id ? await api.patch(`/api/v1/products/${id}`, v) : await api.post("/api/v1/products", v); toast.success("Saved"); nav(`/app/catalog/products/${r.id}`); }} />
+        <ResourceForm fields={productFields(!id)} initial={q.data ? { ...q.data, offers_write: (q.data.offers || []).map((o: any) => ({ discount_pct: o.discount_pct, min_qty: o.min_qty, start_date: o.start_date, end_date: o.end_date })) } : q.data} onCancel={() => nav(-1)} onSubmit={async (v) => { const r = id ? await api.patch(`/api/v1/products/${id}`, v) : await api.post("/api/v1/products", v); toast.success("Saved"); nav(`/app/catalog/products/${r.id}`); }} />
         {!id && <div className="form-text mt-2">A default variant, base packaging and barcodes can be added on the product page after saving. For shade/size variants add them there too.</div>}
       </div></div>
     </>

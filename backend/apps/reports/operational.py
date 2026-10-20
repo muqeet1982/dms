@@ -548,3 +548,85 @@ def customers_without_area(**_):
                      "reps": ", ".join(r.name for r in c.assigned_reps.all())})
     return {"columns": ["customer", "code", "city", "route", "territory", "why", "reps"], "rows": rows,
             "totals": {"count": str(len(rows)), "no_pin": str(sum(1 for r in rows if r["why"] == "No pin on the map"))}}
+
+
+def q2(v):
+    from decimal import Decimal
+
+    return Decimal(v).quantize(Decimal("0.01"))
+
+
+def stock_report(date_from=None, date_to=None, category=None, search=None, show_zero=None, **_):
+    """
+    The owner's stock report (21 Oct 2026, modelled on his InvoiceFlow screen): one row per product with the
+    period's story in quantities AND values — opening, purchased, issued, wastage, returns, closing — valued
+    at each movement's own cost (opening at the running average).
+    """
+    from collections import defaultdict
+    from decimal import Decimal
+
+    from django.utils import timezone
+
+    from apps.inventory.models import StockMovement
+
+    start = date_from or timezone.localdate().replace(day=1)
+    end = date_to or timezone.localdate()
+    IN_BUCKETS = {"grn": "purchase", "transfer_in": "purchase"}
+    OUT_BUCKETS = {"sale_dispatch": "issue", "transfer_out": "issue", "wastage": "wastage", "adjustment": "wastage",
+                   "count_variance": "wastage", "grn_cancelled": "wastage"}
+    RETURN_BUCKETS = {"sales_return": "return", "delivery_return": "return", "purchase_return": "return"}
+
+    qs = StockMovement.objects.select_related("variant__product__category").filter(occurred_at__date__lte=end)
+    if category:
+        qs = qs.filter(variant__product__category_id=category)
+    if search:
+        qs = qs.filter(variant__product__name__icontains=search) | qs.filter(variant__sku__icontains=search)
+
+    per = defaultdict(lambda: defaultdict(Decimal))
+    names, prices = {}, {}
+    for m in qs:
+        key = m.variant_id
+        names[key] = m.variant.product.name if m.variant.name == m.variant.product.name else m.variant.name
+        prices[key] = m.unit_cost or prices.get(key) or Decimal("0")
+        value = (m.qty or 0) * (m.unit_cost or 0)
+        if m.occurred_at.date() < start:
+            per[key]["opening_qty"] += m.qty
+            per[key]["opening_value"] += value
+            continue
+        bucket = IN_BUCKETS.get(m.movement_type) or OUT_BUCKETS.get(m.movement_type) or RETURN_BUCKETS.get(m.movement_type)
+        if m.movement_type == "opening":
+            per[key]["opening_qty"] += m.qty
+            per[key]["opening_value"] += value
+        elif bucket == "purchase":
+            per[key]["purchase_qty"] += m.qty
+            per[key]["purchase_value"] += value
+        elif bucket == "issue":
+            per[key]["issue_qty"] += -m.qty
+            per[key]["issue_value"] += -value
+        elif bucket == "wastage":
+            per[key]["wastage_qty"] += -m.qty
+            per[key]["wastage_value"] += -value
+        elif bucket == "return":
+            per[key]["return_qty"] += m.qty
+            per[key]["return_value"] += value
+
+    rows = []
+    for key, b in sorted(per.items(), key=lambda kv: names.get(kv[0], "")):
+        closing_qty = b["opening_qty"] + b["purchase_qty"] + b["return_qty"] - b["issue_qty"] - b["wastage_qty"]
+        closing_value = b["opening_value"] + b["purchase_value"] + b["return_value"] - b["issue_value"] - b["wastage_value"]
+        if not show_zero and all(not b[f] for f in ("opening_qty", "purchase_qty", "issue_qty", "wastage_qty", "return_qty")):
+            continue
+        rows.append({
+            "item": names.get(key, ""), "price": str(prices.get(key) or 0),
+            "opening_qty": str(b["opening_qty"]), "opening_value": str(q2(b["opening_value"])),
+            "purchase_qty": str(b["purchase_qty"]), "purchase_value": str(q2(b["purchase_value"])),
+            "issue_qty": str(b["issue_qty"]), "issue_value": str(q2(b["issue_value"])),
+            "wastage_qty": str(b["wastage_qty"]), "wastage_value": str(q2(b["wastage_value"])),
+            "return_qty": str(b["return_qty"]), "return_value": str(q2(b["return_value"])),
+            "closing_qty": str(closing_qty), "closing_value": str(q2(closing_value)),
+        })
+    totals = {f: str(q2(sum(Decimal(r[f]) for r in rows))) for f in
+              ("opening_value", "purchase_value", "issue_value", "wastage_value", "return_value", "closing_value")}
+    return {"columns": ["item", "price", "opening_qty", "opening_value", "purchase_qty", "purchase_value",
+                        "issue_qty", "issue_value", "wastage_qty", "wastage_value", "return_qty", "return_value",
+                        "closing_qty", "closing_value"], "rows": rows, "totals": totals}

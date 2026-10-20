@@ -910,7 +910,10 @@ class ExtOrderPdfView(ExtBase):
             if inv is None:
                 return Response({"type": "no_invoice", "detail": f"{o.number} has no invoice yet."}, status=404)
             lines = list(inv.lines.select_related("variant__product", "batch"))
-            return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines}, inv.number, title="SALES INVOICE", ref=inv.number)
+            from apps.sales.services import InvoiceService
+
+            extra = InvoiceService.present_lines(inv, lines)
+            return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number, title="SALES INVOICE", ref=inv.number)
         lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
         for l in lines:
             l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
