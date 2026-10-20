@@ -570,7 +570,63 @@ def test_a_multi_shop_customer_can_be_sold_at_any_of_its_shops(rep_app, tenant):
     bad = order_at(31.4712, 74.2795, {"location_id": "01a00000-0000-7000-8000-000000000000"})
     assert bad.status_code == 400 and bad.data["type"] == "bad_location"
 
-    # the rep's customer rows carry the shops, so the app can offer the pick and gate offline
-    row = next(x for x in rep_app["phone"].get("/ext/v1/customers").data["results"] if x["id"] == str(c.id))
-    assert [l["name"] for l in row["locations"]] == ["Johar Town Branch"]
-    assert row["locations"][0]["order_radius_m"] == 80
+    # the rep's shop rows are FLAT — the branch rides as its own row under the same account
+    rows = rep_app["phone"].get("/ext/v1/customers").data["results"]
+    branch_row = next(x for x in rows if x["name"] == "Johar Town Branch")
+    assert branch_row["account"]["id"] == str(c.id) and branch_row["order_radius_m"] == 80
+
+
+def test_the_flattened_shop_rows_and_the_shops_own_history(rep_app, api, tenant):
+    """
+    The app team's design (21 Oct 2026): one row per SHOP. The account's own pin keeps the customer's id
+    (nothing on a phone breaks); branches ride as their own rows carrying the account. A branch id works
+    wherever a customer id did — and the shop's history shows every order whoever took it.
+    """
+    from apps.partners.models import CustomerLocation
+
+    c = rep_app["customer"]
+    with tenant_context(tenant, tenant.owner):
+        branch = CustomerLocation.objects.create(customer=c, name="Branch Two", address="Market Rd",
+                                                 gps_lat="31.4712", gps_lng="74.2795", order_radius_m=80)
+
+    rows = rep_app["phone"].get("/ext/v1/customers").data["results"]
+    mine = [r for r in rows if r["account"]["id"] == str(c.id)]
+    assert {r["id"] for r in mine} == {str(c.id), str(branch.id)}, "two rows: the account's own shop and the branch"
+    assert all(r["account"]["location_count"] == 2 for r in mine)
+    branch_row = next(r for r in mine if r["id"] == str(branch.id))
+    assert branch_row["name"] == "Branch Two" and branch_row["order_radius_m"] == 80
+
+    # ordering AT the branch using the branch row's id as the customer — old payload shape, new meaning
+    made = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(branch.id)},
+        "gps": {"lat": 31.4712, "lng": 74.2795, "accuracy_m": 8.0},
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}],
+    }, format="json")
+    assert made.status_code == 201, made.content
+    assert made.data["location_name"] == "Branch Two"
+
+    # an office order for the account, then the shop history shows both, labelled and gated
+    from apps.sales.services import OrderService
+
+    with tenant_context(tenant, tenant.owner):
+        OrderService.create(customer=c, lines=[{"variant": rep_app["variant"], "qty": Decimal("2"), "unit_price": None}], source="staff", rep=None)
+    hist = rep_app["phone"].get(f"/ext/v1/customers/{c.id}/orders").data["results"]
+    kinds = {r["taken_by"]["kind"] for r in hist}
+    assert "self" in kinds and "office" in kinds
+    own = next(r for r in hist if r["taken_by"]["kind"] == "self")
+    office = next(r for r in hist if r["taken_by"]["kind"] == "office")
+    assert own["can_open"] is True
+    # the office order carries this rep as sale person, so its detail is visible to them — openable, not editable
+    assert office["can_open"] is True
+
+    # the branch's own history is only the branch's orders
+    only_branch = rep_app["phone"].get(f"/ext/v1/customers/{branch.id}/orders").data["results"]
+    assert [r["id"] for r in only_branch] == [made.data["id"]]
+
+    # a branch of an existing account skips the NTN rule and lands under the account
+    added = rep_app["phone"].post("/ext/v1/customers", {
+        "name": "Branch Three", "parent_customer_id": str(c.id),
+        "map_url": "31.4800, 74.2900",
+    }, format="json")
+    assert added.status_code == 201, added.content
+    assert added.data["account"]["id"] == str(c.id) and added.data["account"]["location_count"] == 3

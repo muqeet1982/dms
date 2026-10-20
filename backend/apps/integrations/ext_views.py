@@ -137,6 +137,20 @@ class ExtBase(APIView):
                           "price_per_packaging": bool(packaging and l.get("unit_price") is not None)})
         return lines
 
+    def resolve_shop(self, request, cid):
+        """A row id from the flattened list — the account's own id or a branch's — to (customer, location)."""
+        if not cid:
+            return None, None
+        c = self.customers_qs(request).filter(pk=cid).first()
+        if c is not None:
+            return c, None
+        from apps.partners.models import CustomerLocation
+
+        loc = CustomerLocation.objects.filter(pk=cid, is_active=True).select_related("customer").first() if _is_uuid(str(cid)) else None
+        if loc is not None and self.customers_qs(request).filter(pk=loc.customer_id).exists():
+            return loc.customer, loc
+        return None, None
+
     def log_usage(self, request, status_code):
         key = getattr(request, "api_key", None)
         if key is not None:
@@ -175,7 +189,11 @@ class ExtOrdersView(ExtBase):
         if p.get("status"):
             qs = qs.filter(status__in=p["status"].split(","))
         if p.get("customer"):
-            qs = qs.filter(customer_id=p["customer"])
+            cust, loc = self.resolve_shop(request, p["customer"])
+            if loc is not None:
+                qs = qs.filter(location=loc)
+            else:
+                qs = qs.filter(customer_id=p["customer"])
         if p.get("external_ref"):
             qs = qs.filter(external_ref=p["external_ref"])
         orders = list(qs.order_by("-created_at")[: int(p.get("limit", 100))])
@@ -199,9 +217,10 @@ class ExtOrdersView(ExtBase):
             rep = SupplierRep.objects.filter(supplier=supplier, code=d["rep_code"]).first()
         # resolve customer
         c = d.get("customer") or {}
-        customer = None
+        customer, picked_location = None, None
         if c.get("id"):
-            customer = self.customers_qs(request).filter(pk=c["id"]).first()
+            # the flattened list means the app's "customer" id may name a BRANCH — that names the shop too
+            customer, picked_location = self.resolve_shop(request, c["id"])
         elif c.get("code"):
             customer = self.customers_qs(request).filter(code=c["code"]).first()
         elif c.get("phone"):
@@ -211,13 +230,14 @@ class ExtOrdersView(ExtBase):
                 customer = CustomerService.create({"name": c.get("name") or c["phone"], "phone": c["phone"], "address": c.get("address", ""), "type": c.get("type", "retailer")}, rep=rep)
         if customer is None:
             raise DomainError("Customer not found or not assigned to you.", status_code=404)
-        # which of the account's shops: the app's explicit pick, else wherever the rep is standing
-        location = None
+        # which of the account's shops: the id the app sent (a branch row names its shop), an explicit
+        # location_id, else wherever the rep is standing
+        location = picked_location
         if d.get("location_id"):
             location = customer.locations.filter(pk=d["location_id"], is_active=True).first()
             if location is None:
                 raise DomainError("That shop does not belong to this customer.", code="bad_location", status_code=400)
-        else:
+        elif location is None:
             location = GeoFenceService.nearest_location(customer, d.get("gps"))
         # the owner's shift rule: no shift started, no order submitted; on a break, come back first
         if rep is not None and get_current_tenant() and get_current_tenant().setting("require_shift_for_orders"):
@@ -372,11 +392,23 @@ class ExtCustomersView(ExtBase):
         show_outstanding = has_tenant_perm(request, "external.view_customer_outstanding") or has_tenant_perm(request, "customers.view_customer_ledger")
         rows = []
         for c in qs[:2000]:
-            row = {"id": str(c.id), "code": c.code, "name": c.name, "type": c.type, "phone": c.phone, "address": c.address, "city": c.city, "gps": c.gps, "order_radius_m": c.order_radius_m, "locations": [{"id": str(l.id), "name": l.name, "address": l.address, "gps": l.gps, "order_radius_m": l.order_radius_m} for l in c.locations.filter(is_active=True)], "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None, "status": c.status, "is_blocked": c.is_blocked, "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days, "price_list": c.price_list.name if c.price_list_id else None, "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at}
+            # FLATTENED (the app team's design, 21 Oct 2026): one row per SHOP. The account's own pin is its
+            # first shop and KEEPS the customer's id, so every reference already on a phone still resolves;
+            # extra branches ride as their own rows with the location's id. Money is the account's, on every row.
+            locs = list(c.locations.filter(is_active=True))
+            account = {"id": str(c.id), "name": c.name, "location_count": 1 + len(locs)}
+            base = {"code": c.code, "type": c.type, "phone": c.phone, "city": c.city,
+                    "territory": c.territory.name if c.territory_id else None, "route": c.route.name if c.route_id else None,
+                    "status": c.status, "is_blocked": c.is_blocked,
+                    "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days,
+                    "price_list": c.price_list.name if c.price_list_id else None,
+                    "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at, "account": account}
             if show_outstanding:
-                row["outstanding"] = str(CustomerService.outstanding(c))
-                row["overdue"] = str(CustomerService.overdue(c))
-            rows.append(row)
+                base["outstanding"] = str(CustomerService.outstanding(c))
+                base["overdue"] = str(CustomerService.overdue(c))
+            rows.append({**base, "id": str(c.id), "name": c.name, "address": c.address, "gps": c.gps, "order_radius_m": c.order_radius_m})
+            for l in locs:
+                rows.append({**base, "id": str(l.id), "name": l.name, "address": l.address or c.address, "gps": l.gps, "order_radius_m": l.order_radius_m})
         return Response({"results": rows})
 
     def post(self, request):
@@ -401,6 +433,31 @@ class ExtCustomersView(ExtBase):
         # both. The other way round, a rep fixes their location only to be told the phone number is missing.
         if not str(d.get("name") or "").strip():
             raise DomainError("name is required", code="bad_customer", status_code=400)
+        if d.get("parent_customer_id"):
+            # another branch of an account the rep already has: it inherits the account's NTN/CNIC and ledger
+            from apps.partners.models import CustomerLocation
+
+            parent = self.customers_qs(request).filter(pk=d["parent_customer_id"]).first()
+            if parent is None:
+                raise DomainError("That account is not yours.", code="bad_customer", status_code=400, errors={"parent_customer_id": [str(d["parent_customer_id"])]})
+            gps_b = d.get("gps") or {}
+            pin_b = (gps_b.get("lat"), gps_b.get("lng"))
+            if d.get("map_url"):
+                from apps.partners.maplink import parse_location as _parse
+
+                found_b = _parse(d["map_url"])
+                if found_b is None:
+                    raise DomainError("map_url could not be read — share a Google Maps link or \"lat, lng\".", code="bad_customer", status_code=400)
+                pin_b = found_b
+            branch = CustomerLocation.objects.create(customer=parent, name=d["name"].strip()[:120],
+                                                     address=d.get("address", ""), city=d.get("city", "")[:80],
+                                                     gps_lat=pin_b[0], gps_lng=pin_b[1])
+            body = {"id": str(branch.id), "name": branch.name, "status": "active", "type": parent.type,
+                    "account": {"id": str(parent.pk), "name": parent.name, "location_count": 1 + parent.locations.filter(is_active=True).count()}}
+            if idem:
+                IdempotencyKey.objects.create(tenant_id=get_current_tenant_id(), user=None, key=idem,
+                                              path=request.path, response_status=201, response_body=body)
+            return Response(body, status=201)
         kind = d.get("type") or "retailer"
         if kind not in dict(Customer.TYPES):
             raise DomainError(f"type must be one of: {', '.join(dict(Customer.TYPES))}",
@@ -616,7 +673,11 @@ class ExtCollectionsView(ExtBase):
             rep = SupplierRep.objects.filter(supplier=supplier, code=d["rep_code"]).first()
         if rep is None:
             raise DomainError("rep_code is required.", status_code=400)
-        customer = self.customers_qs(request).filter(Q(pk=d.get("customer")) if _is_uuid(d.get("customer", "")) else Q(code=d.get("customer"))).first()
+        customer = None
+        if _is_uuid(d.get("customer", "")):
+            customer, _loc = self.resolve_shop(request, d.get("customer"))
+        else:
+            customer = self.customers_qs(request).filter(Q(code=d.get("customer"))).first()
         if customer is None:
             raise DomainError("Customer not found.", status_code=404)
         blocked = GeoFenceService.guard(rep=rep, gps=d.get("gps"), action="collection", customer=customer)
@@ -700,6 +761,10 @@ class ExtVisitsView(ExtBase):
         return Response({"accepted": accepted, "duplicates": duplicates, "rejected": rejected}, status=202)
 
     def _one(self, request, d, index):
+        if _is_uuid(str(d.get("customer") or d.get("customer_id") or "")):
+            _c, _l = self.resolve_shop(request, d.get("customer") or d.get("customer_id"))
+            if _c is not None:
+                d = {**d, "customer": str(_c.pk), "customer_id": str(_c.pk)}
         """
         Record one visit. In a batch, a bad item is a 400 naming its index — the phone drops a 4xx batch, so a
         malformed row must never come back as a 500 and be retried for ever.
@@ -1014,3 +1079,38 @@ class ExtShiftActionView(ExtBase):
             reason = d.get("reason") if d.get("reason") in dict(RepShift.END_REASONS) else "rep"
             shift = ShiftService.end(shift, at=d.get("at"), gps=d.get("gps"), reason=reason)
         return Response({"shift": _shift_body(shift, get_current_tenant())})
+
+
+class ExtShopOrdersView(ExtBase):
+    """
+    `GET /ext/v1/customers/{pk}/orders?limit=10` — a shop's history for the rep who has it NOW, whoever took
+    the orders (this rep, another rep, the office). A branch id answers with that branch's orders; the
+    account's id answers for the whole account. Rows the rep did not take are visible but not openable.
+    """
+
+    def get(self, request, pk):
+        self.perm(request, "external.view_own_orders")
+        _supplier, rep = self.context(request)
+        customer, location = self.resolve_shop(request, pk)
+        if customer is None:
+            raise DomainError("That shop is not assigned to you.", status_code=404)
+        qs = SalesOrder.objects.filter(customer=customer).select_related("rep", "trip", "location")
+        if location is not None:
+            qs = qs.filter(location=location)
+        limit = min(int(request.query_params.get("limit", 10)), 50)
+        show_prices = has_tenant_perm(request, "external.view_prices") or has_tenant_perm(request, "catalog.view_product")
+        rows = []
+        for o in qs.order_by("-created_at")[:limit]:
+            row = SalesOrderListSerializer(o).data
+            # the sale person is auto-stamped on office orders too, so WHO TOOK IT keys off the source
+            if o.source != "rep_app":
+                row["taken_by"] = {"kind": "office", "name": "the office"}
+            elif o.rep_id and rep is not None and o.rep_id == rep.pk:
+                row["taken_by"] = {"kind": "self", "name": o.rep.name}
+            else:
+                row["taken_by"] = {"kind": "rep", "name": o.rep.name if o.rep_id else "another rep"}
+            row["can_open"] = bool(rep is not None and o.rep_id == rep.pk)
+            if not show_prices:
+                row["total"] = None
+            rows.append(row)
+        return Response({"results": rows})
