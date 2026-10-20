@@ -104,22 +104,22 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("How to reach them", "ti-phone"), name: "landline", label: "Landline", col: "col-md-4", mask: "phone", prefix: "🇵🇰", placeholder: "+92 42 35881234" },
     { ...sec("How to reach them", "ti-phone"), name: "email", label: "Email", type: "email", col: "col-md-4", icon: "ti-mail", autoComplete: "email" },
 
-    { ...sec("Where they are", "ti-map-pin"), name: "address", label: "Shop address", type: "textarea", col: "col-md-6" },
+    { ...sec("Where they are", "ti-map-pin"), name: "address", label: "Shop address", col: "col-md-6" },
     { ...sec("Where they are", "ti-map-pin"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
+    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "how close a rep must be to order here" },
     { ...sec("Where they are", "ti-map-pin"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       hint: "the shop only shows in these reps' app and portal — without one, no rep can see it or order for it",
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin on the map", type: "custom", col: "col-md-12",
+    { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
       render: (v, _set, values, setField) => <>
-        <StorePinPicker lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} />
-        <div className="row mt-2">
-          <div className="col-md-3"><label className="form-label fs-13">Latitude</label><input type="number" step="0.0000001" className="form-control" value={v ?? ""} onChange={(e) => setField("gps_lat", e.target.value === "" ? null : Number(e.target.value))} /></div>
-          <div className="col-md-3"><label className="form-label fs-13">Longitude</label><input type="number" step="0.0000001" className="form-control" value={values.gps_lng ?? ""} onChange={(e) => setField("gps_lng", e.target.value === "" ? null : Number(e.target.value))} /></div>
+        <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} />
+        <div className="d-flex gap-2 mt-1" style={{ maxWidth: 420 }}>
+          <input type="number" step="0.0000001" className="form-control form-control-sm" placeholder="Latitude" value={v ?? ""} onChange={(e) => setField("gps_lat", e.target.value === "" ? null : Number(e.target.value))} />
+          <input type="number" step="0.0000001" className="form-control form-control-sm" placeholder="Longitude" value={values.gps_lng ?? ""} onChange={(e) => setField("gps_lng", e.target.value === "" ? null : Number(e.target.value))} />
         </div>
       </> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
-    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "how close a rep must be to order here" },
     { ...sec("Where they are", "ti-map-pin"), name: "locations_write", label: "More shops of this customer", type: "custom", col: "col-md-12", default: [],
       hint: "a multi-shop account: orders can be taken at any of these; each delivery goes to the shop the order was taken at",
       render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },

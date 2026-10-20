@@ -10,9 +10,11 @@ import { FenceMap } from "@/components/map/FenceMap";
  *
  * The pin is what makes a store fall inside a rep's working area, so it is worth more than two number boxes.
  */
-export function StorePinPicker({ lat, lng, name, onChange }: {
-  lat: any; lng: any; name?: string; onChange: (lat: number | null, lng: number | null) => void;
+export function StorePinPicker({ lat, lng, name, onChange, compact }: {
+  lat: any; lng: any; name?: string; onChange: (lat: number | null, lng: number | null) => void; compact?: boolean;
 }) {
+  // compact: the map stays folded until asked for — a paste box and the coordinates carry the common case
+  const [showMap, setShowMap] = useState(!compact);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const point = lat !== "" && lat !== null && lat !== undefined && lng !== "" && lng !== null && lng !== undefined
@@ -57,19 +59,20 @@ export function StorePinPicker({ lat, lng, name, onChange }: {
           () => toast.error("Could not read your location — click the map instead."))}>
           <i className="ti ti-current-location me-1" />Use my location
         </button>
+        {compact && <button type="button" className="btn btn-outline-secondary" onClick={() => { setShowMap((v) => !v); if (!showMap) setNonce((n) => n + 1); }}><i className="ti ti-map me-1" />{showMap ? "Hide Map" : "Map"}</button>}
         {point && <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>}
       </div>
-      <FenceMap
+      {showMap && <FenceMap
         point={point}
         onPointChange={put}
         onMapClick={(la, ln) => put(la, ln)}
         fitNonce={nonce}
         cursor={point ? undefined : "crosshair"}
-        height={300}
-      />
+        height={compact ? 240 : 300}
+      />}
       <div className="form-text">
-        {point ? <>Pin at {point.lat.toFixed(5)}, {point.lng.toFixed(5)} — drag it or click elsewhere to move it.</>
-               : <>Click the map where the shop is. Without a pin this store cannot fall inside any working area.</>}
+        {point ? <>Pin at {point.lat.toFixed(5)}, {point.lng.toFixed(5)}{showMap ? " — drag it or click elsewhere to move it." : ""}</>
+               : showMap ? <>Click the map where the shop is — or paste a maps link above.</> : <>No pin yet — paste a maps link, type lat, lng, or open the map.</>}
       </div>
     </div>
   );
