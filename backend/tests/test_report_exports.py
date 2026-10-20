@@ -55,3 +55,12 @@ def test_an_export_writes_dates_the_way_the_screen_does(api, excel_on):
     import re
 
     assert not re.search(r"\b\d{4}-\d{2}-\d{2}\b", text), f"an ISO date leaked into the export: {text[:300]}"
+
+
+def test_the_stock_report_exports_to_every_format(api, tenant):
+    """Its title once carried a slash, which openpyxl refuses as a sheet name — the export 500'd while the
+    screen worked. Every format must answer."""
+    for fmt, ctype in (("csv", "text/csv"), ("xlsx", "application/vnd"), ("pdf", "application/pdf")):
+        r = api.get("/api/v1/reports/stock_report", {"format": fmt})
+        assert r.status_code == 200, (fmt, r.status_code)
+        assert r["Content-Type"].startswith(ctype), (fmt, r["Content-Type"])

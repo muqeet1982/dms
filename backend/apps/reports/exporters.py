@@ -64,7 +64,10 @@ def to_xlsx(result, title=""):
 
     wb = Workbook()
     ws = wb.active
-    ws.title = (title or "Report")[:30]
+    # openpyxl refuses \ / * ? : [ ] in a sheet title — a report named with them must not 500 the export
+    import re
+
+    ws.title = (re.sub(r"[\\/*?:\[\]]", "-", title or "Report").strip() or "Report")[:30]
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
     ws.append([c.replace("_", " ").title() for c in cols])
     for head in ws[1]:  # not `cell`: that is the function above, and shadowing it broke every xlsx export

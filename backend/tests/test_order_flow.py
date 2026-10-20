@@ -206,3 +206,45 @@ def test_a_product_with_nothing_available_cannot_be_put_on_an_order(api, tenant)
                                           "lines": [{"variant": str(ghost.id), "qty": "1"}]}, format="json")
     assert r.status_code in (400, 422), r.content
     assert "out of stock" in r.data["detail"], r.data
+
+
+def test_only_the_owner_changes_a_confirmed_order(api, tenant):
+    """The owner's rule (21 Oct 2026): a confirmed order is theirs to change, nobody else's."""
+    from rest_framework.test import APIClient
+
+    from apps.accounts.models import User
+    from apps.accounts.services import RoleService, UserService
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        role = RoleService.create_role(tenant, "Order Clerk", ["sales.view_sales_order", "sales.add_sales_order", "sales.change_sales_order"])
+        UserService.create_tenant_user(tenant, "Clerk", email="clerk@probe.pk", password="Abcd-1234", roles=[role], warehouses=[])
+        User.objects.filter(email="clerk@probe.pk").update(must_change_password=False)
+
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    assert r.status_code == 201 and r.data["status"] == "confirmed"
+
+    clerk = APIClient()
+    login = clerk.post("/api/v1/auth/login", {"identifier": "clerk@probe.pk", "password": "Abcd-1234"}, format="json")
+    clerk.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}", HTTP_X_TENANT_ID=str(tenant.id))
+    blocked = clerk.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "9"}]}, format="json")
+    assert blocked.status_code == 403 and "owner" in blocked.data["detail"], blocked.content
+
+    fixed = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "9"}]}, format="json")
+    assert fixed.status_code == 200, fixed.content
+
+
+def test_the_office_hears_a_delivery(tenant):
+    """'in notification show new order and delivered notification' — the delivered half, to the office."""
+    from apps.core.models import Notification
+    from apps.sales.handlers import _order_delivered
+    from apps.sales.services import OrderService
+    from decimal import Decimal
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("2"), "unit_price": None}], source="staff", warehouse=wh)
+        _order_delivered(order)
+        n = Notification.objects.filter(type="delivery.completed", user=tenant.owner).order_by("-created_at").first()
+        assert n is not None and order.number in n.title

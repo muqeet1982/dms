@@ -46,7 +46,7 @@ def test_opening_balance_is_posted_to_the_ledger(api, tenant):
     from apps.accounting.models import JournalEntry
     from apps.partners.models import Customer
 
-    r = api.post("/api/v1/customers", {"name": "Opening Co", "type": "retailer", "opening_balance": "25000", "opening_balance_date": "2026-07-01"}, format="json")
+    r = api.post("/api/v1/customers", {"cnic": "35202-9999999-9", "name": "Opening Co", "type": "retailer", "opening_balance": "25000", "opening_balance_date": "2026-07-01"}, format="json")
     assert r.status_code == 201, r.content
     with tenant_context(tenant, tenant.owner):
         c = Customer.objects.get(pk=r.data["id"])

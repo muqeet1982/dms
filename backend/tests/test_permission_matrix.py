@@ -278,14 +278,14 @@ def test_an_email_or_mobile_belongs_to_one_person(api, tenant):
 
 
 def test_one_email_per_customer_and_supplier(api, tenant):
-    a = api.post("/api/v1/customers", {"name": "Shop A", "email": "shop@probe.pk"}, format="json")
+    a = api.post("/api/v1/customers", {"name": "Shop A", "email": "shop@probe.pk", "cnic": "35202-1111111-1"}, format="json")
     assert a.status_code == 201, a.content
-    b = api.post("/api/v1/customers", {"name": "Shop B", "email": "SHOP@probe.pk"}, format="json")
+    b = api.post("/api/v1/customers", {"name": "Shop B", "email": "SHOP@probe.pk", "cnic": "35202-2222222-2"}, format="json")
     assert b.status_code == 400 and "already used by" in str(b.data["errors"]["email"])
     # the same address on a supplier is a different book, so it is allowed
     assert api.post("/api/v1/suppliers", {"name": "Maker Two", "email": "shop@probe.pk"}, format="json").status_code == 201
     # editing a customer onto a taken address is refused too
-    c = api.post("/api/v1/customers", {"name": "Shop C", "email": "shopc@probe.pk"}, format="json")
+    c = api.post("/api/v1/customers", {"name": "Shop C", "email": "shopc@probe.pk", "cnic": "35202-3333333-3"}, format="json")
     assert c.status_code == 201
     assert api.patch(f"/api/v1/customers/{c.data['id']}", {"email": "shop@probe.pk"}, format="json").status_code == 400
 

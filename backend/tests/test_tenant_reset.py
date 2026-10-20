@@ -141,6 +141,12 @@ def test_the_first_order_after_a_reset_is_numbered_one_again(admin_api, tenant):
     with tenant_context(tenant, tenant.owner):
         from apps.sales.services import OrderService
 
+        # the reset wiped the stock too, and a zero-stock product cannot be ordered (owner's rule) — the
+        # first real act after a reset is receiving stock, so the test does the same
+        from apps.inventory.services import StockService
+
+        StockService.move(variant=ready["variant"], warehouse=ready["warehouse"], qty=Decimal("10"),
+                          movement_type="opening", unit_cost=Decimal("5"))
         order = OrderService.create(customer=ready["customer"], lines=[{"variant": ready["variant"], "qty": Decimal("1"), "unit_price": Decimal("10")}], source="staff", warehouse=ready["warehouse"])
         assert order.number == f"{tenant.doc_code}-ORD/0001"  # the company code rides in front of every number
         assert next_number("sales_invoice").endswith("00001")
