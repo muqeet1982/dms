@@ -38,7 +38,6 @@ const orderColumns: Column<any>[] = [
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
   { key: "customer_name", header: "Customer", render: (o) => <><div>{o.customer_name}</div><div className="text-muted fs-11">{o.customer_code}</div></> },
   { key: "sales_person", header: "Sales person", render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
-  { key: "warehouse_name", header: "Warehouse" },
   { key: "trip_number", header: "Trip", render: (o) => o.trip_number || "—" },
   { key: "total", header: "Total", num: true, sortKey: "total", render: (o) => <span className="fw-semibold">{money(o.total)}</span> },
   { key: "status", header: "Status", sortKey: "status", render: (o) => <><StatusBadge status={o.status} />{o.delivery_status && <div className="fs-11 text-muted mt-1"><i className="ti ti-truck me-1" />{o.delivery_status}</div>}{o.hold_reason && <div className="text-warning fs-11 mt-1" style={{ maxWidth: 220 }}>{o.hold_reason}</div>}</> },

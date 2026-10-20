@@ -101,6 +101,12 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs) if hasattr(super(), "validate") else attrs
+        # the owner's rule (20 Oct 2026): a new customer carries NTN or CNIC — one of the two, always
+        if self.instance is None:
+            ntn = (attrs.get("ntn") or "").strip()
+            cnic = (attrs.get("cnic") or "").strip()
+            if not ntn and not cnic:
+                raise serializers.ValidationError({"ntn": "Give the customer's NTN or CNIC — one of the two is required."})
         link = attrs.pop("map_url", "")
         if link:
             from .maplink import parse_location

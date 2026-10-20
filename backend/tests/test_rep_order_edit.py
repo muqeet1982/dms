@@ -259,7 +259,7 @@ def test_a_new_shop_can_be_pinned_from_a_maps_link(rep_app):
     """The rep has the shop's location as a shared Google Maps link, not as numbers — the link wins over
     where they are standing."""
     r = rep_app["phone"].post("/ext/v1/customers", {
-        "name": "Linked Pin Store", "type": "retailer",
+        "name": "Linked Pin Store", "type": "retailer", "cnic": "35202-1234567-1",
         "gps": {"lat": GULBERG[0], "lng": GULBERG[1], "accuracy_m": 10.0},
         "map_url": "https://www.google.com/maps/place/Shop/@31.0,74.0,17z/data=!3d31.4710000!4d74.2800000",
     }, format="json")
@@ -268,7 +268,7 @@ def test_a_new_shop_can_be_pinned_from_a_maps_link(rep_app):
     assert (round(float(row["gps"]["lat"]), 4), round(float(row["gps"]["lng"]), 4)) == (31.471, 74.28)
 
     bad = rep_app["phone"].post("/ext/v1/customers", {
-        "name": "Bad Link Store", "type": "retailer", "map_url": "https://example.com/not-a-map",
+        "name": "Bad Link Store", "type": "retailer", "cnic": "35202-1234567-1", "map_url": "https://example.com/not-a-map",
     }, format="json")
     assert bad.status_code == 400 and bad.data["type"] == "bad_customer"
 
@@ -513,3 +513,22 @@ def test_the_rep_hears_when_the_office_changes_their_order(rep_app, api, tenant)
     with tenant_context(tenant, tenant.owner):
         count = Notification.objects.filter(user=rep_app["rep"].user, type="order.edited").count()
     assert count == 1, "no self-notification"
+
+
+def test_a_new_shop_needs_its_ntn_or_cnic(rep_app, api, tenant):
+    """The owner's rule: no new customer without NTN or CNIC — one of the two, on the app and the office form."""
+    bare = rep_app["phone"].post("/ext/v1/customers", {
+        "name": "Paperless Store", "type": "retailer",
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1]},
+    }, format="json")
+    assert bare.status_code == 400 and bare.data["type"] == "bad_customer", bare.content
+    assert "NTN or CNIC" in bare.data["detail"]
+
+    office = api.post("/api/v1/customers", {"name": "Paperless Office Store"}, format="json")
+    assert office.status_code == 400, office.content
+
+    ok = rep_app["phone"].post("/ext/v1/customers", {
+        "name": "Documented Store", "type": "retailer", "cnic": "35202-7654321-1",
+        "gps": {"lat": GULBERG[0], "lng": GULBERG[1]},
+    }, format="json")
+    assert ok.status_code == 201, ok.content

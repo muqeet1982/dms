@@ -50,10 +50,18 @@ class PickListSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     delivery_note_numbers = serializers.SerializerMethodField()
     order_numbers = serializers.SerializerMethodField()
+    customer_names = serializers.SerializerMethodField()
+
+    def get_customer_names(self, obj):
+        seen = []
+        for o in obj.orders.all():
+            if o.customer_id and o.customer.name not in seen:
+                seen.append(o.customer.name)
+        return seen
 
     class Meta:
         model = PickList
-        fields = ["id", "number", "warehouse", "warehouse_name", "orders", "order_numbers", "status", "status_label", "picker", "picker_name", "picked_at", "sent_at", "sent_by", "sent_by_name", "issued_at", "issued_by", "issued_by_name", "delivery_note_numbers", "notes", "lines", "created_at"]
+        fields = ["id", "number", "warehouse", "warehouse_name", "orders", "order_numbers", "customer_names", "status", "status_label", "picker", "picker_name", "picked_at", "sent_at", "sent_by", "sent_by_name", "issued_at", "issued_by", "issued_by_name", "delivery_note_numbers", "notes", "lines", "created_at"]
         read_only_fields = ["id", "number", "status", "picker", "picked_at", "sent_at", "sent_by", "issued_at", "issued_by", "created_at"]
 
     def get_order_numbers(self, obj):
@@ -131,10 +139,18 @@ class DeliveryTripSerializer(serializers.ModelSerializer):
     order_ids = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
     orders_value = serializers.SerializerMethodField()
     closed_by_name = serializers.CharField(source="closed_by.full_name", read_only=True, default="")
+    customer_names = serializers.SerializerMethodField()
+
+    def get_customer_names(self, obj):
+        seen = []
+        for dn in obj.delivery_notes.all():
+            if dn.customer_id and dn.customer.name not in seen:
+                seen.append(dn.customer.name)
+        return seen
 
     class Meta:
         model = DeliveryTrip
-        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "delivery_notes", "order_ids", "orders_value", "created_at"]
+        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "customer_names", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "delivery_notes", "order_ids", "orders_value", "created_at"]
         read_only_fields = ["id", "number", "version", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "created_at"]
 
     def get_orders_value(self, obj):

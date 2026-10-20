@@ -397,6 +397,10 @@ class ExtCustomersView(ExtBase):
         if kind not in dict(Customer.TYPES):
             raise DomainError(f"type must be one of: {', '.join(dict(Customer.TYPES))}",
                               code="bad_customer", status_code=400, errors={"type": [kind]})
+        # the owner's rule (20 Oct 2026): a new shop carries NTN or CNIC — one of the two, always
+        if not str(d.get("ntn") or "").strip() and not str(d.get("cnic") or "").strip():
+            raise DomainError("Give the shop's NTN or CNIC — one of the two is required.",
+                              code="bad_customer", status_code=400, errors={"ntn": ["required (or cnic)"], "cnic": ["required (or ntn)"]})
 
         gps = d.get("gps") or {}
         # the shop's pin: a pasted maps link (or "lat, lng") wins over where the rep is standing

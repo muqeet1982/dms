@@ -35,12 +35,12 @@ def test_the_place_pin_beats_the_map_centre():
 
 def test_the_office_form_takes_a_maps_link_too(api, tenant):
     """The customer form (and its API) accepts map_url and turns it into the pin."""
-    r = api.post("/api/v1/customers", {"name": "Pasted Pin Store", "type": "retailer",
+    r = api.post("/api/v1/customers", {"name": "Pasted Pin Store", "type": "retailer", "cnic": "35202-1234567-1",
                                        "map_url": "https://maps.google.com/?q=31.4710,74.2800"}, format="json")
     assert r.status_code == 201, r.content
     assert (round(float(r.data["gps_lat"]), 4), round(float(r.data["gps_lng"]), 4)) == (31.471, 74.28)
 
-    bad = api.post("/api/v1/customers", {"name": "Bad Pin Store", "map_url": "no coordinates here"}, format="json")
+    bad = api.post("/api/v1/customers", {"name": "Bad Pin Store", "cnic": "35202-1234567-1", "map_url": "no coordinates here"}, format="json")
     assert bad.status_code == 400, bad.content
 
     parsed = api.post("/api/v1/customers/parse-location", {"text": "https://www.google.com/maps/@31.52,74.33,15z"}, format="json")

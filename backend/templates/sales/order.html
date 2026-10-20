@@ -13,7 +13,6 @@ empty columns.
   <tr>
     <td><span class="k">Order date</span>{{ o.order_date }}</td>
     <td><span class="k">Delivery wanted</span>{{ o.requested_delivery_date|default:"—" }}</td>
-    <td><span class="k">Warehouse</span>{{ o.warehouse.name|default:"—" }}</td>
     <td><span class="k">Sales person</span>{% if o.rep %}{{ o.rep.name }}{% elif o.trip.rep %}{{ o.trip.rep.name }}{% else %}—{% endif %}</td>
   </tr>
   <tr>
