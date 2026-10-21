@@ -15,7 +15,7 @@ from apps.core.numbering import next_number
 from apps.core.tenancy import get_current_tenant, get_current_user
 
 from .coa_template import ensure_fiscal_year
-from .models import Account, AccountingPeriod, Expense, FiscalYear, JournalEntry, JournalLine, OpeningBalanceBatch, Payment, PaymentAllocation, PostingRule
+from .models import GL_LIVE, Account, AccountingPeriod, Expense, FiscalYear, JournalEntry, JournalLine, OpeningBalanceBatch, Payment, PaymentAllocation, PostingRule
 
 Q4 = Decimal("0.0001")
 
@@ -447,7 +447,7 @@ class PostingService:
         open_periods = fy.periods.filter(status="open")
         if open_periods.exists():
             raise DomainError("Close all periods before closing the year.")
-        bal = JournalLine.objects.filter(entry__status="posted", entry__date__gte=fy.start, entry__date__lte=fy.end, account__type__in=["income", "expense"]).values("account").annotate(d=Sum("debit"), c=Sum("credit"))
+        bal = JournalLine.objects.filter(entry__status__in=GL_LIVE, entry__date__gte=fy.start, entry__date__lte=fy.end, account__type__in=["income", "expense"]).values("account").annotate(d=Sum("debit"), c=Sum("credit"))
         lines, net = [], Decimal("0")
         for row in bal:
             acct = Account.objects.get(pk=row["account"])
@@ -885,7 +885,7 @@ class ReconciliationService:
 
         matched = 0
         for sl in BankStatementLine.objects.filter(bank_account=bank_account, reconciled=False):
-            cand = JournalLine.objects.filter(account=bank_account.account, entry__status="posted", entry__date__gte=sl.date - timezone.timedelta(days=days_tolerance), entry__date__lte=sl.date + timezone.timedelta(days=days_tolerance)).exclude(id__in=BankStatementLine.objects.filter(matched_line__isnull=False).values_list("matched_line_id", flat=True))
+            cand = JournalLine.objects.filter(account=bank_account.account, entry__status__in=GL_LIVE, entry__date__gte=sl.date - timezone.timedelta(days=days_tolerance), entry__date__lte=sl.date + timezone.timedelta(days=days_tolerance)).exclude(id__in=BankStatementLine.objects.filter(matched_line__isnull=False).values_list("matched_line_id", flat=True))
             amt = sl.amount
             cand = cand.filter(debit=amt) if amt > 0 else cand.filter(credit=-amt)
             if sl.reference:
@@ -912,7 +912,7 @@ class ReconciliationService:
 class ReportQueries:
     @staticmethod
     def account_balance(account, as_of=None, from_date=None):
-        qs = JournalLine.objects.filter(account=account, entry__status="posted")
+        qs = JournalLine.objects.filter(account=account, entry__status__in=GL_LIVE)
         if as_of:
             qs = qs.filter(entry__date__lte=as_of)
         if from_date:

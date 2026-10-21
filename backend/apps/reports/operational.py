@@ -231,9 +231,9 @@ def pending_pos(**_):
 
 
 def price_variance(date_from=None, date_to=None, **_):
-    from apps.accounting.models import JournalLine
+    from apps.accounting.models import GL_LIVE, JournalLine
 
-    qs = _window(JournalLine.objects.filter(account__code="5-01-002-0001", entry__status="posted"), "entry__date", date_from, date_to).select_related("entry")
+    qs = _window(JournalLine.objects.filter(account__code="5-01-002-0001", entry__status__in=GL_LIVE), "entry__date", date_from, date_to).select_related("entry")
     rows = [{"date": l.entry.date, "journal": l.entry.number, "source": l.entry.source_number, "variance": str(l.debit - l.credit)} for l in qs]
     return {"columns": ["date", "journal", "source", "variance"], "rows": rows, "totals": {"variance": str(sum((Decimal(r["variance"]) for r in rows), Z))}}
 

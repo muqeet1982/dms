@@ -84,6 +84,11 @@ class CostCentre(TenantModel):
         return self.name
 
 
+# A reversed original stays on the books — its reversing entry nets it to zero. Excluding it while the
+# reversing entry counts would subtract the money twice, so every balance reads these two statuses.
+GL_LIVE = ("posted", "reversed")
+
+
 class JournalEntry(DocumentModel):
     TYPES = [("manual", "Manual"), ("auto", "Automatic"), ("opening", "Opening"), ("closing", "Closing")]
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("reversed", "Reversed")]

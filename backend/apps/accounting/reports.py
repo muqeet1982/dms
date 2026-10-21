@@ -5,14 +5,14 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Account, JournalEntry, JournalLine
+from .models import GL_LIVE, Account, JournalEntry, JournalLine
 
 Z = Decimal("0")
 
 
 def _balances(date_from=None, date_to=None, cost_centre=None):
     """{account_id: (debit_sum, credit_sum)} for posted lines in the window."""
-    qs = JournalLine.objects.filter(entry__status="posted")
+    qs = JournalLine.objects.filter(entry__status__in=GL_LIVE)
     if date_from:
         qs = qs.filter(entry__date__gte=date_from)
     if date_to:
@@ -68,7 +68,7 @@ def trial_balance(date_from=None, date_to=None, level=4, **_):
 
 
 def general_ledger(account=None, date_from=None, date_to=None, partner_type=None, partner_id=None, **_):
-    qs = JournalLine.objects.filter(entry__status="posted").select_related("entry", "account", "cost_centre").order_by("entry__date", "entry__created_at", "sequence")
+    qs = JournalLine.objects.filter(entry__status__in=GL_LIVE).select_related("entry", "account", "cost_centre").order_by("entry__date", "entry__created_at", "sequence")
     opening = Z
     acct = Account.objects.filter(pk=account).first() if account else None
     if acct:
@@ -221,7 +221,7 @@ def tax_summary(date_from=None, date_to=None, **_):
 
     rows = []
     for tt in TaxType.objects.all():
-        qs = JournalLine.objects.filter(entry__status="posted", tax_type=tt)
+        qs = JournalLine.objects.filter(entry__status__in=GL_LIVE, tax_type=tt)
         if date_from:
             qs = qs.filter(entry__date__gte=date_from)
         if date_to:

@@ -15,7 +15,7 @@ from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import DocumentViewSet, TenantModelViewSet
 
 from .coa_template import ensure_fiscal_year
-from .models import Account, AccountingPeriod, BankAccount, BankStatementLine, CashAccount, ChequeBook, ChequeLeaf, CostCentre, Expense, FiscalYear, JournalEntry, JournalLine, OpeningBalanceBatch, Payment, PostingRule
+from .models import GL_LIVE, Account, AccountingPeriod, BankAccount, BankStatementLine, CashAccount, ChequeBook, ChequeLeaf, CostCentre, Expense, FiscalYear, JournalEntry, JournalLine, OpeningBalanceBatch, Payment, PostingRule
 from .serializers import (
     AccountSerializer, AccountingPeriodSerializer, BankAccountSerializer, BankStatementLineSerializer, CashAccountSerializer,
     ChequeBookSerializer, ChequeLeafSerializer, CostCentreSerializer, ExpenseSerializer,
@@ -182,7 +182,7 @@ class JournalEntryViewSet(DocumentViewSet):
         """
         Take a posted MANUAL journal back to draft — the owner's "remove the last post, no extra entries"
         (21 Oct 2026). A draft entry has no effect on any balance or report (everything reads
-        entry__status="posted"), so un-posting it IS the removal; nothing reversing is written. A journal a
+        entry__status__in=GL_LIVE), so un-posting it IS the removal; nothing reversing is written. A journal a
         document posted (invoice, payment, claim…) refuses: those books follow their document, and the way
         back there is cancelling the document or reversing.
         """
@@ -325,7 +325,7 @@ class BankAccountViewSet(TenantModelViewSet):
     def reconciliation(self, request, pk=None):
         as_of = request.query_params.get("as_of") or timezone.localdate()
         ba = self.get_object()
-        return Response({**ReconciliationService.report(ba, as_of), "unmatched_gl_lines": [{"id": str(l.id), "date": l.entry.date, "journal": l.entry.number, "description": l.description or l.entry.memo, "debit": str(l.debit), "credit": str(l.credit)} for l in JournalLine.objects.filter(account=ba.account, entry__status="posted").exclude(id__in=BankStatementLine.objects.filter(matched_line__isnull=False).values_list("matched_line_id", flat=True)).select_related("entry")[:500]]})
+        return Response({**ReconciliationService.report(ba, as_of), "unmatched_gl_lines": [{"id": str(l.id), "date": l.entry.date, "journal": l.entry.number, "description": l.description or l.entry.memo, "debit": str(l.debit), "credit": str(l.credit)} for l in JournalLine.objects.filter(account=ba.account, entry__status__in=GL_LIVE).exclude(id__in=BankStatementLine.objects.filter(matched_line__isnull=False).values_list("matched_line_id", flat=True)).select_related("entry")[:500]]})
 
     @action(detail=True, methods=["post"], url_path=r"statement/(?P<line_id>[^/.]+)/match")
     def match(self, request, pk=None, line_id=None):

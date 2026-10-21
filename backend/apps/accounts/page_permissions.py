@@ -64,6 +64,7 @@ PAGES = [
          endpoint="/api/v1/sales-orders", enforced=True,
          extras=(("confirm", "Confirm orders", "sales.confirm_sales_order"),
                  ("hold", "Hold / reject orders", "sales.cancel_sales_order"),
+                 ("edit_confirmed", "Edit after confirmation (before invoice) — owner only unless granted", "sales.edit_confirmed_order"),
                  ("cancel_confirmed", "Cancel after confirmation (before invoice) — owner only unless granted", "sales.cancel_confirmed_order"),
                  ("override_price", "Override prices", "sales.override_price"),
                  ("override_discount", "Override discounts", "sales.override_discount"),

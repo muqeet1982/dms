@@ -18,9 +18,9 @@ class PartnerLedgerService:
 
     @staticmethod
     def ledger(partner_type, partner_id, date_from=None, date_to=None):
-        from apps.accounting.models import JournalLine
+        from apps.accounting.models import GL_LIVE, JournalLine
 
-        qs = JournalLine.objects.filter(partner_type=partner_type, partner_id=str(partner_id), entry__status="posted").select_related("entry", "account").order_by("entry__date", "entry__created_at", "id")
+        qs = JournalLine.objects.filter(partner_type=partner_type, partner_id=str(partner_id), entry__status__in=GL_LIVE).select_related("entry", "account").order_by("entry__date", "entry__created_at", "id")
         opening = Decimal("0")
         if date_from:
             opening_qs = qs.filter(entry__date__lt=date_from)
@@ -40,9 +40,9 @@ class PartnerLedgerService:
 
     @staticmethod
     def balance(partner_type, partner_id):
-        from apps.accounting.models import JournalLine
+        from apps.accounting.models import GL_LIVE, JournalLine
 
-        agg = JournalLine.objects.filter(partner_type=partner_type, partner_id=str(partner_id), entry__status="posted").aggregate(d=Sum("debit"), c=Sum("credit"))
+        agg = JournalLine.objects.filter(partner_type=partner_type, partner_id=str(partner_id), entry__status__in=GL_LIVE).aggregate(d=Sum("debit"), c=Sum("credit"))
         return (agg["d"] or Decimal("0")) - (agg["c"] or Decimal("0"))
 
 
@@ -56,9 +56,9 @@ class CustomerService:
         invoiced = (inv["t"] or Decimal("0")) - (inv["p"] or Decimal("0"))
         opening = Decimal(customer.opening_balance or 0)
         if opening:  # payments against the opening balance land on the ledger, so take what is left of it
-            from apps.accounting.models import JournalLine
+            from apps.accounting.models import GL_LIVE, JournalLine
 
-            paid = JournalLine.objects.filter(partner_type="customer", partner_id=str(customer.id), entry__status="posted", entry__type="payment").aggregate(c=Sum("credit"))["c"] or Decimal("0")
+            paid = JournalLine.objects.filter(partner_type="customer", partner_id=str(customer.id), entry__status__in=GL_LIVE, entry__type="payment").aggregate(c=Sum("credit"))["c"] or Decimal("0")
             opening = max(Decimal("0"), opening - max(Decimal("0"), paid - invoiced))
         return invoiced + opening
 
@@ -168,9 +168,9 @@ class SupplierService:
         billed = (agg["t"] or Decimal("0")) - (agg["p"] or Decimal("0"))
         opening = Decimal(supplier.opening_balance or 0)
         if opening:
-            from apps.accounting.models import JournalLine
+            from apps.accounting.models import GL_LIVE, JournalLine
 
-            paid = JournalLine.objects.filter(partner_type="supplier", partner_id=str(supplier.id), entry__status="posted", entry__type="payment").aggregate(d=Sum("debit"))["d"] or Decimal("0")
+            paid = JournalLine.objects.filter(partner_type="supplier", partner_id=str(supplier.id), entry__status__in=GL_LIVE, entry__type="payment").aggregate(d=Sum("debit"))["d"] or Decimal("0")
             opening = max(Decimal("0"), opening - max(Decimal("0"), paid - billed))
         return billed + opening
 

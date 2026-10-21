@@ -17,7 +17,7 @@ def nightly_reconciliation():
         tenants = list(Tenant.objects.exclude(status__in=["cancelled", "archived"]))
     for t in tenants:
         with tenant_context(t):
-            from apps.accounting.models import JournalLine
+            from apps.accounting.models import GL_LIVE, JournalLine
             from apps.accounting.reports import inventory_reconciliation
             from apps.accounting.services import ReportQueries, account_for
             from apps.inventory.services import StockService
@@ -29,7 +29,7 @@ def nightly_reconciliation():
                 if drift:
                     issues.append(f"{len(drift)} stock level(s) drifted")
                 ar_control = ReportQueries.account_balance(account_for("ar"))
-                ar_sub = JournalLine.objects.filter(account=account_for("ar"), entry__status="posted", partner_type="customer").aggregate(d=Sum("debit"), c=Sum("credit"))
+                ar_sub = JournalLine.objects.filter(account=account_for("ar"), entry__status__in=GL_LIVE, partner_type="customer").aggregate(d=Sum("debit"), c=Sum("credit"))
                 if abs(ar_control - ((ar_sub["d"] or 0) - (ar_sub["c"] or 0)) - account_for("ar").opening_balance) > Decimal("0.01"):
                     issues.append("AR control ≠ customer sub-ledger")
                 rep_clearing = ReportQueries.account_balance(account_for("rep_clearing"))

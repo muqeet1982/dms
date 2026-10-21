@@ -81,7 +81,7 @@ export function OrderDetailPage() {
   // past confirmation an order is the owner's to change — editing issued/dispatched work pulls the goods
   // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
   const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status)
-    || (["confirmed", "issued", "dispatched"].includes(o.status) && (Boolean(isOwner) || can("sales.cancel_confirmed_order")) && !(o.invoices || []).length);
+    || (["confirmed", "issued", "dispatched"].includes(o.status) && (Boolean(isOwner) || can("sales.edit_confirmed_order")) && !(o.invoices || []).length);
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   return (
     <>
