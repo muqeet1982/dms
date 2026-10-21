@@ -32,6 +32,9 @@
 .dropdown-menu.show { display: block; }
 .line-editor input.form-control, .line-editor select.form-select { min-width: 70px; }
 .entity-select { position: relative; }
+/* the lines editor must not clip the item-search dropdown: overflow-x auto on a wrapper forces vertical
+   clipping too, which hid the suggestions under the table edge (owner, 21 Oct 2026) */
+.lines-editor-wrap { overflow: visible; }
 .entity-select .es-menu { position: absolute; z-index: 1060; left: 0; right: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
 .entity-select .es-item { padding: 7px 10px; cursor: pointer; font-size: 13px; }
 .entity-select .es-item:hover, .entity-select .es-item.active { background: rgba(242, 101, 34, 0.08); }

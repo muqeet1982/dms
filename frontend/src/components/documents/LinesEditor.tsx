@@ -119,7 +119,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           )}
         </div>
       )}
-      <div className={lines.length > LINES_SCROLL_FROM ? "table-scroll" : "table-responsive"}>
+      <div className={lines.length > LINES_SCROLL_FROM ? "table-scroll" : "lines-editor-wrap"}>
         <table className="table table-sm align-middle mb-0">
           <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{showPrice && <th className="num" style={{ width: 130 }}>Total</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
           <tbody>
