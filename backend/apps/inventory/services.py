@@ -292,6 +292,24 @@ class StockService:
                 if lv is not None:
                     lv.qty_on_hand = row["s"]
                     lv.save(update_fields=["qty_on_hand"])
+        # reserved counts are derived state too: StockLevel.qty_reserved must equal the unreleased
+        # reservations, or availability is quietly wrong in one direction or the other
+        from decimal import Decimal as _D
+
+        from apps.sales.models import StockReservation
+
+        want = {}
+        for r in StockReservation.all_objects.filter(tenant=tenant, released=False).values("warehouse_id", "order_line__variant_id").annotate(s=Sum("qty")):
+            want[(r["warehouse_id"], r["order_line__variant_id"])] = r["s"] or _D("0")
+        for lv in StockLevel.all_objects.filter(tenant=tenant, qty_reserved__gt=0):
+            should = want.get((lv.warehouse_id, lv.variant_id), _D("0"))
+            held = StockLevel.all_objects.filter(tenant=tenant, warehouse_id=lv.warehouse_id, variant_id=lv.variant_id).aggregate(s=Sum("qty_reserved"))["s"] or _D("0")
+            if held != should:
+                drift.append({"key": [str(lv.warehouse_id), str(lv.variant_id), "reserved"], "cached": str(held), "ledger": str(should)})
+                # park the true figure on this row and zero any siblings, so the pair sums correctly
+                StockLevel.all_objects.filter(tenant=tenant, warehouse_id=lv.warehouse_id, variant_id=lv.variant_id).exclude(pk=lv.pk).update(qty_reserved=_D("0"))
+                lv.qty_reserved = should
+                lv.save(update_fields=["qty_reserved"])
         for lv in StockLevel.all_objects.filter(tenant=tenant):
             if (lv.warehouse_id, lv.bin_id, lv.variant_id, lv.batch_id) not in seen and lv.qty_on_hand != 0:
                 drift.append({"key": [str(lv.warehouse_id), str(lv.bin_id), str(lv.variant_id), str(lv.batch_id)], "cached": str(lv.qty_on_hand), "ledger": "0"})

@@ -470,9 +470,14 @@ class OrderService:
 
     @staticmethod
     def expire_reservations():
+        """TTL expiry for live holds — and a janitor: a reservation whose order has moved past confirmation
+        (issued, delivered, cancelled…) is a leak, released on sight whatever its expiry says."""
         n = 0
-        for r in StockReservation.objects.filter(released=False, expires_at__lt=timezone.now()).select_related("order_line__variant", "order_line__order"):
-            if r.order_line.order.status in ("confirmed", "on_hold_stock"):
+        live = ("confirmed", "on_hold_stock", "on_hold_credit")
+        for r in StockReservation.objects.filter(released=False).select_related("order_line__variant", "order_line__order"):
+            status = r.order_line.order.status
+            stale = status not in live and status not in ("draft", "submitted", "under_review")
+            if stale or (status in ("confirmed", "on_hold_stock") and r.expires_at < timezone.now()):
                 StockService.unreserve(r.order_line.variant, r.warehouse, r.qty, r.batch)
                 r.released = True
                 r.save(update_fields=["released"])

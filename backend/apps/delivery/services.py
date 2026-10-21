@@ -212,6 +212,15 @@ class DeliveryService:
                 StockService.move(warehouse=van_warehouse, variant=line.variant, qty=line.qty_loaded, movement_type="transfer_in", batch=line.batch, unit_cost=mv.unit_cost, reference=dn.trip, note=f"Loaded for {dn.order.number}")
             line.order_line.qty_dispatched += line.qty_loaded
             line.order_line.save(update_fields=["qty_dispatched", "qty_allocated"])
+        # the warehouse has now taken what it is taking: a line issued SHORT (or skipped) must not keep its
+        # reservation — that was the leak behind permanently "spoken for" stock the audit found (21 Oct 2026)
+        from apps.sales.models import StockReservation as _SR
+
+        for r in _SR.objects.filter(order_line__order=dn.order, released=False).select_related("order_line__variant"):
+            StockService.unreserve(r.order_line.variant, r.warehouse, r.qty, r.batch)
+            r.released = True
+            r.save(update_fields=["released"])
+        dn.order.lines.update(qty_allocated=Decimal("0"))
         dn.stock_out_done = True
         dn.status = "loaded"
         dn.save(update_fields=["stock_out_done", "status", "updated_at"])
