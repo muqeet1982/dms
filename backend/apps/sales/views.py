@@ -109,9 +109,10 @@ class SalesOrderViewSet(DocumentViewSet):
         m = self.request.membership
         if not order.is_editable:
             raise DomainError(f"Order in status {order.status} cannot be edited.")
-        # the owner's rule (21 Oct 2026): a confirmed order is the owner's to change, nobody else's
-        if order.status == "confirmed" and not m.is_owner:
-            raise DomainError("Only the owner can change a confirmed order.", status_code=403)
+        # the owner's rule (21 Oct 2026): past confirmation, changing an order is the owner's — and an edit
+        # of issued/dispatched work pulls the goods back and cancels the paperwork before it applies
+        if order.status in ("confirmed", "issued", "dispatched") and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
+            raise DomainError("Only the owner can change an order after it is confirmed.", status_code=403)
         d = serializer.validated_data
         lines = d.pop("lines", None)
         can_override = m.has_perm("sales.override_price") or m.is_owner
@@ -171,7 +172,7 @@ class SalesOrderViewSet(DocumentViewSet):
             raise DomainError("Your role cannot cancel orders.", status_code=403)
         # the owner's rule (21 Oct 2026): once the office has said yes, cancelling is the owner's call —
         # unless they hand out the "Cancel after confirmation" switch in the role matrix
-        if not by_rep and order.status in ("confirmed", "on_hold_credit", "on_hold_stock", "issued") \
+        if not by_rep and order.status in ("confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched") \
                 and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
             raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
         return Response(SalesOrderSerializer(OrderService.cancel(order, request.data.get("reason", ""), by_rep=by_rep)).data)

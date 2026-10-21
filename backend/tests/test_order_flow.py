@@ -166,9 +166,12 @@ def test_a_confirmed_order_is_still_editable_until_the_warehouse_starts(api, ten
     assert str(fixed.data["lines"][0]["qty_ordered"]).startswith("7")
     assert str(fixed.data["lines"][0]["qty_allocated"]).startswith("7"), "the new quantity holds the stock"
 
+    # since 21 Oct 2026 an edit past the load form does not refuse — it pulls the paperwork back and the
+    # office re-issues from the edited lines (the full flow is proven in test_stock_conservation)
     assert api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json").status_code == 201
     late = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"lines": [{"variant": str(v.id), "qty": "1"}]}, format="json")
-    assert late.status_code in (400, 422) and "load form" in late.data["detail"], late.content
+    assert late.status_code == 200, late.content
+    assert str(late.data["lines"][0]["qty_ordered"]).startswith("1")
 
 
 def test_an_invoice_falls_due_in_45_days_unless_the_customer_has_terms(api, tenant):

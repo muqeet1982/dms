@@ -62,9 +62,10 @@ class SalesOrder(DocumentModel):
 
     @property
     def is_editable(self):
-        # confirmed is editable too (owner's rule, 19 Oct 2026: mistakes get fixed, not cancelled) — but only
-        # until the warehouse starts on it; update_lines refuses once a load form exists
-        return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock", "confirmed")
+        # anything before delivery is editable (owner's rule: mistakes get fixed, not cancelled). Past
+        # confirmation it is the owner's call, and editing issued/dispatched work pulls the goods back first
+        # so every downstream document is reborn from the edited lines.
+        return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock", "confirmed", "issued", "dispatched")
 
 
 class SalesOrderLine(TaxLineMixin, TenantModel):

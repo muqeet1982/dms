@@ -165,8 +165,11 @@ class OrderService:
     def update_lines(order, lines, allow_override=False):
         if not order.is_editable:
             raise DomainError(f"Order in status {order.status} cannot be edited.")
-        if order.status == "confirmed" and order.pick_lists.exclude(status="cancelled").exists():
-            raise DomainError("The warehouse is already working on this order (a load form exists) — cancel that first, or handle the difference with a return.")
+        # an edit reflects through the WHOLE flow: any warehouse work already done is pulled back — stock
+        # home, load form and delivery note cancelled, the trip lets go — and the office re-issues from the
+        # edited lines, so no document downstream can disagree with the order
+        if order.status in ("issued", "dispatched") or order.pick_lists.exclude(status="cancelled").exists():
+            OrderService.unissue(order, reason="edited")
         OrderService.release_reservations(order)
         OrderService.write_lines(order, lines, allow_override)
         # a confirmed order holds stock against its lines; the new lines must hold it too, not ride the old grip
@@ -382,16 +385,12 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def cancel(order, reason, by_rep=False):
-        if by_rep and order.status != "submitted":
-            raise DomainError("Reps can only cancel orders that are still submitted.")
-        if order.status in ("dispatched", "partially_delivered", "delivered", "invoiced"):
-            raise DomainError("Dispatched/delivered orders cannot be cancelled; use a return.")
-        if order.status in ("cancelled", "rejected"):
-            raise DomainError("Order already closed.")
-        # goods the warehouse already issued come BACK on the books — a cancelled order must not leave stock
-        # written out with nowhere to be. The reversal is its own movement type, so the ledger says what
-        # happened rather than faking a return that never rolled in.
+    def unissue(order, *, reason=""):
+        """
+        Pull an order back from the warehouse before anything is delivered: every unit the warehouse issued
+        returns to stock as its own movement ("Issue reversed"), the delivery note and the load form die,
+        the trip lets go of the stop, and the order stands at confirmed again — ready to edit or re-issue.
+        """
         from apps.inventory.services import StockService
 
         for dn in order.delivery_notes.exclude(status__in=("cancelled", "delivered", "partially_delivered")):
@@ -400,7 +399,7 @@ class OrderService:
                     if line.qty_loaded:
                         StockService.move(warehouse=dn.warehouse, variant=line.variant, qty=line.qty_loaded,
                                           movement_type="issue_cancelled", batch=line.batch, unit_cost=line.unit_cost,
-                                          reference=dn, note=f"Order {order.number} cancelled")
+                                          reference=dn, note=f"Order {order.number}: {reason or 'pulled back'}")
             dn.status = "cancelled"
             dn.stock_out_done = False
             dn.save(update_fields=["status", "stock_out_done", "updated_at"])
@@ -409,6 +408,31 @@ class OrderService:
             if not pl.orders.exclude(pk=order.pk).exclude(status__in=("cancelled", "rejected")).exists():
                 pl.status = "cancelled"
                 pl.save(update_fields=["status", "updated_at"])
+        # the dead paperwork's lines still point at the order lines — an edit replaces those lines, so the
+        # references must go with the paper they belonged to (the movements keep the audit trail)
+        from apps.delivery.models import DeliveryNoteLine, PickListLine
+
+        DeliveryNoteLine.objects.filter(delivery_note__order=order, delivery_note__status="cancelled").delete()
+        PickListLine.objects.filter(order_line__order=order).exclude(picklist__status__in=("issued", "partially_issued")).delete()
+        order.lines.update(qty_dispatched=Decimal("0"))
+        if order.trip_id:
+            order.trip = None
+            order.save(update_fields=["trip"])
+        if order.status in ("issued", "dispatched"):
+            OrderService._set(order, "confirmed", "unissued", {"reason": reason})
+        return order
+
+    @staticmethod
+    @transaction.atomic
+    def cancel(order, reason, by_rep=False):
+        if by_rep and order.status != "submitted":
+            raise DomainError("Reps can only cancel orders that are still submitted.")
+        if order.status in ("partially_delivered", "delivered", "invoiced"):
+            raise DomainError("Delivered or invoiced orders cannot be cancelled; use a return.")
+        if order.status in ("cancelled", "rejected"):
+            raise DomainError("Order already closed.")
+        # anything the warehouse issued — even if it is on a vehicle but not yet delivered — comes home first
+        OrderService.unissue(order, reason=f"cancelled: {reason}" if reason else "cancelled")
         OrderService.release_reservations(order)
         order.rejection_reason = reason
         order.save(update_fields=["rejection_reason"])

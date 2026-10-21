@@ -78,9 +78,10 @@ export function OrderDetailPage() {
   const o = q.data;
   if (!o) return null;
   // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
-  // a confirmed order is the owner's to change, nobody else's — the server refuses anyone else too
+  // past confirmation an order is the owner's to change — editing issued/dispatched work pulls the goods
+  // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
   const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status)
-    || (o.status === "confirmed" && Boolean(isOwner) && !(o.delivery_notes || []).length && !(o.invoices || []).length);
+    || (["confirmed", "issued", "dispatched"].includes(o.status) && (Boolean(isOwner) || can("sales.cancel_confirmed_order")) && !(o.invoices || []).length);
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   return (
     <>
@@ -96,7 +97,7 @@ export function OrderDetailPage() {
           {o.status === "confirmed" && !o.trip && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
           {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
-   : ["confirmed", "on_hold_credit", "on_hold_stock", "issued"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
+   : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
    : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
@@ -147,7 +148,7 @@ export function OrderDetailPage() {
         try { await api.delete(`/api/v1/sales-orders/${o.id}`); toast.success(`${o.number} deleted`); qc.invalidateQueries({ queryKey: ["list", "/api/v1/sales-orders"] }); nav("/app/sales/orders"); }
         catch (e: any) { toast.error(e.message); }
       }} />
-      <ConfirmDialog open={dlg === "cancel"} title="Cancel order" withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
+      <ConfirmDialog open={dlg === "cancel"} title="Cancel order" message={["issued", "dispatched"].includes(o.status) ? "The goods the warehouse issued come back into stock, and the load form and delivery note are cancelled with the order." : undefined} withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "hold"} title="Put on hold" withReason confirmText="Hold" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("hold", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "confirm"} title="Override credit hold?" message={<>{o.hold_reason}<br />Confirming will override the credit check.</>} confirmText="Override & confirm" onClose={() => setDlg(null)} onConfirm={async () => { await run("confirm", { override_credit: true }); setDlg(null); }} />
       <Modal open={dlg === "deliver"} title={`Mark ${o.number} delivered`} onClose={() => setDlg(null)} size="sm" footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!!busy} onClick={async () => { await run("mark-delivered", { receiver_name: deliver.receiver_name, cash_collected: deliver.cash_collected || 0 }, { success: "Delivered and invoiced" }); setDlg(null); }}>Mark delivered</button></>}>

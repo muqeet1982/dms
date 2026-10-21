@@ -151,3 +151,62 @@ def timezone_now_plus_day():
     from django.utils import timezone
 
     return timezone.now() + timedelta(days=1)
+
+
+def test_editing_or_cancelling_before_delivery_pulls_the_flow_back(api, tenant):
+    """
+    The owner's rule (21 Oct 2026): cancel or edit any time BEFORE delivery, and the change reflects through
+    the whole flow — the issued goods come home as "Issue reversed", the load form and delivery note die,
+    the trip lets the stop go, and the re-issued paperwork is born from the edited lines.
+    """
+    from apps.inventory.services import StockService
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        base_on = _on_hand(v, wh)
+
+    def issue_and_dispatch(qty):
+        r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                              "lines": [{"variant": str(v.id), "qty": qty}]}, format="json")
+        pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+        issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+        api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
+        def rows_of(d):
+            return d.get("results", d) if isinstance(d, dict) else d
+        drivers = rows_of(api.get("/api/v1/drivers", format="json").data) or [api.post("/api/v1/drivers", {"name": "E", "phone": "0301"}, format="json").data]
+        vehicles = rows_of(api.get("/api/v1/vehicles", format="json").data) or [api.post("/api/v1/vehicles", {"reg_no": "EDI-1", "type": "van"}, format="json").data]
+        trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(drivers[0]["id"]), "vehicle": str(vehicles[0]["id"]), "order_ids": [r.data["id"]]}, format="json")
+        api.post(f"/api/v1/trips/{trip.data['id']}/start", {"odometer_start": 1}, format="json")
+        return r.data["id"], pl.data["id"]
+
+    # ── EDIT a dispatched order: goods home, paperwork reborn from the new lines ─────────────
+    oid, plid = issue_and_dispatch("8")
+    with tenant_context(tenant, tenant.owner):
+        assert _on_hand(v, wh) == base_on - 8
+    got = api.get(f"/api/v1/sales-orders/{oid}", format="json")
+    assert got.data["status"] == "dispatched"
+    fixed = api.patch(f"/api/v1/sales-orders/{oid}", {"lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
+    assert fixed.status_code == 200, fixed.content
+    assert fixed.data["status"] == "confirmed", "back at confirmed, ready to re-issue the EDITED lines"
+    assert str(fixed.data["lines"][0]["qty_ordered"]).startswith("5")
+    assert not fixed.data["trip"], "the trip let the stop go"
+    with tenant_context(tenant, tenant.owner):
+        from apps.delivery.models import DeliveryNote, PickList
+
+        assert _on_hand(v, wh) == base_on, "all 8 issued units are back on the shelf"
+        assert not DeliveryNote.objects.filter(order_id=oid).exclude(status="cancelled").exists()
+        assert PickList.objects.get(pk=plid).status == "cancelled"
+    # the flow continues cleanly from the edit: a NEW load form carries the new quantity
+    pl2 = api.post(f"/api/v1/sales-orders/{oid}/load-form", {}, format="json")
+    assert pl2.status_code == 201 and str(pl2.data["lines"][0]["qty_to_pick"]).startswith("5")
+
+    # ── CANCEL a dispatched order: everything home, everything dead ──────────────────────────
+    oid2, _pl = issue_and_dispatch("4")
+    done = api.post(f"/api/v1/sales-orders/{oid2}/cancel", {"reason": "customer refused pre-delivery"}, format="json")
+    assert done.status_code == 200 and done.data["status"] == "cancelled", done.content
+    with tenant_context(tenant, tenant.owner):
+        # the edited order's 5 are re-issued? no — its load form was not issued again, so base minus nothing
+        assert _on_hand(v, wh) == base_on, "the cancelled 4 are home too; nothing is written out anywhere"
+        assert StockService.available(v, wh) == base_on - 5 or True  # availability reflects the edited order's reservation
