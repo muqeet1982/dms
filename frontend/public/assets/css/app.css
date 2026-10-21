@@ -32,6 +32,15 @@
 .dropdown-menu.show { display: block; }
 .line-editor input.form-control, .line-editor select.form-select { min-width: 70px; }
 .entity-select { position: relative; }
+/* Grouped report headers (the owner's stock-report style): a navy band with the group names over their
+   Stock Qty / Stock Price pairs, white text, and separator rules running down the group boundaries. */
+.report-grouped thead th { background: #202C4B !important; color: #fff; border-color: rgba(255,255,255,.14); vertical-align: middle; }
+.report-grouped thead tr.rg-top th { font-size: 12.5px; font-weight: 700; letter-spacing: .4px; padding-top: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.22); }
+.report-grouped thead tr.rg-sub th { font-size: 11px; font-weight: 600; opacity: .92; padding-top: 5px; padding-bottom: 7px; }
+.report-grouped thead th.rg-sep { border-left: 1px solid rgba(255,255,255,.28); }
+.report-grouped tbody td.rg-sep { border-left: 1px solid #dde1e8; }
+.report-grouped tbody td { font-size: 12.5px; }
+
 /* the lines editor must not clip the item-search dropdown: overflow-x auto on a wrapper forces vertical
    clipping too, which hid the suggestions under the table edge (owner, 21 Oct 2026) */
 .lines-editor-wrap { overflow: visible; }

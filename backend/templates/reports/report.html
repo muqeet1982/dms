@@ -12,10 +12,16 @@ landscape when there are more columns than a portrait page can hold.
 {% block status %}{% if params %}<div class="muted" style="font-size:9px">{% for k, v in params.items %}{{ k|label }}: {{ v }}{% if not forloop.last %} · {% endif %}{% endfor %}</div>{% endif %}{% endblock %}
 
 {% block lines %}
-<table class="lines">
+<table class="lines{% if groups %} rg{% endif %}">
+  {% if groups %}<style>
+    .rg thead th { background: #202C4B; color: #fff; border: 0.4pt solid rgba(255,255,255,.25); vertical-align: middle; }
+    .rg thead tr.rg-top th { text-align: center; font-size: 8.4pt; font-weight: 700; letter-spacing: .3pt; }
+    .rg thead tr.rg-sub th { font-size: 7.4pt; font-weight: 600; }
+    .rg tbody td { border-left: 0.4pt solid #dde1e8; }
+  </style>{% endif %}
   <thead>
-  {% if groups %}<tr>{% for g in groups %}<th colspan="{{ g.span }}" style="text-align:center">{{ g.label }}</th>{% endfor %}</tr>{% endif %}
-  {% if col_labels %}<tr>{% for c in col_labels %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
+  {% if groups %}<tr class="rg-top">{% for g in groups %}<th colspan="{{ g.span }}">{{ g.label }}</th>{% endfor %}</tr>{% endif %}
+  {% if col_labels %}<tr class="rg-sub">{% for c in col_labels %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
   {% else %}<tr>{% for c in cols %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
   </thead>
   <tbody>
