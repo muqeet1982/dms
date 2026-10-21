@@ -91,6 +91,7 @@ class StockMovement(TenantModel):
         # went back on a lorry. It used to be filed as "Purchase return", so the ledger showed a return that did
         # not exist and the owner quite reasonably asked where it had come from.
         ("grn_cancelled", "Receipt cancelled"),
+        ("issue_cancelled", "Issue reversed"),
     ]
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="movements")
     bin = models.ForeignKey(Bin, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")

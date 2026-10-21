@@ -122,7 +122,7 @@ class DeliveryTrip(DocumentModel):
 class DeliveryNote(DocumentModel):
     STATUS = [
         ("pending", "Pending"), ("loaded", "Issued"), ("dispatched", "Out for delivery"), ("delivered", "Delivered"),
-        ("partially_delivered", "Partially delivered"), ("failed", "Failed"), ("returned", "Returned"),
+        ("partially_delivered", "Partially delivered"), ("failed", "Failed"), ("returned", "Returned"), ("cancelled", "Cancelled"),
     ]
     trip = models.ForeignKey(DeliveryTrip, null=True, blank=True, on_delete=models.SET_NULL, related_name="delivery_notes")
     picklist = models.ForeignKey("delivery.PickList", null=True, blank=True, on_delete=models.SET_NULL, related_name="delivery_notes", help_text="Load form this stock was issued on")

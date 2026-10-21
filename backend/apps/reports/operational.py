@@ -593,6 +593,10 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
             per[key]["opening_qty"] += m.qty
             per[key]["opening_value"] += value
             continue
+        if m.movement_type == "issue_cancelled":
+            per[key]["issue_qty"] -= m.qty
+            per[key]["issue_value"] -= value
+            continue
         bucket = IN_BUCKETS.get(m.movement_type) or OUT_BUCKETS.get(m.movement_type) or RETURN_BUCKETS.get(m.movement_type)
         if m.movement_type == "opening":
             per[key]["opening_qty"] += m.qty

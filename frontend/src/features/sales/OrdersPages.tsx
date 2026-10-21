@@ -95,7 +95,9 @@ export function OrderDetailPage() {
           {["confirmed", "dispatched", "partially_delivered"].includes(o.status) && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "confirmed" && !o.trip && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
-          {["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
+          {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
+   : ["confirmed", "on_hold_credit", "on_hold_stock", "issued"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
+   : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />

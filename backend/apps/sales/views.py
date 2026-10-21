@@ -164,11 +164,17 @@ class SalesOrderViewSet(DocumentViewSet):
     def cancel(self, request, pk=None):
         m = request.membership
         by_rep = bool(m.supplier_rep_id)
+        order = self.get_object()
         if not by_rep and not (m.has_perm("sales.cancel_sales_order") or m.is_owner):
             raise DomainError("You cannot cancel orders.", status_code=403)
         if by_rep and not m.has_perm("external.cancel_own_order"):
             raise DomainError("Your role cannot cancel orders.", status_code=403)
-        return Response(SalesOrderSerializer(OrderService.cancel(self.get_object(), request.data.get("reason", ""), by_rep=by_rep)).data)
+        # the owner's rule (21 Oct 2026): once the office has said yes, cancelling is the owner's call —
+        # unless they hand out the "Cancel after confirmation" switch in the role matrix
+        if not by_rep and order.status in ("confirmed", "on_hold_credit", "on_hold_stock", "issued") \
+                and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
+            raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
+        return Response(SalesOrderSerializer(OrderService.cancel(order, request.data.get("reason", ""), by_rep=by_rep)).data)
 
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):

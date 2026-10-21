@@ -389,6 +389,26 @@ class OrderService:
             raise DomainError("Dispatched/delivered orders cannot be cancelled; use a return.")
         if order.status in ("cancelled", "rejected"):
             raise DomainError("Order already closed.")
+        # goods the warehouse already issued come BACK on the books — a cancelled order must not leave stock
+        # written out with nowhere to be. The reversal is its own movement type, so the ledger says what
+        # happened rather than faking a return that never rolled in.
+        from apps.inventory.services import StockService
+
+        for dn in order.delivery_notes.exclude(status__in=("cancelled", "delivered", "partially_delivered")):
+            if dn.stock_out_done:
+                for line in dn.lines.select_related("variant", "batch"):
+                    if line.qty_loaded:
+                        StockService.move(warehouse=dn.warehouse, variant=line.variant, qty=line.qty_loaded,
+                                          movement_type="issue_cancelled", batch=line.batch, unit_cost=line.unit_cost,
+                                          reference=dn, note=f"Order {order.number} cancelled")
+            dn.status = "cancelled"
+            dn.stock_out_done = False
+            dn.save(update_fields=["status", "stock_out_done", "updated_at"])
+        # a load form left with no live orders is dead paper
+        for pl in order.pick_lists.exclude(status="cancelled"):
+            if not pl.orders.exclude(pk=order.pk).exclude(status__in=("cancelled", "rejected")).exists():
+                pl.status = "cancelled"
+                pl.save(update_fields=["status", "updated_at"])
         OrderService.release_reservations(order)
         order.rejection_reason = reason
         order.save(update_fields=["rejection_reason"])
