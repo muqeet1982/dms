@@ -145,3 +145,26 @@ def test_payment_form_shows_both_legs(api, tenant):
     assert legs.status_code == 200 and legs.data["locked"] and "Receivable" in legs.data["account"], legs.data
     other = api.get("/api/v1/accounting/payments/legs", {"direction": "in", "partner_type": "other"})
     assert not other.data["locked"]
+
+
+def test_the_voucher_actually_prints_its_three_signature_boxes(api, tenant):
+    """The block was silently dropped for days: voucher.html overrode `signatures`, but _doc.html never
+    declared that block, so Django discarded the whole strip and no voucher ever printed one."""
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        from django.template.loader import render_to_string
+
+        from apps.accounting.models import JournalEntry
+        from apps.accounting.vouchers import signature_boxes, voucher_code, voucher_title
+
+        e = JournalEntry.objects.filter(status="posted").first()
+        assert e is not None, "the voucher tests above leave posted entries behind"
+        lines = list(e.lines.select_related("account"))
+        code = voucher_code(e, lines)
+        html = render_to_string("accounting/voucher.html", {"e": e, "lines": lines, "voucher_code": code,
+                                                            "voucher_title": voucher_title(code),
+                                                            "signatures": signature_boxes(code), "tenant": tenant})
+    for label in ("Prepared By", "Checked By", "Approved By"):
+        assert label in html, f"{label} missing from the printed voucher"
+    assert 'class="signs"' in html

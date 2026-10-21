@@ -94,6 +94,8 @@ table.totals tr.due td{font-weight:bold;background:#FFF4EE;border-bottom:0}
 </div>
 
 
+{% block signatures %}{% endblock %}
+
 <div class="tail">
   <span>{% if tenant.settings.invoice_footer %}{{ tenant.settings.invoice_footer }}{% endif %}</span>
   <span class="nowrap">{{ printed_at|default_if_none:"" }}</span>
