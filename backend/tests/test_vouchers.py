@@ -159,7 +159,14 @@ def test_the_voucher_actually_prints_its_three_signature_boxes(api, tenant):
         from apps.accounting.vouchers import signature_boxes, voucher_code, voucher_title
 
         e = JournalEntry.objects.filter(status="posted").first()
-        assert e is not None, "the voucher tests above leave posted entries behind"
+        if e is None:
+            from decimal import Decimal
+
+            from apps.accounting.services import Line, PostingService, account_for
+
+            e = PostingService.post([Line(account_for("cash"), debit=Decimal("100"), description="sig test"),
+                                     Line(account_for("sales"), credit=Decimal("100"), description="sig test")],
+                                    memo="signature strip test")
         lines = list(e.lines.select_related("account"))
         code = voucher_code(e, lines)
         html = render_to_string("accounting/voucher.html", {"e": e, "lines": lines, "voucher_code": code,

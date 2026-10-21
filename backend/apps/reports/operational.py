@@ -625,6 +625,7 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
         if not show_zero and all(not b[f] for f in ("opening_qty", "purchase_qty", "issue_qty", "wastage_qty", "return_qty", "adjust_qty")):
             continue
         rows.append({
+            "sr": len(rows) + 1,
             "item": names.get(key, ""), "price": str(prices.get(key) or 0),
             "opening_qty": str(b["opening_qty"]), "opening_value": str(q2(b["opening_value"])),
             "purchase_qty": str(b["purchase_qty"]), "purchase_value": str(q2(b["purchase_value"])),
@@ -638,17 +639,20 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
               ("opening_value", "purchase_value", "issue_value", "wastage_value", "return_value", "adjust_value", "closing_value")}
     qty_price = ["Stock Qty", "Stock Price"]
     return {
-        "columns": ["item", "price", "opening_qty", "opening_value", "purchase_qty", "purchase_value",
+        "columns": ["sr", "item", "price", "opening_qty", "opening_value", "purchase_qty", "purchase_value",
                     "issue_qty", "issue_value", "wastage_qty", "wastage_value", "return_qty", "return_value",
                     "adjust_qty", "adjust_value", "closing_qty", "closing_value"],
         # the two-row heading the owner wants: group names over Stock Qty / Stock Price pairs
-        "header_groups": [{"label": "", "span": 1}, {"label": "", "span": 1},
+        "header_groups": [{"label": "", "span": 1}, {"label": "", "span": 1}, {"label": "", "span": 1},
                           {"label": "Opening", "span": 2}, {"label": "Purchase", "span": 2},
                           {"label": "Issuance", "span": 2}, {"label": "Wastage", "span": 2},
                           {"label": "Return", "span": 2}, {"label": "Adjustment", "span": 2},
                           {"label": "Closing", "span": 2}],
-        "column_labels": {"item": "Items", "price": "Price",
+        "column_labels": {"sr": "Sr No", "item": "Items", "price": "Price",
                           **{f"{g}_qty": qty_price[0] for g in ("opening", "purchase", "issue", "wastage", "return", "adjust", "closing")},
                           **{f"{g}_value": qty_price[1] for g in ("opening", "purchase", "issue", "wastage", "return", "adjust", "closing")}},
+        # the reference design tints movement quantities: in green, out red, closing bold
+        "column_styles": {"purchase_qty": "success", "issue_qty": "danger", "wastage_qty": "danger",
+                          "return_qty": "danger", "closing_qty": "bold", "closing_value": "bold"},
         "rows": rows, "totals": totals,
     }
