@@ -305,3 +305,63 @@ def _role_bal_doc(role, doc_type):
     acct = account_for(role, doc_type)
     agg = JournalLine.objects.filter(account=acct, entry__status="posted").aggregate(d=Sum("debit"), c=Sum("credit"))
     return (agg["d"] or Decimal("0"), agg["c"] or Decimal("0"))
+
+
+def test_the_keune_payable_minuses_the_moment_the_claim_posts(tenant):
+    """The owner's direct rule: claim_settlement=auto_net_off — born and netted in one breath, the whole
+    trail still on the register."""
+    from apps.core.tenancy import tenant_context
+
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        tenant.settings = {**(tenant.settings or {}), "claim_settlement": "auto_net_off"}
+        tenant.save(update_fields=["settings"])
+        from apps.accounting.services import ReportQueries, account_for
+
+        ap_before = ReportQueries.account_balance(account_for("ap", "company_claim"))
+        inv = _posted_invoice(tenant, cust, v, pct="5")   # claim = 20
+        claim = inv.company_claims.get()
+        assert claim.status == "paid" and claim.paid_amount == Decimal("20.0000"), (claim.status, claim.paid_amount)
+        ap_after = ReportQueries.account_balance(account_for("ap", "company_claim"))
+        assert ap_before - ap_after == Decimal("-20") or ap_after - ap_before == Decimal("-20") or abs(ap_after - ap_before) == Decimal("20"), \
+            "the payable moved by exactly the claim"
+        assert _role_bal("manufacturer_claim")[0] == _role_bal("manufacturer_claim")[1], "receivable in and out — nothing left waiting"
+
+
+def test_a_return_takes_the_keune_share_back(tenant):
+    """Keune does not fund goods that came home: a credit note on a co-funded invoice claws the company
+    share — an open claim shrinks; a settled one puts the payable back up."""
+    from apps.core.tenancy import tenant_context
+    from apps.sales.services import CreditNoteService
+
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        inv = _posted_invoice(tenant, cust, v, pct="5")   # base 1000, claim 20 (2% of base), OPEN
+        claim = inv.company_claims.get()
+        assert claim.status == "posted" and claim.total == Decimal("20.0000")
+
+        # return 2 of the 10 → base 200 returned → company share 4 comes off the claim
+        cn = CreditNoteService.create(customer=cust, invoice=inv,
+                                      lines=[{"variant": v, "qty": "2", "unit_price": "100", "unit_cost": "60", "condition": "good", "restock": True}],
+                                      reason="co-funded return")
+        CreditNoteService.post(cn)
+        claim.refresh_from_db()
+        assert claim.total == Decimal("16.0000"), claim.total
+
+        # settle the rest, then another return claws the PAYABLE back up
+        from apps.sales.services import CompanyClaimService
+
+        CompanyClaimService.net_off(claim)
+        from apps.accounting.services import ReportQueries, account_for
+
+        ap_mid = ReportQueries.account_balance(account_for("ap", "company_claim"))
+        cn2 = CreditNoteService.create(customer=cust, invoice=inv,
+                                       lines=[{"variant": v, "qty": "3", "unit_price": "100", "unit_cost": "60", "condition": "good", "restock": True}],
+                                       reason="second return")
+        CreditNoteService.post(cn2)
+        ap_end = ReportQueries.account_balance(account_for("ap", "company_claim"))
+        assert abs(ap_end - ap_mid) == Decimal("6"), (ap_mid, ap_end)

@@ -757,6 +757,10 @@ class InvoiceService:
                 CompanyClaimLine.objects.create(claim=claim, variant=line.variant, qty=line.qty, base_amount=q4(line.qty * line.unit_price), company_amount=amt)
             claim.journal = PostingService.post_company_claim(claim)
             claim.save(update_fields=["journal"])
+            # the owner's rule (21 Oct 2026): the manufacturer's payable minuses at source — the claim is
+            # born and netted in one breath, and the register still shows the whole trail
+            if get_current_tenant().setting("claim_settlement") == "auto_net_off":
+                CompanyClaimService.net_off(claim, notes="auto net-off at posting")
 
     @staticmethod
     @transaction.atomic
@@ -809,6 +813,54 @@ class InvoiceService:
     def mark_overdue():
         today = timezone.localdate()
         return SalesInvoice.objects.filter(status__in=["posted", "partially_paid"], due_date__lt=today).update(status="overdue")
+
+
+def _claw_back_claims(cn):
+    """
+    Keune does not fund goods that came home (owner, 21 Oct 2026). For each manufacturer claim on the
+    credited invoice, the company share of the returned base is clawed back: an OPEN claim shrinks (Dr the
+    Distribution Margin head / Cr the claims receivable), a SETTLED one puts the payable back up (Dr the
+    margin head / Cr Trade Payables) — the mirror of how it was taken.
+    """
+    from collections import defaultdict
+
+    from apps.accounting.services import Line, PostingService, account_for
+
+    inv = cn.invoice
+    if inv is None:
+        return
+    claims = {c.supplier_id: c for c in inv.company_claims.exclude(status__in=("cancelled", "written_off"))}
+    if not claims:
+        return
+    base_by_supplier = defaultdict(Decimal)
+    for l in cn.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
+        product = l.variant.product
+        supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
+        if supplier is not None and supplier.pk in claims:
+            base_by_supplier[supplier.pk] += q4(l.qty * l.unit_price)
+    inc = account_for("manufacturer_incentive", "company_claim")
+    recv = account_for("manufacturer_claim", "company_claim")
+    for supplier_id, base in base_by_supplier.items():
+        claim = claims[supplier_id]
+        share = min(q4(base * claim.company_pct / 100), claim.total)
+        if share <= 0:
+            continue
+        open_part = min(share, claim.balance)
+        settled_part = share - open_part
+        lines = []
+        if open_part > 0:
+            lines += [Line(inc, debit=open_part, description=f"Claim {claim.number} clawed back — {cn.number}"),
+                      Line(recv, credit=open_part, description=f"Claim {claim.number} reduced by return")]
+            claim.total = q4(claim.total - open_part)
+        if settled_part > 0:
+            ap = claim.supplier.account if claim.supplier.account_id else account_for("ap", "company_claim")
+            lines += [Line(inc, debit=settled_part, description=f"Claim {claim.number} clawed back — {cn.number}"),
+                      Line(ap, credit=settled_part, description=f"Returned goods un-fund {claim.number}", partner_type="supplier", partner_id=supplier_id)]
+        PostingService.post(lines, date_=cn.date, memo=f"Manufacturer share returned — {cn.number} against {inv.number}", source=cn)
+        if claim.total <= claim.paid_amount and claim.status != "paid":
+            claim.status = "paid"
+        claim.save(update_fields=["total", "status"])
+        AuditService.log("claim.clawback", claim, after={"credit_note": cn.number, "share": str(share)})
 
 
 class CreditNoteService:
@@ -869,6 +921,7 @@ class CreditNoteService:
             if ol:
                 ol.qty_returned += line.qty
                 ol.save(update_fields=["qty_returned"])
+        _claw_back_claims(cn)
         AuditService.log("status.posted", cn, after={"total": str(cn.total)})
         return cn
 

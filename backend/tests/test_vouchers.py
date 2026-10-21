@@ -175,3 +175,36 @@ def test_the_voucher_actually_prints_its_three_signature_boxes(api, tenant):
     for label in ("Prepared By", "Checked By", "Approved By"):
         assert label in html, f"{label} missing from the printed voucher"
     assert 'class="signs"' in html
+
+
+def test_reset_to_draft_removes_the_posting_without_an_extra_entry(api, tenant):
+    """The owner's ask: un-post a manual journal — no reversing entry, the figures just stop counting."""
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        from decimal import Decimal
+
+        from apps.accounting.models import JournalEntry
+        from apps.accounting.services import Line, PostingService, ReportQueries, account_for
+
+        cash = account_for("cash")
+        before = ReportQueries.account_balance(cash)
+        e = PostingService.post([Line(cash, debit=Decimal("500"), description="reset test"),
+                                 Line(account_for("sales"), credit=Decimal("500"), description="reset test")],
+                                memo="reset-to-draft test")
+        assert ReportQueries.account_balance(cash) - before == Decimal("500")
+        entries_before = JournalEntry.objects.count()
+
+    r = api.post(f"/api/v1/accounting/journals/{e.id}/reset-to-draft", {}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "draft", r.content
+
+    with tenant_context(tenant, tenant.owner):
+        assert ReportQueries.account_balance(cash) == before, "the figures stopped counting"
+        assert JournalEntry.objects.count() == entries_before, "and NO extra entry was written"
+
+    # a document's own journal refuses — those books follow their document
+    with tenant_context(tenant, tenant.owner):
+        doc_je = JournalEntry.objects.exclude(source_type="").exclude(source_type__isnull=True).filter(status="posted").first()
+    if doc_je is not None:
+        blocked = api.post(f"/api/v1/accounting/journals/{doc_je.id}/reset-to-draft", {}, format="json")
+        assert blocked.status_code in (400, 422), blocked.content

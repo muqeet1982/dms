@@ -86,6 +86,7 @@ class JournalEntryViewSet(DocumentViewSet):
     perm_map = page_perms("journals", {
         "post": extra_perm("journals", "post"),
         "reverse": extra_perm("journals", "reverse"),
+        "reset_to_draft": extra_perm("journals", "reverse"),
         "print": "accounting.view_journal",
         "pdf": "accounting.view_journal",
     })
@@ -174,6 +175,32 @@ class JournalEntryViewSet(DocumentViewSet):
     @require_perm("accounting.post_journal")
     def post(self, request, pk=None):
         return Response(JournalEntrySerializer(PostingService.post_draft(self.get_object())).data)
+
+    @action(detail=True, methods=["post"], url_path="reset-to-draft")
+    @require_perm("accounting.reverse_journal")
+    def reset_to_draft(self, request, pk=None):
+        """
+        Take a posted MANUAL journal back to draft — the owner's "remove the last post, no extra entries"
+        (21 Oct 2026). A draft entry has no effect on any balance or report (everything reads
+        entry__status="posted"), so un-posting it IS the removal; nothing reversing is written. A journal a
+        document posted (invoice, payment, claim…) refuses: those books follow their document, and the way
+        back there is cancelling the document or reversing.
+        """
+        e = self.get_object()
+        if e.status != "posted":
+            raise DomainError("Only a posted journal can go back to draft.")
+        if e.source_type:
+            raise DomainError(f"This journal belongs to {e.source_type} {e.source_number or ''} — cancel or reverse that document instead.".strip())
+        if getattr(e, "reversed_by_entry", None):
+            raise DomainError("This journal was already reversed — the reversal is the record now.")
+        from apps.core.audit import AuditService
+
+        e.status = "draft"
+        e.posted_by = None
+        e.posted_at = None
+        e.save(update_fields=["status", "posted_by", "posted_at", "updated_at"])
+        AuditService.log("journal.reset_to_draft", e, after={"by": request.user.email or str(request.user.pk)})
+        return Response(JournalEntrySerializer(e).data)
 
     @action(detail=True, methods=["post"])
     @require_perm("accounting.reverse_journal")

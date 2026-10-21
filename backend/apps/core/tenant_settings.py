@@ -33,7 +33,7 @@ SETTINGS_KEYS = {
     # field work: the rules the rep app is held to (see apps/partners/geofence.py)
     "geofence_policy": "block", "geofence_require_location": True, "order_location_rule": "shop", "order_proximity_m": 50, "rep_order_photo": "optional", "rep_visit_photo": "required",
     "tracking_enabled": True, "tracking_mode": "work_hours",
-    "require_shift_for_orders": False, "shift_gap_minutes": 15, "shift_lost_end_minutes": 30, "shift_auto_end_at": "23:59", "tracking_interval_s": 120, "tracking_min_distance_m": 50,
+    "require_shift_for_orders": False, "claim_settlement": "manual", "shift_gap_minutes": 15, "shift_lost_end_minutes": 30, "shift_auto_end_at": "23:59", "tracking_interval_s": 120, "tracking_min_distance_m": 50,
     "tracking_from": "09:00", "tracking_to": "19:00", "tracking_retention_days": 90, "tracking_notice": "",
 }
 BRANDING_KEYS = {"app_name": "", "logo": "", "logo_dark": "", "favicon": "", "primary_color": "", "accent_color": "", "footer_text": "", "email_from_name": "", "hide_powered_by": False}

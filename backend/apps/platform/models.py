@@ -188,6 +188,9 @@ class Tenant(models.Model):
         "tracking_mode": "work_hours",
         # the shift model (owner, 20 Oct 2026): tracking_mode "shift" records exactly while a shift is on,
         # and require_shift_for_orders refuses POST /ext/v1/orders without one
+        # how a manufacturer claim settles: "manual" (receipt or net-off by hand) or "auto_net_off" — the
+        # owner's rule: the Keune payable minuses the moment the claim posts
+        "claim_settlement": "manual",
         "require_shift_for_orders": False,
         "shift_gap_minutes": 15,
         "shift_lost_end_minutes": 30,

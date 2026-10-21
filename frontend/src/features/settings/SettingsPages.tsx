@@ -49,6 +49,9 @@ export function CompanySettingsPage() {
       { value: "warn", label: "Allow it, but record it on the out-of-area report" },
       { value: "off", label: "Do not check at all" }] },
     { name: "geofence_require_location", label: "Refuse when the app sends no location at all", type: "checkbox", col: "col-md-6", hint: "turn on once every rep's app sends GPS, otherwise an old app is locked out" },
+    { name: "claim_settlement", label: "Manufacturer claim settlement", type: "select", col: "col-md-6", options: [
+      { value: "auto_net_off", label: "Minus the manufacturer's payable the moment the claim posts" },
+      { value: "manual", label: "Keep claims open — settle by receipt or net-off by hand" }] },
     { name: "require_shift_for_orders", label: "A rep must be on shift to send orders", type: "checkbox", col: "col-md-6", hint: "Start/Break/End on the rep's home screen; no shift, no order" },
     { name: "shift_gap_minutes", label: "Alert when tracking silent for (min)", type: "number", col: "col-md-3" },
     { name: "shift_lost_end_minutes", label: "End the shift after a further (min)", type: "number", col: "col-md-3" },
