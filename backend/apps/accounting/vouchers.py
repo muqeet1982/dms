@@ -11,8 +11,8 @@ TITLES = {
 }
 
 # the signature strip on the printed voucher, per §6.4 of the guide
-SIGNATURES_TWO = ["Prepared by", "Verified by"]
-SIGNATURES_FIVE = ["Prepared", "Verified", "Approved", "Received", "Audited"]
+# the owner's three, on every voucher (21 Oct 2026): who made it, who checked it, who approved it
+SIGNATURES = ["Prepared By", "Checked By", "Approved By"]
 
 
 def _is_bank(account):
@@ -50,4 +50,4 @@ def voucher_title(code):
 
 
 def signature_boxes(code):
-    return SIGNATURES_TWO if code in ("BPV", "JV") else SIGNATURES_FIVE
+    return SIGNATURES
