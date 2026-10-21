@@ -44,11 +44,31 @@ def cell(v):
     return v
 
 
+def _col_label(result, c):
+    return (result.get("column_labels") or {}).get(c) or c.replace("_", " ").title()
+
+
+def _flat_headers(result, cols):
+    """Group + sub-label flattened to one row ("Opening Stock Qty") for CSV and plain consumers."""
+    groups = result.get("header_groups")
+    if not groups:
+        return [_col_label(result, c) for c in cols]
+    out, i = [], 0
+    for g in groups:
+        for _ in range(g["span"]):
+            if i < len(cols):
+                sub = _col_label(result, cols[i])
+                out.append(f"{g['label']} {sub}".strip())
+                i += 1
+    out.extend(_col_label(result, c) for c in cols[i:])
+    return out
+
+
 def to_csv(result, title=""):
     buf = io.StringIO()
     w = csv.writer(buf)
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
-    w.writerow(cols)
+    w.writerow(_flat_headers(result, cols))
     for r in result["rows"]:
         w.writerow([cell(r.get(c, "")) for c in cols])
     if result.get("totals"):
@@ -69,10 +89,28 @@ def to_xlsx(result, title=""):
 
     ws.title = (re.sub(r"[\\/*?:\[\]]", "-", title or "Report").strip() or "Report")[:30]
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
-    ws.append([c.replace("_", " ").title() for c in cols])
-    for head in ws[1]:  # not `cell`: that is the function above, and shadowing it broke every xlsx export
-        head.font = Font(bold=True, color="FFFFFF")
-        head.fill = PatternFill("solid", fgColor="F26522")
+    groups = result.get("header_groups")
+    if groups:
+        # the two-row heading: merged group names over their sub-columns
+        from openpyxl.utils import get_column_letter
+
+        row, col = [], 1
+        for g in groups:
+            row.append(g["label"])
+            row.extend([""] * (g["span"] - 1))
+            col += g["span"]
+        ws.append(row)
+        col = 1
+        for g in groups:
+            if g["span"] > 1:
+                ws.merge_cells(f"{get_column_letter(col)}1:{get_column_letter(col + g['span'] - 1)}1")
+            col += g["span"]
+    ws.append([_col_label(result, c) for c in cols])
+    header_rows = 2 if groups else 1
+    for n in range(1, header_rows + 1):
+        for head in ws[n]:  # not `cell`: that is the function above, and shadowing it broke every xlsx export
+            head.font = Font(bold=True, color="FFFFFF")
+            head.fill = PatternFill("solid", fgColor="F26522")
     for r in result["rows"]:
         row = []
         for c in cols:
@@ -89,8 +127,10 @@ def to_xlsx(result, title=""):
         ws.append([])
         for k, v in result["totals"].items():
             ws.append([k, float(v) if isinstance(v, str) and v.replace(".", "", 1).replace("-", "", 1).isdigit() else v])
-    for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 18
+    from openpyxl.utils import get_column_letter as _gcl
+
+    for i in range(1, ws.max_column + 1):   # merged group cells have no column_letter of their own
+        ws.column_dimensions[_gcl(i)].width = 18
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -105,7 +145,8 @@ def to_pdf(result, title="", tenant=None, params=None):
     from apps.core.documents import logo_url
 
     html = render_to_string("reports/report.html", {
-        "title": title, "cols": cols, "rows": rows, "totals": result.get("totals", {}), "tenant": tenant,
+        "title": title, "cols": cols, "col_labels": [_col_label(result, c) for c in cols] if result.get("column_labels") else None,
+        "groups": result.get("header_groups"), "rows": rows, "totals": result.get("totals", {}), "tenant": tenant,
         "params": params or {}, "landscape": len(cols) > 7,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
     })

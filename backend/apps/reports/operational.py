@@ -572,8 +572,8 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
     start = date_from or timezone.localdate().replace(day=1)
     end = date_to or timezone.localdate()
     IN_BUCKETS = {"grn": "purchase", "transfer_in": "purchase"}
-    OUT_BUCKETS = {"sale_dispatch": "issue", "transfer_out": "issue", "wastage": "wastage", "adjustment": "wastage",
-                   "count_variance": "wastage", "grn_cancelled": "wastage"}
+    OUT_BUCKETS = {"sale_dispatch": "issue", "transfer_out": "issue", "wastage": "wastage"}
+    ADJUST_TYPES = {"adjustment", "count_variance", "grn_cancelled"}
     RETURN_BUCKETS = {"sales_return": "return", "delivery_return": "return", "purchase_return": "return"}
 
     qs = StockMovement.objects.select_related("variant__product__category").filter(occurred_at__date__lte=end)
@@ -597,6 +597,10 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
             per[key]["issue_qty"] -= m.qty
             per[key]["issue_value"] -= value
             continue
+        if m.movement_type in ADJUST_TYPES:
+            per[key]["adjust_qty"] += m.qty          # signed: an increase adds, a decrease subtracts
+            per[key]["adjust_value"] += value
+            continue
         bucket = IN_BUCKETS.get(m.movement_type) or OUT_BUCKETS.get(m.movement_type) or RETURN_BUCKETS.get(m.movement_type)
         if m.movement_type == "opening":
             per[key]["opening_qty"] += m.qty
@@ -616,9 +620,9 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
 
     rows = []
     for key, b in sorted(per.items(), key=lambda kv: names.get(kv[0], "")):
-        closing_qty = b["opening_qty"] + b["purchase_qty"] + b["return_qty"] - b["issue_qty"] - b["wastage_qty"]
-        closing_value = b["opening_value"] + b["purchase_value"] + b["return_value"] - b["issue_value"] - b["wastage_value"]
-        if not show_zero and all(not b[f] for f in ("opening_qty", "purchase_qty", "issue_qty", "wastage_qty", "return_qty")):
+        closing_qty = b["opening_qty"] + b["purchase_qty"] + b["return_qty"] + b["adjust_qty"] - b["issue_qty"] - b["wastage_qty"]
+        closing_value = b["opening_value"] + b["purchase_value"] + b["return_value"] + b["adjust_value"] - b["issue_value"] - b["wastage_value"]
+        if not show_zero and all(not b[f] for f in ("opening_qty", "purchase_qty", "issue_qty", "wastage_qty", "return_qty", "adjust_qty")):
             continue
         rows.append({
             "item": names.get(key, ""), "price": str(prices.get(key) or 0),
@@ -627,10 +631,24 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
             "issue_qty": str(b["issue_qty"]), "issue_value": str(q2(b["issue_value"])),
             "wastage_qty": str(b["wastage_qty"]), "wastage_value": str(q2(b["wastage_value"])),
             "return_qty": str(b["return_qty"]), "return_value": str(q2(b["return_value"])),
+            "adjust_qty": str(b["adjust_qty"]), "adjust_value": str(q2(b["adjust_value"])),
             "closing_qty": str(closing_qty), "closing_value": str(q2(closing_value)),
         })
     totals = {f: str(q2(sum(Decimal(r[f]) for r in rows))) for f in
-              ("opening_value", "purchase_value", "issue_value", "wastage_value", "return_value", "closing_value")}
-    return {"columns": ["item", "price", "opening_qty", "opening_value", "purchase_qty", "purchase_value",
-                        "issue_qty", "issue_value", "wastage_qty", "wastage_value", "return_qty", "return_value",
-                        "closing_qty", "closing_value"], "rows": rows, "totals": totals}
+              ("opening_value", "purchase_value", "issue_value", "wastage_value", "return_value", "adjust_value", "closing_value")}
+    qty_price = ["Stock Qty", "Stock Price"]
+    return {
+        "columns": ["item", "price", "opening_qty", "opening_value", "purchase_qty", "purchase_value",
+                    "issue_qty", "issue_value", "wastage_qty", "wastage_value", "return_qty", "return_value",
+                    "adjust_qty", "adjust_value", "closing_qty", "closing_value"],
+        # the two-row heading the owner wants: group names over Stock Qty / Stock Price pairs
+        "header_groups": [{"label": "", "span": 1}, {"label": "", "span": 1},
+                          {"label": "Opening", "span": 2}, {"label": "Purchase", "span": 2},
+                          {"label": "Issuance", "span": 2}, {"label": "Wastage", "span": 2},
+                          {"label": "Return", "span": 2}, {"label": "Adjustment", "span": 2},
+                          {"label": "Closing", "span": 2}],
+        "column_labels": {"item": "Items", "price": "Price",
+                          **{f"{g}_qty": qty_price[0] for g in ("opening", "purchase", "issue", "wastage", "return", "adjust", "closing")},
+                          **{f"{g}_value": qty_price[1] for g in ("opening", "purchase", "issue", "wastage", "return", "adjust", "closing")}},
+        "rows": rows, "totals": totals,
+    }
