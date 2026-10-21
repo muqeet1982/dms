@@ -30,6 +30,9 @@ class SalesOrder(DocumentModel):
     trip = models.ForeignKey("delivery.DeliveryTrip", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
     price_list = models.ForeignKey("catalog.PriceList", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     currency = models.CharField(max_length=3, default="PKR")
+    PAYMENT_MODES = [("cash", "Cash"), ("credit", "Credit")]
+    # cash or credit sale — chosen when the order is taken, defaulted from the customer's terms (credit_days 0 = cash)
+    payment_mode = models.CharField(max_length=6, choices=PAYMENT_MODES, blank=True, default="")
     apply_customer_discount = models.BooleanField(default=True, help_text="Apply the customer's standing discount to lines that have none; switch off for a one-off order")
     # the order's own discount %: seeded from the customer, changeable per order; null = legacy order (customer rule)
     discount_pct = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)

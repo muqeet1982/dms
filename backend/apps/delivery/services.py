@@ -262,7 +262,7 @@ class DeliveryService:
             dn.delivered_by = get_current_user()
             dn.save()
             AuditService.log("delivery.failed", dn, after={"reason": failure_reason})
-            emit("delivery.failed", delivery_note=dn)
+            emit("delivery.failed", delivery_note=dn, reason=failure_reason)
             return dn
         by_id = {str(d["line_id"]): d for d in (delivered or [])}
         total_loaded = total_delivered = Decimal("0")

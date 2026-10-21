@@ -4,6 +4,7 @@ from . import ext_views as v
 
 urlpatterns = [
     path("me", v.ExtMeView.as_view()),
+    path("me/sales-summary", v.ExtSalesSummaryView.as_view()),
     path("orders", v.ExtOrdersView.as_view()),
     path("orders/<str:pk>", v.ExtOrderDetailView.as_view()),
     path("orders/<str:pk>/pdf", v.ExtOrderPdfView.as_view()),

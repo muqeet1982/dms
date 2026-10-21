@@ -11,6 +11,10 @@ def _rep_user(order):
 def _order_submitted(order, **_):
     if order.source in ("rep_app", "api", "portal"):
         notify_permission("sales.confirm_sales_order", "order.submitted", f"New order {order.number} from {order.customer.name}", f"{order.rep.name if order.rep else 'External'} · {order.total:.2f}", {"order_id": str(order.id), "screen": "order"})
+    # the sale person gets a receipt of their own order — it matters most when an offline day syncs in late
+    u = _rep_user(order)
+    if u:
+        notify(u, "order.received", f"Order {order.number} received", f"{order.customer.name} · {order.total:.2f}", {"order_id": str(order.id), "screen": "order"})
 
 
 @on("order.confirmed")
@@ -52,8 +56,25 @@ def _order_delivered(order, **_):
 def _delivery_assigned(trip, **_):
     if trip.driver_id and trip.driver.user_id:
         notify(trip.driver.user, "delivery.assigned", f"Trip {trip.number} assigned to you", f"{trip.date:%d/%m/%Y} · {trip.stops_count} stops", {"trip_id": str(trip.id), "screen": "trip"})
-    if trip.rep_id and trip.rep.user_id:
+    # a trip reaches a rep's phone only when it carries one of their own orders — otherwise it is the driver's news
+    if trip.rep_id and trip.rep.user_id and trip.orders.filter(rep_id=trip.rep_id).exists():
         notify(trip.rep.user, "delivery.assigned", f"Trip {trip.number} scheduled", f"{trip.date:%d/%m/%Y} · {trip.stops_count} stops", {"trip_id": str(trip.id), "screen": "trip"})
+
+
+@on("order.cancelled")
+def _order_cancelled(order, **_):
+    u = _rep_user(order)
+    if u:
+        notify(u, "order.cancelled", f"Order {order.number} cancelled", order.rejection_reason or "", {"order_id": str(order.id), "screen": "order"})
+    _webhook("order.cancelled", order)
+
+
+@on("delivery.failed")
+def _delivery_failed(delivery_note, reason="", **_):
+    order = delivery_note.order
+    u = _rep_user(order)
+    if u:
+        notify(u, "delivery.failed", f"Delivery failed: {order.number}", reason or delivery_note.remarks or "", {"order_id": str(order.id), "screen": "order"})
 
 
 @on("delivery.completed")

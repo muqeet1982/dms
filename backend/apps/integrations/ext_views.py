@@ -275,7 +275,7 @@ class ExtOrdersView(ExtBase):
         if want_photo == "required" and not photos and rep is not None:
             raise DomainError("Take a photo of the shop to submit this order.", code="photo_required", status_code=400)
         source = "api" if getattr(request, "api_key", None) else "rep_app"
-        order = OrderService.create(customer=customer, lines=lines, source=source, rep=rep, supplier=supplier, location=location, requested_delivery_date=d.get("requested_delivery_date"), notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), allow_override=False)
+        order = OrderService.create(customer=customer, lines=lines, source=source, rep=rep, supplier=supplier, location=location, requested_delivery_date=d.get("requested_delivery_date"), notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), allow_override=False, payment_mode=d.get("payment_mode"))
         GeoFenceService.link(rep, "order", order)
         where = coords(d.get("gps"))
         # the position the order was taken at is kept on the order itself, not just checked and dropped
@@ -360,6 +360,48 @@ class ExtOrderDetailView(ExtBase):
             requested_delivery_date=d.get("requested_delivery_date"),
         )
         return Response(self._body(order))
+
+
+class ExtSalesSummaryView(ExtBase):
+    """
+    The rep's day (or range) in one call, for the app's Home: how many orders, how much of it was cash and
+    how much credit, what got cancelled, and the cash the rep physically took. Bounded by order_date (the
+    business day), scoped exactly like /ext/v1/orders, and totals are null without the price permission.
+    """
+
+    def get(self, request):
+        self.perm(request, "external.view_own_orders")
+        supplier, rep = self.context(request)
+        qs = SalesOrder.objects.all()
+        if rep is not None:
+            qs = qs.filter(rep=rep)
+        elif supplier is not None:
+            qs = qs.filter(supplier=supplier)
+        p = request.query_params
+        date_from = _parse_date(p.get("date_from")) or timezone.localdate()
+        date_to = _parse_date(p.get("date_to")) or date_from
+        qs = qs.filter(order_date__gte=date_from, order_date__lte=date_to)
+        live = qs.exclude(status__in=("cancelled", "rejected", "draft"))
+        show_prices = has_tenant_perm(request, "external.view_prices") or has_tenant_perm(request, "catalog.view_product")
+
+        def total(q):
+            if not show_prices:
+                return None
+            return str(q.aggregate(s=Coalesce(Sum("total"), Decimal("0")))["s"])
+
+        collected = None
+        if show_prices and rep is not None and rep.user_id:
+            from apps.accounting.models import Payment
+
+            collected = str(Payment.objects.filter(direction="in", status="posted", collected_by_id=rep.user_id,
+                                                   date__gte=date_from, date__lte=date_to).aggregate(s=Coalesce(Sum("amount"), Decimal("0")))["s"])
+        return Response({
+            "date_from": date_from, "date_to": date_to, "orders": live.count(),
+            "total": total(live), "cash_total": total(live.filter(payment_mode="cash")),
+            "credit_total": total(live.filter(payment_mode="credit")),
+            "cancelled_total": total(qs.filter(status__in=("cancelled", "rejected"))),
+            "cash_collected": collected,
+        })
 
 
 class ExtOrderCancelView(ExtBase):

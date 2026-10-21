@@ -112,7 +112,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "location", "location_name", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "location", "location_name", "payment_mode", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):

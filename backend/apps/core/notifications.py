@@ -13,10 +13,15 @@ logger = logging.getLogger(__name__)
 
 NOTIFICATION_TYPES = [
     ("order.submitted", "New rep order"),
+    ("order.received", "Order received"),
+    ("order.under_review", "Order under review"),
+    ("order.on_hold", "Order on hold"),
     ("order.confirmed", "Order confirmed"),
     ("order.rejected", "Order rejected"),
+    ("order.cancelled", "Order cancelled"),
     ("order.dispatched", "Order dispatched"),
     ("order.edited", "Order changed by the office"),
+    ("delivery.failed", "Delivery failed"),
     ("shift.ended", "Shift ended by the system"),
     ("shift.corrected", "Shift times corrected"),
     ("shift.tracking_lost", "Rep tracking lost"),
