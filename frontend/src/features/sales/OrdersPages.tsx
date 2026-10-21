@@ -27,7 +27,7 @@ export function DiscountPctSelect({ value, onChange, autoLabel }: { value: strin
     <select className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
       {autoLabel && <option value="">{autoLabel}</option>}
       <option value="0">No discount</option>
-      {rows.map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}% (company funds {Number(r.company_pct)}%)</option>)}
+      {rows.map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}%</option>)}
       {value !== "" && !known.includes(value) && <option value={value}>{Number(value)}%</option>}
     </select>
   );
