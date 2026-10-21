@@ -926,56 +926,6 @@ class CreditNoteService:
         return cn
 
 
-class CompanyClaimService:
-    """Settle a manufacturer discount claim — either the company pays (a receipt) or it is netted off against
-    what the distributor owes that manufacturer on purchases. Receipts go through PaymentService.record with
-    partner_type='company'; this service handles the net-off and the write-off."""
-
-    @staticmethod
-    @transaction.atomic
-    def net_off(claim, amount, bill=None, date=None):
-        from apps.accounting.services import PaymentService, PostingService
-
-        if claim.status in ("paid", "cancelled", "written_off"):
-            raise DomainError("This claim is already settled.")
-        amount = q4(amount)
-        if amount <= 0:
-            raise DomainError("Amount must be positive.")
-        if amount > claim.balance + Decimal("0.01"):
-            raise DomainError(f"Amount {amount} exceeds the claim balance {claim.balance}.")
-        if bill is not None:
-            if bill.supplier_id != claim.supplier_id:
-                raise DomainError("That bill belongs to a different manufacturer.")
-            if amount > (bill.total - bill.paid_amount) + Decimal("0.01"):
-                raise DomainError(f"Amount {amount} exceeds the balance of {bill.number}.")
-        on_date = date or timezone.localdate()
-        PostingService.post_claim_netoff(claim, amount, on_date)
-        PaymentService._apply(claim, "company_claim", amount)
-        if bill is not None:
-            PaymentService._apply(bill, "purchase_bill", amount)
-        AuditService.log("claim.netoff", claim, after={"amount": str(amount), "bill": bill.number if bill else None})
-        return claim
-
-    @staticmethod
-    @transaction.atomic
-    def write_off(claim, reason=""):
-        from apps.accounting.services import Line, PostingService, account_for
-
-        if claim.status in ("paid", "cancelled", "written_off"):
-            raise DomainError("This claim is already settled.")
-        bal = claim.balance
-        if bal > 0:
-            # give back the income we recognised and clear the receivable
-            PostingService.post([
-                Line(account_for("manufacturer_incentive", "company_claim"), debit=bal, description=f"Write off claim {claim.number}"),
-                Line(account_for("manufacturer_claim", "company_claim"), credit=bal, description=f"Write off claim {claim.number}", partner_type="supplier", partner_id=claim.supplier_id),
-            ], date_=timezone.localdate(), memo=f"Write off claim {claim.number} – {reason}"[:300], source=claim)
-        claim.status = "written_off"
-        claim.save(update_fields=["status", "updated_at"])
-        AuditService.log("claim.written_off", claim, after={"reason": reason, "amount": str(bal)})
-        return claim
-
-
 def _accuracy(gps):
     """The `accuracy_m` a phone sends with a fix — kept so a vague position can be told from a precise one."""
     value = (gps or {}).get("accuracy_m")

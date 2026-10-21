@@ -18,3 +18,4 @@ firebase/
 
 # CI workflow (push needs a token with workflow scope; add via GitHub UI)
 .github/workflows/
+Discount-Accounting-Trafco.pdf
