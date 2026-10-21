@@ -28,8 +28,8 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
-export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons }: {
-  lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>;
+export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock }: {
+  lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>; blockOutOfStock?: boolean;
   /** When given, a switch appears to show or hide the discount column — off until a deal actually needs it. */
   onToggleDiscount?: () => void; discountShown?: boolean;
   /** Column header for the price — purchase documents buy at D.P (distributor price). */
@@ -77,7 +77,11 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     update(line.key, { packaging: packagingId, unit_price: String(price) });
   };
 
+  // the owner's rule (22 Oct 2026): an out-of-stock item stays visible in the search, but picking it is
+  // refused here with a message — and the server refuses it again at save, whatever client asked
+  const outOfStock = (v: any) => blockOutOfStock && v?.stock_on_hand !== undefined && v?.stock_on_hand !== null && Number(v.stock_on_hand) <= 0;
   const applyVariant = async (key: string, v: any, packaging?: any) => {
+    if (outOfStock(v)) { toast.error(`${v.name} is not in stock — it cannot be added to the order`); return; }
     const row = lines.find((l) => l.key === key);
     const dup = duplicateOf(key, v.id, packaging?.id || null, row?.batch_no);
     if (dup) return mergeInto(dup, key, Number(row?.qty || 1) || 1, v.name);
@@ -86,6 +90,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   const handleScan = async (code: string) => {
     try {
       const r = await api.get("/api/v1/barcodes/resolve", { code });
+      if (outOfStock(r.variant)) { toast.error(`${r.variant.name} is not in stock — it cannot be added to the order`); return; }
       const label = `${r.variant.name}${r.packaging ? " (" + r.packaging.name + ")" : ""}`;
       const existing = lines.find((l) => l.variant === r.variant.id && (l.packaging || null) === (r.packaging?.id || null) && (l.batch_no || "") === (r.batch?.batch_no || ""));
       if (existing) {
@@ -125,7 +130,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           <tbody>
             {lines.map((l) => (
               <tr key={l.key}>
-                <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: v.name, sub: `${v.sku}${v.stock_on_hand !== undefined && v.stock_on_hand !== null ? " · stock " + v.stock_on_hand : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
+                <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: v.name, sub: outOfStock(v) ? `${v.sku} · NOT IN STOCK` : `${v.sku}${v.stock_on_hand !== undefined && v.stock_on_hand !== null ? " · stock " + v.stock_on_hand : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
                 <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else reprice(l, pk); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
                 <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} readOnly={readOnly} /></td>
                 {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value })} readOnly={readOnly} /></td>}
