@@ -12,7 +12,15 @@ landscape when there are more columns than a portrait page can hold.
 {% block status %}{% if params %}<div class="muted" style="font-size:9px">{% for k, v in params.items %}{{ k|label }}: {{ v }}{% if not forloop.last %} · {% endif %}{% endfor %}</div>{% endif %}{% endblock %}
 
 {% block lines %}
-<table class="lines{% if groups %} rg{% endif %}">
+<style>
+  table.lines{table-layout:auto}
+  table.lines td{word-wrap:break-word;overflow-wrap:break-word}
+  table.lines.fit-sm th{font-size:7.2pt;padding:3pt 3.5pt} table.lines.fit-sm td{font-size:7.4pt;padding:2.5pt 3.5pt}
+  table.lines.fit-xs th{font-size:6.3pt;padding:2.2pt 2.6pt} table.lines.fit-xs td{font-size:6.5pt;padding:2pt 2.6pt}
+  table.lines.fit-sm .rg thead th, .rg.fit-sm thead tr.rg-top th{font-size:7.4pt}
+  .rg.fit-sm thead tr.rg-sub th{font-size:6.6pt} .rg.fit-xs thead tr.rg-top th{font-size:6.6pt} .rg.fit-xs thead tr.rg-sub th{font-size:6pt}
+</style>
+<table class="lines{% if groups %} rg{% endif %}{% if fit %} {{ fit }}{% endif %}">
   {% if groups %}<style>
     .rg thead th { background: #202C4B; color: #fff; border: 0.4pt solid rgba(255,255,255,.25); vertical-align: middle; }
     .rg thead tr.rg-top th { text-align: center; font-size: 8.4pt; font-weight: 700; letter-spacing: .3pt; }

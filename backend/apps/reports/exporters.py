@@ -144,10 +144,26 @@ def to_pdf(result, title="", tenant=None, params=None):
     rows = [[cell(r.get(c, "")) for c in cols] for r in result["rows"]]
     from apps.core.documents import logo_url
 
+    # Fit by MEASURING, not by counting columns: a few wide columns (dates, long names) overflow a portrait
+    # page at seven columns while ten narrow ones fit. Each column costs its widest text (capped — a long
+    # name may wrap); the sum decides portrait vs landscape, and when even landscape is tight the type
+    # steps down a size so every report lands inside the page.
+    labels = [_col_label(result, c) for c in cols]
+    widths = []
+    for i, c in enumerate(cols):
+        w = len(str(labels[i]))
+        for r in rows[:400]:
+            w = max(w, len(str(r[i])))
+        widths.append(min(w, 34))
+    units = sum(widths) + 2 * len(cols)
+    landscape = units > 105
+    budget = 160 if landscape else 105
+    fit = "" if units <= budget else ("fit-sm" if units <= budget * 1.35 else "fit-xs")
+
     html = render_to_string("reports/report.html", {
-        "title": title, "cols": cols, "col_labels": [_col_label(result, c) for c in cols] if result.get("column_labels") else None,
+        "title": title, "cols": cols, "col_labels": labels if result.get("column_labels") else None,
         "groups": result.get("header_groups"), "rows": rows, "totals": result.get("totals", {}), "tenant": tenant,
-        "params": params or {}, "landscape": len(cols) > 7,
+        "params": params or {}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
     })
     return HTML(string=html).write_pdf()
