@@ -40,6 +40,10 @@ thead{display:table-header-group}
 .signrow{display:flex;gap:16px;margin-top:10px}
 .signrow .cell{flex:1;display:flex;align-items:flex-end;gap:5px;white-space:nowrap}
 .signrow .cell .sign{flex:1;min-width:0}
+/* the closing signatures are proper boxes with room for a pen, like the vouchers */
+.bigsigns{display:flex;gap:24px;margin-top:18px;break-inside:avoid;page-break-inside:avoid}
+.bigsigns div{flex:1;text-align:center;font-size:9px;color:#6B7280}
+.bigsigns div::before{content:"";display:block;height:46px;border-bottom:1px solid #6B7280;margin-bottom:5px}
 .foot{margin-top:14px;padding-top:8px;border-top:2px solid #202C4B;break-inside:avoid;page-break-inside:avoid}
 .tot td{font-weight:bold;background:#F8F9FA;border-bottom:0}
 </style></head><body>
@@ -133,10 +137,10 @@ thead{display:table-header-group}
     <td><span class="k">Other expenses</span>{% if trip.expense_amount %}{{ expense_amount }}{% else %}&nbsp;{% endif %}</td>
     <td><span class="k">Cash returned</span>{% if trip.cash_collected %}{{ cash_collected }}{% else %}&nbsp;{% endif %}</td>
   </tr></table>
-  <div class="signrow muted" style="margin-top:14px">
-    <div class="cell">Driver <span class="sign"></span></div>
-    <div class="cell">Loader <span class="sign"></span></div>
-    <div class="cell">Storekeeper on return <span class="sign"></span></div>
+  <div class="bigsigns">
+    <div>Driver{% if trip.driver %} — {{ trip.driver.name }}{% endif %}</div>
+    <div>Loader</div>
+    <div>Storekeeper on return</div>
   </div>
   <p class="muted">Every stop must be signed. Returns go back to {{ trip.warehouse.name }} and are counted in before the dispatch is closed.</p>
   {% if tenant.settings.invoice_footer %}<p class="muted">{{ tenant.settings.invoice_footer }}</p>{% endif %}
