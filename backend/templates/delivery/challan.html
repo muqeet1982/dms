@@ -25,4 +25,24 @@
     </td>
   </tr>
 </table>
+{# the warehouse side signs too: who drove it out, who loaded it, who counted the returns back in #}
+<table style="width:100%;margin-top:10px;border-collapse:separate;border-spacing:10px 0">
+  <tr>
+    <td style="width:33%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Driver</div>
+      <div style="font-weight:bold;margin:2px 0 26px">{% if dn.trip.driver %}{{ dn.trip.driver.name }}{% else %}&nbsp;{% endif %}</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Signature</div>
+    </td>
+    <td style="width:34%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Loader</div>
+      <div style="font-weight:bold;margin:2px 0 26px">&nbsp;</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Name &amp; signature</div>
+    </td>
+    <td style="width:33%;border:1px solid #d7dbe3;border-radius:4px;padding:8px;vertical-align:top">
+      <div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.3px;color:#6B7280">Storekeeper on return</div>
+      <div style="font-weight:bold;margin:2px 0 26px">&nbsp;</div>
+      <div style="border-top:1px solid #9aa3b2;padding-top:3px;font-size:8px;color:#6B7280">Name &amp; signature</div>
+    </td>
+  </tr>
+</table>
 {% endblock %}
