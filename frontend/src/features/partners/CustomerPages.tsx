@@ -107,47 +107,47 @@ function RepPicker({ value, onChange }: { value: string[]; onChange: (ids: strin
 export function customerFields(can: (p: string) => boolean): FieldDef[] {
   const sec = (section: string, sectionIcon: string, sectionHint?: string, sectionCollapsed = false) => ({ section, sectionIcon, sectionHint, sectionCollapsed });
   return [
-    { ...sec("Who they are", "ti-building-store"), name: "name", label: "Trading name", required: true, col: "col-md-5", placeholder: "Al-Madina Store", autoComplete: "off", icon: "ti-building-store" },
-    { ...sec("Who they are", "ti-building-store"), name: "type", label: "Customer type", type: "select", options: TYPES, default: "retailer", col: "col-md-3", required: true },
-    { ...sec("Who they are", "ti-building-store"), name: "code", label: "Customer code", col: "col-md-2", hint: "auto if left blank", maxLength: 30 },
-    { ...sec("Who they are", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
-
-    { ...sec("How to reach them", "ti-phone"), name: "contact_person", label: "Contact person", col: "col-md-4", icon: "ti-user", autoComplete: "name" },
-    { ...sec("How to reach them", "ti-phone"), name: "phone", label: "Mobile", col: "col-md-4", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", hint: "reps call and SMS this number", autoComplete: "tel" },
-    { ...sec("How to reach them", "ti-phone"), name: "alt_mobile", label: "Alt mobile", col: "col-md-4", mask: "phone", prefix: "🇵🇰", placeholder: "+92 321 1234567" },
-    { ...sec("How to reach them", "ti-phone"), name: "landline", label: "Landline", col: "col-md-4", mask: "phone", prefix: "🇵🇰", placeholder: "+92 42 35881234" },
-    { ...sec("How to reach them", "ti-phone"), name: "email", label: "Email", type: "email", col: "col-md-4", icon: "ti-mail", autoComplete: "email" },
+    // ── the daily case fits in three tight cards: the shop, where it is, and the money terms ──────────
+    { ...sec("The shop", "ti-building-store"), name: "name", label: "Trading name", required: true, col: "col-md-4", placeholder: "Al-Madina Store", autoComplete: "off", icon: "ti-building-store" },
+    { ...sec("The shop", "ti-building-store"), name: "type", label: "Type", type: "select", options: TYPES, default: "retailer", col: "col-md-2", required: true },
+    { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
+    { ...sec("The shop", "ti-building-store"), name: "contact_person", label: "Contact person", col: "col-md-3", icon: "ti-user", autoComplete: "name" },
 
     { ...sec("Where they are", "ti-map-pin"), name: "address", label: "Shop address", col: "col-md-6" },
     { ...sec("Where they are", "ti-map-pin"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "how close a rep must be to order here" },
+    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "rep must be this close to order" },
     { ...sec("Where they are", "ti-map-pin"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
-      hint: "the shop only shows in these reps' app and portal — without one, no rep can see it or order for it",
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
       render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
-    { ...sec("Where they are", "ti-map-pin"), name: "locations_write", label: "More shops of this customer", type: "custom", col: "col-md-12", default: [],
-      hint: "a multi-shop account: orders can be taken at any of these; each delivery goes to the shop the order was taken at",
+
+    { ...sec("Tax & terms", "ti-receipt", "NTN or CNIC — one of the two is required."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9 },
+    { ...sec("Tax & terms", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15 },
+    { ...sec("Tax & terms", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
+    { ...sec("Tax & terms", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
+    { ...sec("Tax & terms", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
+
+    // ── everything occasional folds away until asked for ─────────────────────────────────────────────
+    { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
       render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
 
-    { ...sec("Prices, credit & discount", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", hint: "co-funded total % (match a Settings → Discount contributions row); defaults onto invoices, changeable there", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
-    { ...sec("Prices, credit & discount", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
-    { ...sec("Prices, credit & discount", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit") },
-    { ...sec("Prices, credit & discount", "ti-receipt"), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-3", suffix: "days", hint: "refuse stock expiring sooner than this" },
+    { ...sec("More details", "ti-dots", "Codes, extra contacts, registration and stock rules — all optional.", true), name: "code", label: "Customer code", col: "col-md-2", hint: "auto if left blank", maxLength: 30 },
+    { ...sec("More details", "ti-dots", undefined, true), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "alt_mobile", label: "Alt mobile", col: "col-md-2", mask: "phone", prefix: "🇵🇰" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "landline", label: "Landline", col: "col-md-3", mask: "phone", prefix: "🇵🇰" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "email", label: "Email", type: "email", col: "col-md-3", icon: "ti-mail", autoComplete: "email" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "business_name", label: "Registered business name", col: "col-md-4", placeholder: "same as trading name if left blank" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "filer_status", label: "FBR status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-2" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17 },
+    { ...sec("More details", "ti-dots", undefined, true), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3", hint: "e.g. unregistered → further tax" },
+    { ...sec("More details", "ti-dots", undefined, true), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-3", suffix: "days", hint: "refuse stock expiring sooner" },
 
-    { ...sec("Tax & legal", "ti-file-certificate", "Printed on their invoices. NTN/STRN for registered businesses, CNIC for unregistered buyers."), name: "business_name", label: "Registered business name", col: "col-md-5", placeholder: "same as trading name if left blank" },
-    { ...sec("Tax & legal", "ti-file-certificate"), name: "filer_status", label: "FBR status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-3" },
-    { ...sec("Tax & legal", "ti-file-certificate"), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-4", hint: "e.g. unregistered → further tax" },
-    { ...sec("Tax & legal", "ti-file-certificate"), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, hint: "NTN or CNIC — one of the two is required" },
-    { ...sec("Tax & legal", "ti-file-certificate"), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17 },
-    { ...sec("Tax & legal", "ti-file-certificate"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15, hint: "NTN or CNIC — one of the two is required" },
+    { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger, so it shows in their statement and ageing.", true), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
+    { ...sec("Opening balance", "ti-scale", undefined, true), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
 
-    { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger (Dr receivables / Cr opening equity), so it shows in their statement and ageing."), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
-    { ...sec("Opening balance", "ti-scale"), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
-
-    { ...sec("Notes", "ti-dots", undefined, true), name: "notes", label: "Internal notes", type: "textarea", col: "col-md-12" },
+    { ...sec("Notes", "ti-note", undefined, true), name: "notes", label: "Internal notes", type: "textarea", col: "col-md-12" },
   ];
 }
 
