@@ -11,6 +11,8 @@ import re
 import requests
 
 _PIN = re.compile(r"!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)")
+# a WhatsApp "share location" is a maps.google.com/?q=lat,lng link; Android shares also come as geo:lat,lng
+_GEO = re.compile(r"geo:(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)", re.I)
 _QUERY = re.compile(r"[?&](?:q|ll|query|destination|center)=(?:loc:)?(-?\d{1,3}\.\d+)(?:%2C|,|\+|\s)+(-?\d{1,3}\.\d+)", re.I)
 _AT = re.compile(r"@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)")
 _BARE = re.compile(r"^\s*(-?\d{1,3}\.\d+)\s*[, ]\s*(-?\d{1,3}\.\d+)\s*$")
@@ -18,7 +20,7 @@ _SHORT_HOSTS = ("maps.app.goo.gl", "goo.gl", "g.co")
 
 
 def _match(text):
-    for pattern in (_PIN, _QUERY, _AT, _BARE):
+    for pattern in (_PIN, _GEO, _QUERY, _AT, _BARE):
         m = pattern.search(text or "")
         if m:
             lat, lng = float(m.group(1)), float(m.group(2))

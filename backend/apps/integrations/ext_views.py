@@ -512,9 +512,14 @@ class ExtCustomersView(ExtBase):
                               code="bad_customer", status_code=400, errors={"ntn": ["required (or cnic)"], "cnic": ["required (or ntn)"]})
 
         gps = d.get("gps") or {}
-        # the shop's pin: a pasted maps link (or "lat, lng") wins over where the rep is standing
-        pin = {"lat": gps.get("lat"), "lng": gps.get("lng")}
-        if d.get("map_url"):
+        rep_gps = d.get("rep_gps") or {}
+        pin_source = str(d.get("pin_source") or "")[:12]
+        later = bool(d.get("location_later"))
+        # the shop's pin: from 5.1 `gps` IS the pin (pin_source says how it was set, rep_gps says where the
+        # rep stood); older builds send only gps, which doubles as both. A pasted link still wins. A shop may
+        # also arrive with NO location at all (location_later) — the record matters more than the pin.
+        pin = {"lat": None, "lng": None} if later else {"lat": gps.get("lat"), "lng": gps.get("lng")}
+        if not later and d.get("map_url"):
             from apps.partners.maplink import parse_location
 
             found = parse_location(d["map_url"])
@@ -522,11 +527,13 @@ class ExtCustomersView(ExtBase):
                 raise DomainError("map_url could not be read — share a Google Maps link or \"lat, lng\".",
                                   code="bad_customer", status_code=400, errors={"map_url": [str(d["map_url"])[:200]]})
             pin = {"lat": found[0], "lng": found[1]}
+            pin_source = pin_source or "link"
+        stood = rep_gps if rep_gps.get("lat") is not None else gps
         # A new shop is an observation, not a transaction: a rep is told about one in the next market, or adds
         # it from the office at the end of the day, or the area has grown and nobody has redrawn the polygon.
         # Refusing the write would destroy the record — and the shop arrives `pending`, so the office has the
         # final say. The verdict is recorded on the row instead, and an *order* from outside is still refused.
-        event = GeoFenceService.check(rep=rep, gps=gps, action="customer", enforce=False)
+        event = GeoFenceService.check(rep=rep, gps=stood, action="customer", enforce=False)
         c = CustomerService.create({
             "name": d["name"].strip(), "type": kind, "phone": d.get("phone", ""), "address": d.get("address", ""),
             "city": d.get("city", ""), "contact_person": d.get("contact_person", ""),
@@ -541,10 +548,77 @@ class ExtCustomersView(ExtBase):
                 added_distance_m=event.distance_m,
             )
             c.refresh_from_db(fields=["added_inside_area", "added_distance_m"])
+        extra = {"pin_source": pin_source}
+        if pin["lat"] is not None and stood.get("lat") is not None:
+            from apps.partners.geofence import distance_m as _dist
+
+            extra["pin_rep_distance_m"] = _dist((float(pin["lat"]), float(pin["lng"])),
+                                                (float(stood["lat"]), float(stood["lng"])))
+        Customer.objects.filter(pk=c.pk).update(**extra)
         GeoFenceService.link(rep, "customer", c)
         body = {"id": str(c.id), "code": c.code, "name": c.name, "status": c.status, "type": c.type,
                 "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic,
-                "inside_area": c.added_inside_area, "distance_m": c.added_distance_m}
+                "inside_area": c.added_inside_area, "distance_m": c.added_distance_m,
+                "pin_source": pin_source, "location_later": later and pin["lat"] is None}
+        if idem:
+            IdempotencyKey.objects.create(tenant_id=get_current_tenant_id(), user=None, key=idem,
+                                          path=request.path, response_status=201, response_body=body)
+        return Response(body, status=201)
+
+
+class ExtCustomerPinView(ExtBase):
+    """
+    `POST /ext/v1/customers/{id}/location` — a rep gives a pinless shop its pin, usually on the first visit
+    ("Save where I am"). A shop that already has one is the office's to move, so this refuses with 409.
+    """
+
+    def post(self, request, pk):
+        self.perm(request, "external.add_customer_request")
+        supplier, rep = self.context(request)
+        d = request.data
+
+        idem = request.headers.get("Idempotency-Key")
+        if idem:
+            seen = IdempotencyKey.objects.filter(tenant_id=get_current_tenant_id(), key=idem, path=request.path).first()
+            if seen:
+                return Response(seen.response_body, status=200)
+
+        c = self.customers_qs(request).filter(pk=pk).first()
+        if c is None:
+            raise DomainError("That shop is not assigned to you.", status_code=404)
+        if c.gps_lat is not None and c.gps_lng is not None:
+            raise DomainError("Only the office can move a shop's location.", code="pin_exists", status_code=409)
+
+        gps = d.get("gps") or {}
+        rep_gps = d.get("rep_gps") or {}
+        pin_source = str(d.get("pin_source") or ("gps" if gps.get("lat") is not None else ""))[:12]
+        pin = (gps.get("lat"), gps.get("lng"))
+        if d.get("map_url"):
+            from apps.partners.maplink import parse_location
+
+            found = parse_location(d["map_url"])
+            if found is None:
+                raise DomainError("map_url could not be read — share a Google Maps link or \"lat, lng\".",
+                                  code="bad_pin", status_code=400, errors={"map_url": [str(d["map_url"])[:200]]})
+            pin = found
+            pin_source = pin_source or "link"
+        if pin[0] is None or pin[1] is None:
+            raise DomainError("Send gps {lat, lng} or a map_url.", code="bad_pin", status_code=400)
+        c.gps_lat, c.gps_lng = pin[0], pin[1]
+        c.pin_source = pin_source
+        stood = rep_gps if rep_gps.get("lat") is not None else gps
+        if stood.get("lat") is not None:
+            from apps.partners.geofence import distance_m as _dist
+
+            c.pin_rep_distance_m = _dist((float(pin[0]), float(pin[1])), (float(stood["lat"]), float(stood["lng"])))
+        c.save(update_fields=["gps_lat", "gps_lng", "pin_source", "pin_rep_distance_m", "updated_at"])
+        from apps.core.audit import AuditService
+
+        AuditService.log("customer.pin_set", c, after={"pin_source": pin_source, "lat": str(pin[0]), "lng": str(pin[1]),
+                                                      "rep": rep.name if rep else None})
+        body = {"id": str(c.id), "code": c.code, "name": c.name, "status": c.status, "type": c.type,
+                "gps": {"lat": float(c.gps_lat), "lng": float(c.gps_lng)},
+                "pin_source": c.pin_source, "pin_rep_distance_m": c.pin_rep_distance_m}
         if idem:
             IdempotencyKey.objects.create(tenant_id=get_current_tenant_id(), user=None, key=idem,
                                           path=request.path, response_status=201, response_body=body)

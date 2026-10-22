@@ -18,6 +18,20 @@ import { StorePinPicker } from "./StorePinPicker";
 
 const TYPES = [{ value: "retailer", label: "Retailer" }, { value: "salon", label: "Salon" }, { value: "wholesaler", label: "Wholesaler" }, { value: "lmt", label: "LMT" }, { value: "other", label: "Other" }];
 
+/** How this shop's pin was set, in words the office can judge before approving — "Set at the shop ±8 m"
+ *  beats "Placed on the map — rep was 3.1 km away" every time an order later measures against the pin. */
+function pinStory(c: any): string {
+  const dist = c.pin_rep_distance_m != null ? Number(c.pin_rep_distance_m) : null;
+  const far = dist == null ? "" : dist < 100 ? ` ±${Math.round(dist)} m` : ` — rep was ${(dist / 1000).toFixed(1)} km away`;
+  switch (c.pin_source) {
+    case "gps": return `Set standing at the shop${far}`;
+    case "search": case "map": return `Placed on the map${far}`;
+    case "coordinates": return `Typed as coordinates${far}`;
+    case "link": return `From a shared maps link${far}`;
+    default: return c.requested_by_rep ? `Set by the rep${far}` : "Set by the office";
+  }
+}
+
 function LocationsEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
   const row = (r: any, i: number, patch: any) => { const next = [...value]; next[i] = { ...r, ...patch }; onChange(next); };
   return (
@@ -191,7 +205,7 @@ export function CustomerDetailPage() {
       </div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3">
         <InfoItem label="Code">{c.code}</InfoItem><InfoItem label="Type">{titleCase(c.type)}</InfoItem><InfoItem label="Contact">{c.contact_person || "—"}<div className="fs-12 text-muted">{c.phone} {c.phone2} {c.email}</div></InfoItem><InfoItem label="Address">{c.address || "—"}<div className="fs-12 text-muted">{c.city}</div></InfoItem>
-        <InfoItem label="Reps">{c.rep_names?.join(", ") || "—"}</InfoItem><InfoItem label="GPS">{c.gps_lat ? <a href={`https://maps.google.com/?q=${c.gps_lat},${c.gps_lng}`} target="_blank" rel="noreferrer">{c.gps_lat}, {c.gps_lng}</a> : "—"}</InfoItem><InfoItem label="Tax numbers">{Object.entries(c.tax_numbers || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}{c.tax_class_override_name && <div className="fs-12 text-muted">tax class {c.tax_class_override_name}</div>}</InfoItem><InfoItem label="Notes">{c.notes || "—"}</InfoItem>
+        <InfoItem label="Reps">{c.rep_names?.join(", ") || "—"}</InfoItem><InfoItem label="GPS">{c.gps_lat ? <><a href={`https://maps.google.com/?q=${c.gps_lat},${c.gps_lng}`} target="_blank" rel="noreferrer">{c.gps_lat}, {c.gps_lng}</a><div className="fs-12 text-muted">{pinStory(c)}</div></> : <span className="text-warning">No location yet — the rep can set it at the first visit</span>}</InfoItem><InfoItem label="Tax numbers">{Object.entries(c.tax_numbers || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}{c.tax_class_override_name && <div className="fs-12 text-muted">tax class {c.tax_class_override_name}</div>}</InfoItem><InfoItem label="Notes">{c.notes || "—"}</InfoItem>
       </div></div></div>
       <div className="card"><div className="card-body">
         <Tabs tabs={[...(page.can("ledger") ? [{ key: "ledger", label: "Ledger" }, { key: "statement", label: "Statement & ageing" }] : []), { key: "orders", label: "Orders" }, { key: "invoices", label: "Invoices" }, { key: "attachments", label: "Documents" }, { key: "history", label: "History" }]} active={tab} onChange={setTab} />

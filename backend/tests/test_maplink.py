@@ -45,3 +45,11 @@ def test_the_office_form_takes_a_maps_link_too(api, tenant):
 
     parsed = api.post("/api/v1/customers/parse-location", {"text": "https://www.google.com/maps/@31.52,74.33,15z"}, format="json")
     assert parsed.status_code == 200 and parsed.data == {"lat": 31.52, "lng": 74.33}
+
+
+def test_whatsapp_and_geo_links_parse(api, tenant):
+    """A WhatsApp share is a maps.google.com/?q= link; an Android share can be a geo: URI."""
+    wa = api.post("/api/v1/customers/parse-location", {"text": "location: https://maps.google.com/?q=31.520370,74.358749"}, format="json")
+    assert wa.status_code == 200 and (wa.data["lat"], wa.data["lng"]) == (31.52037, 74.358749)
+    geo = api.post("/api/v1/customers/parse-location", {"text": "geo:31.4710,74.2800"}, format="json")
+    assert geo.status_code == 200 and (geo.data["lat"], geo.data["lng"]) == (31.471, 74.28)

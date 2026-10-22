@@ -111,6 +111,14 @@ class Customer(TenantModel):
     # shop the office typed in itself.
     added_inside_area = models.BooleanField(null=True, blank=True)
     added_distance_m = models.FloatField(null=True, blank=True)
+    # how the shop's PIN was set (5.1 app: gps = standing there, search/map = placed on the map,
+    # coordinates = typed, link = a shared maps/WhatsApp link; blank = the office, or an old build) and how
+    # far the rep stood from the pin they placed — a pin set from 3 km away is legitimate but worth seeing
+    # before approval, because every later order is measured against it
+    PIN_SOURCES = [("gps", "At the shop"), ("search", "Searched on the map"), ("map", "Placed on the map"),
+                   ("coordinates", "Typed coordinates"), ("link", "From a shared link")]
+    pin_source = models.CharField(max_length=12, blank=True, default="")
+    pin_rep_distance_m = models.FloatField(null=True, blank=True)
     phone = models.CharField(max_length=30, blank=True, help_text="Mobile — the number reps call and SMS")
     alt_mobile = models.CharField(max_length=30, blank=True)
     landline = models.CharField(max_length=30, blank=True)
