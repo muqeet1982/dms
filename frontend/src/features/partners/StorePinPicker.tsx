@@ -50,7 +50,7 @@ export function StorePinPicker({ lat, lng, name, onChange, compact }: {
   return (
     <div className="mb-2">
       <div className="d-flex flex-wrap gap-2 mb-2">
-        <div className="input-group" style={{ maxWidth: 420 }}>
+        <div className="input-group" style={{ maxWidth: 260 }}>
           <input className="form-control" placeholder="Search address — or paste a Google Maps / WhatsApp location link" value={q} onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); find(); } }} />
           <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={find}><i className="ti ti-search" /></button>
@@ -58,15 +58,15 @@ export function StorePinPicker({ lat, lng, name, onChange, compact }: {
         <button type="button" className="btn btn-outline-secondary" onClick={() => navigator.geolocation?.getCurrentPosition(
           (p) => put(p.coords.latitude, p.coords.longitude),
           () => toast.error("Could not read your location — click the map instead."))}>
-          <i className="ti ti-current-location me-1" />Use my location
+          <i className="ti ti-current-location me-1" />My location
         </button>
         <button type="button" className="btn btn-outline-secondary" onClick={() => { setShowMap((v) => !v); if (!showMap) setNonce((n) => n + 1); }}><i className="ti ti-map me-1" />{showMap ? "Hide Map" : "Map"}</button>
         {point ? <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>
                : <button type="button" className="btn btn-outline-secondary" onClick={() => { onChange(null, null); setShowMap(false); }} title="Save the shop without a pin — add it later"><i className="ti ti-clock me-1" />Pin later</button>}
         <div className="d-flex gap-1 align-items-center">
-          <input type="number" step="0.0000001" className="form-control" style={{ width: 128 }} placeholder="Latitude" value={lat ?? ""}
+          <input type="number" step="0.0000001" className="form-control" style={{ width: 108 }} placeholder="Latitude" value={lat ?? ""}
             onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value), lng === "" || lng === null || lng === undefined ? null : Number(lng))} />
-          <input type="number" step="0.0000001" className="form-control" style={{ width: 128 }} placeholder="Longitude" value={lng ?? ""}
+          <input type="number" step="0.0000001" className="form-control" style={{ width: 108 }} placeholder="Longitude" value={lng ?? ""}
             onChange={(e) => onChange(lat === "" || lat === null || lat === undefined ? null : Number(lat), e.target.value === "" ? null : Number(e.target.value))} />
         </div>
       </div>
@@ -76,7 +76,7 @@ export function StorePinPicker({ lat, lng, name, onChange, compact }: {
         onMapClick={(la, ln) => put(la, ln)}
         fitNonce={nonce}
         cursor={point ? undefined : "crosshair"}
-        height={compact ? 240 : 300}
+        height={compact ? 180 : 300}
       />}
       <div className="form-text">
         {point ? <>Pin set{showMap ? " — zoom with +/− and drag the pin to the shop door." : ""}</>

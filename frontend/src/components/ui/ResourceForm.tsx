@@ -19,6 +19,8 @@ export type FieldDef = {
   mask?: "cnic" | "ntn" | "strn" | "phone";
   /** Extra client-side check; return a message to block saving. */
   validate?: (value: any, values: Record<string, any>) => string | null;
+  /** Run `validate` even when the field is empty — for cross-field rules like "NTN or CNIC". */
+  alwaysValidate?: boolean;
 };
 
 const digits = (v: string) => (v || "").replace(/\D/g, "");
@@ -45,7 +47,7 @@ const MASK_RULES: Record<string, { test: (v: string) => boolean; message: string
 };
 
 /** Uncontrolled-ish generic form driven by FieldDefs with server-side error mapping. */
-export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", onCancel, busy, inline }: { fields: FieldDef[]; initial?: Record<string, any>; onSubmit: (values: Record<string, any>) => Promise<void> | void; submitLabel?: string; onCancel?: () => void; busy?: boolean; inline?: boolean }) {
+export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", onCancel, busy, inline, dense }: { fields: FieldDef[]; initial?: Record<string, any>; onSubmit: (values: Record<string, any>) => Promise<void> | void; submitLabel?: string; onCancel?: () => void; busy?: boolean; inline?: boolean; dense?: boolean }) {
   const [values, setValues] = useState<Record<string, any>>(() => Object.fromEntries(fields.map((f) => [f.name, initial?.[f.name] ?? f.default ?? (f.type === "checkbox" ? false : "")])));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -70,9 +72,15 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
         continue;
       }
       if (!empty && f.mask && MASK_RULES[f.mask] && !MASK_RULES[f.mask].test(String(value))) errs[f.name] = MASK_RULES[f.mask].message;
-      const custom = !empty && f.validate ? f.validate(value, values) : null;
+      const custom = (!empty || f.alwaysValidate) && f.validate ? f.validate(value, values) : null;
       if (custom) errs[f.name] = custom;
     }
+    // every complaint lands in the same submit — and a folded section holding one unfolds itself
+    const reveal = (bad: Record<string, string>) => {
+      const sections = new Set(fields.filter((f) => bad[f.name]).map((f) => f.section || ""));
+      if (sections.size) setClosed((c) => ({ ...c, ...Object.fromEntries([...sections].map((s) => [s, false])) }));
+    };
+    reveal(errs);
     if (!missing.length && Object.keys(errs).length) {
       setErrors(errs);
       setFormError("Some fields need a correction — see the messages in red.");
@@ -99,7 +107,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
       }
       await onSubmit(out);
     } catch (err: any) {
-      if (err instanceof ApiError) { setErrors(err.fieldErrors()); setFormError(err.message); toast.error(err.message); } else { setFormError(String(err?.message || err)); toast.error(String(err?.message || err)); }
+      if (err instanceof ApiError) { const fe = err.fieldErrors(); setErrors(fe); reveal(fe); setFormError(err.message); toast.error(err.message); } else { setFormError(String(err?.message || err)); toast.error(String(err?.message || err)); }
     } finally { setSaving(false); }
   };
   const shownNames = new Set(fields.map((f) => f.name));
@@ -171,7 +179,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
   );
 
   return (
-    <form onSubmit={submit} noValidate>
+    <form onSubmit={submit} noValidate className={dense ? "form-dense" : undefined}>
       {(formError || otherErrors.length > 0) && (
         <div className="alert alert-danger py-2 fs-13">
           {formError && <div>{formError}</div>}

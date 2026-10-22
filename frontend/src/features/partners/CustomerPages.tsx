@@ -113,18 +113,20 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
     { ...sec("The shop", "ti-building-store"), name: "contact_person", label: "Contact person", col: "col-md-3", icon: "ti-user", autoComplete: "name" },
 
-    { ...sec("Where they are", "ti-map-pin"), name: "address", label: "Shop address", col: "col-md-6" },
-    { ...sec("Where they are", "ti-map-pin"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "rep must be this close to order" },
-    { ...sec("Where they are", "ti-map-pin"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
+    { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
+    { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
+    { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "rep must be this close to order" },
+    { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
+    { ...sec("The shop", "ti-building-store"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
       render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
-    { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
+    { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
 
-    { ...sec("Tax & terms", "ti-receipt", "NTN or CNIC — one of the two is required."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9 },
-    { ...sec("Tax & terms", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15 },
+    { ...sec("Tax & terms", "ti-receipt", "NTN or CNIC — one of the two is required."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, alwaysValidate: true,
+      validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
+    { ...sec("Tax & terms", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15, alwaysValidate: true,
+      validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
     { ...sec("Tax & terms", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
     { ...sec("Tax & terms", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
     { ...sec("Tax & terms", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
@@ -161,7 +163,7 @@ export function CustomerFormPage() {
     <>
       <PageHeader title={id ? `Edit ${q.data?.name}` : "New customer"} crumbs={[{ label: "Customers", to: "/app/customers" }, { label: id ? "Edit" : "New" }]} />
       <div className="card"><div className="card-body">
-        <ResourceForm fields={customerFields(can)} initial={q.data ? { ...q.data, locations_write: (q.data.locations || []).map((l: any) => ({ name: l.name, address: l.address, gps_lat: l.gps_lat, gps_lng: l.gps_lng, order_radius_m: l.order_radius_m ?? "" })) } : q.data} onCancel={() => nav(-1)}
+        <ResourceForm dense fields={customerFields(can)} initial={q.data ? { ...q.data, locations_write: (q.data.locations || []).map((l: any) => ({ name: l.name, address: l.address, gps_lat: l.gps_lat, gps_lng: l.gps_lng, order_radius_m: l.order_radius_m ?? "" })) } : q.data} onCancel={() => nav(-1)}
           onSubmit={async (v) => { const r = id ? await api.patch(`/api/v1/customers/${id}`, v) : await api.post("/api/v1/customers", v); toast.success("Saved"); nav(`/app/customers/${r.id}`); }} />
       </div></div>
     </>

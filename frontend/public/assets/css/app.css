@@ -125,3 +125,17 @@ body.mini-sidebar .sidebar .sidebar-logo { justify-content: center; padding: 10p
 }
 .fence-map .leaflet-container { font: inherit; }
 .fence-handle-side span { width: 22px; height: 10px; margin: 5px -1px; border-radius: 5px; background: #fff; border-color: #F26522; cursor: grab; }
+
+/* ── dense forms (ResourceForm dense): the daily-entry screens fit a laptop without scrolling ── */
+.form-dense .card.border { margin-bottom: 10px !important; }
+.form-dense .card-header { padding: 7px 12px; }
+.form-dense .card-header .rounded.bg-light { width: 24px !important; height: 24px !important; }
+.form-dense .card-header .fw-semibold { font-size: 13px; }
+.form-dense .card-header .fs-12 { font-size: 11px !important; }
+.form-dense .card-body { padding: 10px 12px 2px; }
+.form-dense .form-label { margin-bottom: 2px; font-size: 12px; }
+.form-dense .form-control, .form-dense .form-select, .form-dense .input-group-text { padding: 4px 9px; font-size: 13px; }
+.form-dense .form-text { margin-top: 1px; font-size: 10.5px; }
+.form-dense .row.g-3 { --bs-gutter-y: 0.55rem; }
+.form-dense .invalid-feedback { font-size: 11px; }
+.form-dense .card .btn { padding: 4px 10px; font-size: 12.5px; }
