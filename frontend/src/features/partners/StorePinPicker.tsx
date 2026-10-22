@@ -13,14 +13,15 @@ import { FenceMap } from "@/components/map/FenceMap";
 export function StorePinPicker({ lat, lng, name, onChange, compact }: {
   lat: any; lng: any; name?: string; onChange: (lat: number | null, lng: number | null) => void; compact?: boolean;
 }) {
-  // compact: the map stays folded until asked for — a paste box and the coordinates carry the common case
-  const [showMap, setShowMap] = useState(!compact);
+  // map-first (owner, 22 Oct 2026): search, zoom and click to place the pin; typed coordinates are the
+  // second door. compact only trims the height — the map itself stays open.
+  const [showMap, setShowMap] = useState(true);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const point = lat !== "" && lat !== null && lat !== undefined && lng !== "" && lng !== null && lng !== undefined
     ? { lat: Number(lat), lng: Number(lng) } : null;
   const [nonce, setNonce] = useState(0);
-  const put = (la: number, ln: number) => { onChange(+la.toFixed(7), +ln.toFixed(7)); setNonce((n) => n + 1); };
+  const put = (la: number, ln: number) => { onChange(+la.toFixed(7), +ln.toFixed(7)); setShowMap(true); setNonce((n) => n + 1); };
 
   const find = async () => {
     const text = q.trim() || name || "";
@@ -59,8 +60,14 @@ export function StorePinPicker({ lat, lng, name, onChange, compact }: {
           () => toast.error("Could not read your location — click the map instead."))}>
           <i className="ti ti-current-location me-1" />Use my location
         </button>
-        {compact && <button type="button" className="btn btn-outline-secondary" onClick={() => { setShowMap((v) => !v); if (!showMap) setNonce((n) => n + 1); }}><i className="ti ti-map me-1" />{showMap ? "Hide Map" : "Map"}</button>}
+        <button type="button" className="btn btn-outline-secondary" onClick={() => { setShowMap((v) => !v); if (!showMap) setNonce((n) => n + 1); }}><i className="ti ti-map me-1" />{showMap ? "Hide Map" : "Map"}</button>
         {point && <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>}
+        <div className="d-flex gap-1 align-items-center">
+          <input type="number" step="0.0000001" className="form-control" style={{ width: 128 }} placeholder="Latitude" value={lat ?? ""}
+            onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value), lng === "" || lng === null || lng === undefined ? null : Number(lng))} />
+          <input type="number" step="0.0000001" className="form-control" style={{ width: 128 }} placeholder="Longitude" value={lng ?? ""}
+            onChange={(e) => onChange(lat === "" || lat === null || lat === undefined ? null : Number(lat), e.target.value === "" ? null : Number(e.target.value))} />
+        </div>
       </div>
       {showMap && <FenceMap
         point={point}
@@ -71,8 +78,8 @@ export function StorePinPicker({ lat, lng, name, onChange, compact }: {
         height={compact ? 240 : 300}
       />}
       <div className="form-text">
-        {point ? <>Pin at {point.lat.toFixed(5)}, {point.lng.toFixed(5)}{showMap ? " — drag it or click elsewhere to move it." : ""}</>
-               : showMap ? <>Click the map where the shop is — or paste a maps link above.</> : <>No pin yet — paste a maps link, type lat, lng, or open the map.</>}
+        {point ? <>Pin set{showMap ? " — zoom with +/− and drag the pin to the shop door." : ""}</>
+               : showMap ? <>Search above, then zoom in with +/− and click where the shop is — or type Latitude and Longitude.</> : <>No pin yet — search, type Latitude and Longitude, or open the map.</>}
       </div>
     </div>
   );

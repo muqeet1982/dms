@@ -200,6 +200,7 @@ class ExtOrdersView(ExtBase):
         rows = SalesOrderListSerializer(orders, many=True).data
         for row, order in zip(rows, orders):
             row["can_edit"] = OrderService.rep_can_edit(order)
+            row["can_cancel"] = OrderService.rep_can_cancel(order)
             row["editable_until"] = OrderService.edit_window_end(order)
         return Response({"results": rows})
 
@@ -333,6 +334,7 @@ class ExtOrderDetailView(ExtBase):
                 for a in Attachment.objects.filter(model="SalesOrder", object_id=str(order.id)).order_by("created_at")]
         return {**SalesOrderSerializer(order).data,
                 "can_edit": OrderService.rep_can_edit(order),
+                "can_cancel": OrderService.rep_can_cancel(order),
                 "editable_until": OrderService.edit_window_end(order),
                 "attachments": atts}
 

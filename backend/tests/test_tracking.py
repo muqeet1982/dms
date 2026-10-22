@@ -58,12 +58,19 @@ def field(api, tenant):
 
 
 def _pings(points, start=None, step_minutes=4):
-    # Anchor inside today, on the company's clock. "Two hours ago" is yesterday when the suite runs between
-    # midnight and 02:00, and the endpoints under test default to *today* — so the fixture, not the code, was
-    # what failed at half past midnight.
-    at = start or max(timezone.now() - timedelta(hours=2),
-                      timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0))
-    return [{"client_id": f"p{i}", "at": (at + timedelta(minutes=i * step_minutes)).isoformat(),
+    # Anchor inside today AND in the past, on the company's clock. "Two hours ago" is yesterday when the
+    # suite runs just after midnight — but anchoring at 00:01 and stepping forward puts late pings in the
+    # FUTURE (stale_s went negative at 00:40). So the run ends a minute ago and the step compresses when
+    # midnight is nearer than the full span.
+    n = max(len(points), 1)
+    if start is not None:
+        at, step = start, timedelta(minutes=step_minutes)
+    else:
+        end = timezone.now() - timedelta(minutes=1)
+        midnight = timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0)
+        at = max(midnight, end - timedelta(minutes=step_minutes * (n - 1)))
+        step = (end - at) / max(n - 1, 1)
+    return [{"client_id": f"p{i}", "at": (at + i * step).isoformat(),
              "lat": lat, "lng": lng, "accuracy_m": 10.0, "battery_pct": 80, "source": "background"}
             for i, (lat, lng) in enumerate(points)]
 

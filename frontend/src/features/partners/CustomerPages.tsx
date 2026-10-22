@@ -112,13 +112,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
-      render: (v, _set, values, setField) => <>
-        <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} />
-        <div className="d-flex gap-2 mt-1" style={{ maxWidth: 420 }}>
-          <input type="number" step="0.0000001" className="form-control form-control-sm" placeholder="Latitude" value={v ?? ""} onChange={(e) => setField("gps_lat", e.target.value === "" ? null : Number(e.target.value))} />
-          <input type="number" step="0.0000001" className="form-control form-control-sm" placeholder="Longitude" value={values.gps_lng ?? ""} onChange={(e) => setField("gps_lng", e.target.value === "" ? null : Number(e.target.value))} />
-        </div>
-      </> },
+      render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
     { ...sec("Where they are", "ti-map-pin"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
     { ...sec("Where they are", "ti-map-pin"), name: "locations_write", label: "More shops of this customer", type: "custom", col: "col-md-12", default: [],
       hint: "a multi-shop account: orders can be taken at any of these; each delivery goes to the shop the order was taken at",

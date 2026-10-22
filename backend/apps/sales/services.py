@@ -352,6 +352,10 @@ class OrderService:
         # as the sale person (auto-assigned from the customer) is the office's document
         return order.source == "rep_app" and order.status in OrderService.REP_EDITABLE_STATUSES and timezone.now() < OrderService.edit_window_end(order)
 
+    # cancelling from the app closes exactly when editing does (owner, 22 Oct 2026): midnight of the order's
+    # day on the company clock, and only while the office has not acted on it
+    rep_can_cancel = rep_can_edit
+
     @staticmethod
     @transaction.atomic
     def edit_by_rep(order, *, lines=None, notes=None, requested_delivery_date=None):
@@ -438,8 +442,8 @@ class OrderService:
     @staticmethod
     @transaction.atomic
     def cancel(order, reason, by_rep=False):
-        if by_rep and order.status != "submitted":
-            raise DomainError("Reps can only cancel orders that are still submitted.")
+        if by_rep and not OrderService.rep_can_cancel(order):
+            raise DomainError("This order can no longer be cancelled from the app — ask the office.", code="cancel_window_closed", status_code=403)
         if order.status in ("partially_delivered", "delivered", "invoiced"):
             raise DomainError("Delivered or invoiced orders cannot be cancelled; use a return.")
         if order.status in ("cancelled", "rejected"):
