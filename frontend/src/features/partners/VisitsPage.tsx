@@ -80,7 +80,7 @@ export function VisitsPage() {
                   : <span className="text-muted fs-11">—</span> },
               { key: "at", header: "Time", render: (v: any) => datetime(v.at) },
               { key: "customer", header: "Shop", render: (v: any) => <>{v.customer_name}<div className="fs-11 text-muted">{v.customer_code}</div></> },
-              { key: "rep", header: "Rep", render: (v: any) => v.rep_name || v.user_name },
+              { key: "rep", header: "Rep", render: (v: any) => <>{v.rep_name || v.user_name}{v.app_version && <span className={`badge ms-1 ${String(v.app_version).startsWith("5.") ? "bg-light text-muted" : "bg-warning-light text-warning"}`} title={String(v.app_version).startsWith("5.") ? "app version" : "old build — still has shifts/tracking; ask them to update"}>v{v.app_version}</span>}</> },
               { key: "outcome", header: "Outcome", render: (v: any) => v.outcome === "order"
                   ? <span className="badge bg-success-light text-success">order {v.order_ref || ""}</span>
                   : <span className="badge bg-secondary-light text-secondary">{v.reason_label || "no order"}</span> },
