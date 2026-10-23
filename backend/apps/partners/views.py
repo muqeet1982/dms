@@ -266,11 +266,16 @@ class CustomerViewSet(TenantModelViewSet):
     def perform_create(self, serializer):
         d = dict(serializer.validated_data)
         reps = d.pop("assigned_reps", [])
+        # this path builds the Customer itself (CustomerService, not serializer.save()), so the serializer's
+        # own pop of the multi-shop rows never runs — they would reach Customer(**data) and 500
+        location_rows = d.pop("locations_write", None)
         if "credit_limit" in d and d["credit_limit"] and not has_tenant_perm(self.request, extra_perm("customers", "credit_limit")):
             raise DomainError("You cannot set credit limits.")
         membership = getattr(self.request, "membership", None)
         rep = membership.supplier_rep if membership is not None and membership.supplier_rep_id else None
         c = CustomerService.create(d, rep=rep) if rep is not None else CustomerService.create(d)
+        if location_rows is not None:
+            serializer._save_locations(c, location_rows)
         c.assigned_reps.set(reps)
         serializer.instance = c
         AuditService.log("created", c, after={"code": c.code, "name": c.name}, request=self.request)

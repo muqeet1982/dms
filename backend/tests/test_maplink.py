@@ -53,3 +53,15 @@ def test_whatsapp_and_geo_links_parse(api, tenant):
     assert wa.status_code == 200 and (wa.data["lat"], wa.data["lng"]) == (31.52037, 74.358749)
     geo = api.post("/api/v1/customers/parse-location", {"text": "geo:31.4710,74.2800"}, format="json")
     assert geo.status_code == 200 and (geo.data["lat"], geo.data["lng"]) == (31.471, 74.28)
+
+
+def test_office_create_with_multi_shop_rows_does_not_500(api, tenant):
+    """The form always sends locations_write (even []); the create path must pop it, not pass it to Customer()."""
+    r = api.post("/api/v1/customers", {"name": "Two Shop Traders", "type": "retailer", "cnic": "35202-9999999-9",
+                                       "locations_write": [{"name": "Branch Two", "address": "Mall Road", "gps_lat": 31.52, "gps_lng": 74.33, "order_radius_m": "60"}],
+                                       "gps_lat": 31.50, "gps_lng": 74.30}, format="json")
+    assert r.status_code == 201, r.content
+    assert len(r.data["locations"]) == 1 and r.data["locations"][0]["name"] == "Branch Two"
+    empty = api.post("/api/v1/customers", {"name": "One Shop Traders", "type": "retailer", "cnic": "35202-8888888-8",
+                                           "locations_write": []}, format="json")
+    assert empty.status_code == 201, empty.content
