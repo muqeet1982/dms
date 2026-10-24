@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { DiscountPctSelect } from "@/features/sales/OrdersPages";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { date, datetime, money, qty } from "@/lib/format";
@@ -157,7 +157,9 @@ export function InvoiceDetailPage() {
  * come from in this flow. The button appears for anyone whose role holds the Invoices "Add" switch. */
 export function InvoiceCreatePage() {
   const nav = useNavigate();
-  const [order, setOrder] = useState<string | null>(null);
+  const [sp] = useSearchParams();
+  const page = usePage("invoices");
+  const [order, setOrder] = useState<string | null>(sp.get("order"));
   const [busy, setBusy] = useState(false);
   const [applyTax, setApplyTax] = useState(false);
   const [taxPct, setTaxPct] = useState("");
@@ -173,8 +175,8 @@ export function InvoiceCreatePage() {
         <Alert kind="info">An invoice bills the goods the warehouse has issued, before dispatch — your flow: order → load form → issue → invoice → dispatch. Only orders at the Issued stage with an unbilled delivery are offered; a delivery completed without an invoice is billed automatically at delivery confirmation.</Alert>
         <div className="row">
           <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={(v) => { setOrder(v); setDiscOverride(""); setApplyTax(false); }} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
-          {order && <Field label="Discount %" col="col-md-3" hint="from the order (the customer's rate) — change it for this invoice"><DiscountPctSelect value={effDisc} onChange={setDiscOverride} /></Field>}
-          {order && <Field label="Tax" col="col-md-3" hint="charges the company's sales tax on every line and shows it on the invoice"><div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="chg-tax" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="chg-tax">Charge tax — each item at its product's Tax %</label></div></Field>}
+          {order && page.can("discount") && <Field label="Discount %" col="col-md-3" hint="from the order (the customer's rate) — change it for this invoice"><DiscountPctSelect value={effDisc} onChange={setDiscOverride} /></Field>}
+          {order && page.can("discount") && <Field label="Tax" col="col-md-3" hint="charges the company's sales tax on every line and shows it on the invoice"><div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="chg-tax" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="chg-tax">Charge tax — each item at its product's Tax %</label></div></Field>}
         </div>
         {order && detail.data && (
           uninvoiced.length

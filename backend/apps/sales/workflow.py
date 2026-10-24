@@ -85,11 +85,10 @@ def order_workflow(order):
         detail=" · ".join(f"{i.number} {i.get_status_display()}" for i in invoices) or "Raised against what the warehouse issued.",
         docs=[{"label": i.number, "to": f"/app/sales/invoices/{i.pk}"} for i in invoices],
         action=(
-            # `sales.add_sales_invoice` was not a codename anybody can hold, so this button was invisible to
-            # everyone but the owner. The switch the endpoint actually checks is `sales.add_invoice`.
-            {"label": "Create invoice", "post": f"/api/v1/sales-orders/{order.pk}/invoice", "perm": "sales.add_invoice",
-             "alt": {"label": "Raise as draft to check first",
-                     "post": f"/api/v1/sales-orders/{order.pk}/invoice", "body": {"post": False}}}
+            # the button goes to the create page, not straight to posting (owner, 24 Oct 2026): the invoice
+            # is SEEN first — lines, discount, the tax switch — and created from there, changeable by
+            # whoever holds the rights
+            {"label": "Create invoice", "to": f"/app/sales/invoices/new?order={order.pk}", "perm": "sales.add_invoice"}
             if invoiceable is not None and not invoices else None
         ),
     ))
