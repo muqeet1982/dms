@@ -126,11 +126,13 @@ def uoms_for_hs(hs_code):
     cached = list(FBRLookup.objects.filter(kind="hs_uom", parent_key=str(hs_code)))
     if cached:
         return cached
+    # a chapter-98 service heading never has goods units — the neutral unit, no token needed
+    if str(hs_code).startswith("98"):
+        return [FBRLookup.objects.create(kind="hs_uom", key="0", description="Numbers, pieces, units",
+                                         parent_key=str(hs_code))]
     fbr = settings_for()
     token, _sb = _require_token(fbr)
     rows = _get(f"{GW}/pdi/v2/HS_UOM", token, {"hs_code": hs_code, "annexure_id": 3})
-    if not rows and str(hs_code).startswith("98"):
-        rows = [{"uoM_ID": "0", "description": "Numbers, pieces, units"}]
     return [FBRLookup.objects.create(kind="hs_uom", key=str(r["uoM_ID"]), description=str(r["description"])[:500],
                                      parent_key=str(hs_code))
             for r in rows]

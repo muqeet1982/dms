@@ -69,12 +69,17 @@ class FBRLookupView(APIView):
         kind = request.query_params.get("kind") or ""
         parent = request.query_params.get("parent") or ""
         q = (request.query_params.get("q") or "").strip()
-        if kind == "rate" and parent:
-            rows = services.rates_for(parent)
-        elif kind == "sroschedule" and parent:
-            rows = services.schedules_for(parent)
-        elif kind == "hs_uom" and parent:
-            rows = services.uoms_for_hs(parent)   # empty for a 01–97 code = the code is wrong, and the UI says so
+        hint = ""
+        if kind in ("rate", "sroschedule", "hs_uom") and parent:
+            try:
+                rows = {"rate": services.rates_for, "sroschedule": services.schedules_for,
+                        "hs_uom": services.uoms_for_hs}[kind](parent)
+            except DomainError as e:
+                # no token yet: an empty dropdown with the reason beats a silent one
+                return Response({"results": [], "hint": str(e.detail) if hasattr(e, "detail") else str(e)})
+            return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows], "hint": hint})
+        if False:
+            pass
         else:
             qs = FBRLookup.objects.filter(kind=kind)
             if q:

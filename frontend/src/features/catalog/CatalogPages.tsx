@@ -316,7 +316,9 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           {(uoms.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
         </select>
         {Boolean(values.fbr_hs_code) && uoms.data && (uoms.data.results || []).length === 0 && !String(values.fbr_hs_code).startsWith("98") && (
-          <div className="text-danger fs-11 mt-1"><i className="ti ti-alert-circle me-1" />FBR allows no unit for this code — it is not a valid HS code; pick another.</div>)}
+          uoms.data.hint
+            ? <div className="form-text text-warning">{uoms.data.hint}</div>
+            : <div className="text-danger fs-11 mt-1"><i className="ti ti-alert-circle me-1" />FBR allows no unit for this code — it is not a valid HS code; pick another.</div>)}
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">Sale type</div>
@@ -331,6 +333,8 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           <option value="">{values.fbr_rate_desc || "—"}</option>
           {(rates.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
         </select>
+        {Boolean(values.fbr_trans_type_id) && rates.data && (rates.data.results || []).length === 0 && (
+          <div className="form-text text-warning">{rates.data.hint || "No rates cached for this sale type yet — save the IRIS token and sync under Settings → FBR."}</div>)}
       </div>
       <div className="col-md-4">
         <div className="form-label fs-12 mb-1">SRO schedule (often none)</div>
