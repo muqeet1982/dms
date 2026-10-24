@@ -113,8 +113,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
     { ...sec("The shop", "ti-building-store"), name: "contact_person", label: "Contact person", col: "col-md-3", icon: "ti-user", autoComplete: "name" },
 
-    { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-8" },
-    { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-4", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
+    { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
+    { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
+    { ...sec("The shop", "ti-building-store"), name: "province", label: "Province", type: "select", col: "col-md-3", default: "Punjab", options: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Jammu & Kashmir", "Islamabad Capital Territory"].map((p) => ({ value: p, label: p })) },
     { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),

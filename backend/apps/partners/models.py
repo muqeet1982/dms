@@ -125,6 +125,10 @@ class Customer(TenantModel):
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     city = models.CharField(max_length=80, blank=True)
+    PROVINCES = [("Punjab", "Punjab"), ("Sindh", "Sindh"), ("Khyber Pakhtunkhwa", "Khyber Pakhtunkhwa"),
+                 ("Balochistan", "Balochistan"), ("Gilgit-Baltistan", "Gilgit-Baltistan"),
+                 ("Azad Jammu & Kashmir", "Azad Jammu & Kashmir"), ("Islamabad Capital Territory", "Islamabad Capital Territory")]
+    province = models.CharField(max_length=40, blank=True, default="Punjab")
     gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     # how close a rep must be to take an order here; blank = the company's order_proximity_m (a kiosk and a
