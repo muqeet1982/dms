@@ -4,84 +4,113 @@ import { toast } from "@/lib/toast";
 import { FenceMap } from "@/components/map/FenceMap";
 
 /**
- * Where the shop is, on the customer's own form. Three ways to set it, because a distributor fills this in from
- * three different places: standing outside the shop (use my location), looking at a map (click or drag), or
- * reading an address off a list (search it).
+ * The shop's place, designed as two columns (owner, 24 Oct 2026): the MAP on the left — zoom, click, drag
+ * the pin, drag the circle's edge to widen the order radius — and the SETTINGS on the right: search, typed
+ * Latitude/Longitude, a pasted WhatsApp / Google Maps link, and the radius as a slider with − / +.
  *
- * The pin is what makes a store fall inside a rep's working area, so it is worth more than two number boxes.
+ * The pin is what every order's distance is measured against, so it is worth more than two number boxes.
  */
-export function StorePinPicker({ lat, lng, name, onChange, compact }: {
+export function StorePinPicker({ lat, lng, name, onChange, compact, radius, onRadiusChange }: {
   lat: any; lng: any; name?: string; onChange: (lat: number | null, lng: number | null) => void; compact?: boolean;
+  radius?: any; onRadiusChange?: (m: number | null) => void;
 }) {
-  // map-first (owner, 22 Oct 2026): search, zoom and click to place the pin; typed coordinates are the
-  // second door. compact only trims the height — the map itself stays open.
-  const [showMap, setShowMap] = useState(true);
   const [q, setQ] = useState("");
+  const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
+  const [nonce, setNonce] = useState(0);
   const point = lat !== "" && lat !== null && lat !== undefined && lng !== "" && lng !== null && lng !== undefined
     ? { lat: Number(lat), lng: Number(lng) } : null;
-  const [nonce, setNonce] = useState(0);
-  const put = (la: number, ln: number) => { onChange(+la.toFixed(7), +ln.toFixed(7)); setShowMap(true); setNonce((n) => n + 1); };
+  const r = Number(radius) > 0 ? Number(radius) : 50;
+  const put = (la: number, ln: number) => { onChange(+la.toFixed(7), +ln.toFixed(7)); setNonce((n) => n + 1); };
+  const setR = (m: number) => onRadiusChange?.(Math.min(1000, Math.max(10, Math.round(m))));
 
-  const find = async () => {
+  const search = async () => {
     const text = q.trim() || name || "";
     if (text.length < 3) return toast.error("Type an address or a landmark to search for.");
-    // a pasted Google Maps link or bare "lat, lng" is a location, not a search term
-    if (/maps|goo\.gl|g\.co|^geo:|^-?\d{1,3}\.\d+\s*[, ]\s*-?\d{1,3}\.\d+$/.test(text)) {
-      setBusy(true);
-      try {
-        const r = await api.post("/api/v1/customers/parse-location", { text });
-        put(r.lat, r.lng);
-        toast.success("Pin set from the link");
-      } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
-      return;
-    }
     setBusy(true);
     try {
-      const r = await api.get("/api/v1/geofences/search", { q: text });
-      const hit = r.results?.[0];
-      if (!hit) return toast.error("Nothing found — zoom the map in with +/− and click the shop, or paste a WhatsApp location.");
+      const res = await api.get("/api/v1/geofences/search", { q: text });
+      const hit = res.results?.[0];
+      if (!hit) return toast.error("Nothing found — zoom the map and click the shop, or paste a location link.");
       put(hit.lat, hit.lng);
       toast.success(`Pin moved to ${hit.label?.split(",").slice(0, 2).join(",")}`);
     } catch { toast.error("Could not reach the place lookup — click the map instead."); }
     finally { setBusy(false); }
   };
+  const parseLink = async () => {
+    const text = link.trim();
+    if (!text) return toast.error("Paste a WhatsApp or Google Maps location link first.");
+    setBusy(true);
+    try {
+      const res = await api.post("/api/v1/customers/parse-location", { text });
+      put(res.lat, res.lng);
+      setLink("");
+      toast.success("Pin set from the link");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
 
+  const label = (t: string) => <div className="form-label fs-12 mb-1 mt-2">{t}</div>;
   return (
-    <div className="mb-2">
-      <div className="d-flex flex-wrap gap-2 mb-2">
-        <div className="input-group" style={{ maxWidth: 260 }}>
-          <input className="form-control" placeholder="Search address — or paste a Google Maps / WhatsApp location link" value={q} onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); find(); } }} />
-          <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={find}><i className="ti ti-search" /></button>
-        </div>
-        <button type="button" className="btn btn-outline-secondary" onClick={() => navigator.geolocation?.getCurrentPosition(
-          (p) => put(p.coords.latitude, p.coords.longitude),
-          () => toast.error("Could not read your location — click the map instead."))}>
-          <i className="ti ti-current-location me-1" />My location
-        </button>
-        <button type="button" className="btn btn-outline-secondary" onClick={() => { setShowMap((v) => !v); if (!showMap) setNonce((n) => n + 1); }}><i className="ti ti-map me-1" />{showMap ? "Hide Map" : "Map"}</button>
-        {point ? <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>
-               : <button type="button" className="btn btn-outline-secondary" onClick={() => { onChange(null, null); setShowMap(false); }} title="Save the shop without a pin — add it later"><i className="ti ti-clock me-1" />Pin later</button>}
-        <div className="d-flex gap-1 align-items-center">
-          <input type="number" step="0.0000001" className="form-control" style={{ width: 108 }} placeholder="Latitude" value={lat ?? ""}
-            onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value), lng === "" || lng === null || lng === undefined ? null : Number(lng))} />
-          <input type="number" step="0.0000001" className="form-control" style={{ width: 108 }} placeholder="Longitude" value={lng ?? ""}
-            onChange={(e) => onChange(lat === "" || lat === null || lat === undefined ? null : Number(lat), e.target.value === "" ? null : Number(e.target.value))} />
+    <div className="row g-3">
+      <div className="col-md-7">
+        <FenceMap
+          editing={point && onRadiusChange ? { type: "circle", lat: point.lat, lng: point.lng, radius_m: r } : null}
+          onChange={(s) => { if (s.type === "circle") { onChange(+s.lat.toFixed(7), +s.lng.toFixed(7)); setR(s.radius_m); } }}
+          point={point && !onRadiusChange ? point : null}
+          onPointChange={put}
+          onMapClick={(la, ln) => { if (!point) put(la, ln); }}
+          fit={false}
+          fitNonce={nonce}
+          cursor={point ? undefined : "crosshair"}
+          height={compact ? 300 : 360}
+        />
+        <div className="form-text">
+          {point ? <>Drag the pin to the shop door; drag the circle's edge to widen the order radius. Zoom with +/−.</>
+                 : <>Zoom in with +/− and click where the shop is — or use the search, coordinates or a pasted link on the right.</>}
         </div>
       </div>
-      {showMap && <FenceMap
-        point={point}
-        onPointChange={put}
-        onMapClick={(la, ln) => put(la, ln)}
-        fitNonce={nonce}
-        cursor={point ? undefined : "crosshair"}
-        height={compact ? 180 : 300}
-      />}
-      <div className="form-text">
-        {point ? <>Pin set{showMap ? " — zoom with +/− and drag the pin to the shop door." : ""}</>
-               : showMap ? <>Search above, then zoom in with +/− and click where the shop is — or type Latitude and Longitude, or paste a WhatsApp / Google Maps location.</>
-               : <>No pin — the shop can be saved now and pinned later: the rep's app offers "Save where I am" on their first visit.</>}
+      <div className="col-md-5">
+        {label("Search address")}
+        <div className="input-group">
+          <input className="form-control" placeholder="Shop, street or landmark…" value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); search(); } }} />
+          <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={search}><i className="ti ti-search" /></button>
+        </div>
+        {label("Latitude / Longitude")}
+        <div className="d-flex gap-2">
+          <input type="number" step="0.0000001" className="form-control" placeholder="Latitude" value={lat ?? ""}
+            onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value), lng === "" || lng === null || lng === undefined ? null : Number(lng))} />
+          <input type="number" step="0.0000001" className="form-control" placeholder="Longitude" value={lng ?? ""}
+            onChange={(e) => onChange(lat === "" || lat === null || lat === undefined ? null : Number(lat), e.target.value === "" ? null : Number(e.target.value))} />
+        </div>
+        {label("Paste a WhatsApp / Google Maps location")}
+        <div className="input-group">
+          <input className="form-control" placeholder="https://maps.google.com/?q=…  or  geo:…" value={link} onChange={(e) => setLink(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); parseLink(); } }} />
+          <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={parseLink}><i className="ti ti-map-pin-plus" /></button>
+        </div>
+        {onRadiusChange && <>
+          {label(`Order radius — rep must be within ${r} m to order`)}
+          <div className="d-flex align-items-center gap-2">
+            <button type="button" className="btn btn-sm btn-outline-secondary px-2" onClick={() => setR(r - 10)}>−</button>
+            <input type="range" className="form-range flex-grow-1" min={10} max={300} step={5} value={Math.min(r, 300)} onChange={(e) => setR(Number(e.target.value))} />
+            <button type="button" className="btn btn-sm btn-outline-secondary px-2" onClick={() => setR(r + 10)}>+</button>
+            <div className="input-group input-group-sm" style={{ width: 96 }}>
+              <input type="number" className="form-control" value={r} onChange={(e) => setR(Number(e.target.value) || 50)} />
+              <span className="input-group-text">m</span>
+            </div>
+          </div>
+        </>}
+        <div className="d-flex flex-wrap gap-2 mt-3">
+          <button type="button" className="btn btn-outline-secondary" onClick={() => navigator.geolocation?.getCurrentPosition(
+            (p) => put(p.coords.latitude, p.coords.longitude),
+            () => toast.error("Could not read your location — click the map instead."))}>
+            <i className="ti ti-current-location me-1" />My location
+          </button>
+          {point ? <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>
+                 : <button type="button" className="btn btn-outline-secondary" onClick={() => onChange(null, null)} title="Save the shop without a pin — the rep's app offers 'Save where I am' on their first visit"><i className="ti ti-clock me-1" />Pin later</button>}
+        </div>
+        {!point && <div className="form-text mt-2">No pin — the shop can be saved now and pinned later: the rep's app offers "Save where I am" on their first visit.</div>}
       </div>
     </div>
   );

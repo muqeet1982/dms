@@ -113,14 +113,16 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
     { ...sec("The shop", "ti-building-store"), name: "contact_person", label: "Contact person", col: "col-md-3", icon: "ti-user", autoComplete: "name" },
 
-    { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
-    { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
-    { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "Order radius", type: "number", col: "col-md-3", suffix: "m", default: 50, hint: "rep must be this close to order" },
+    { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-8" },
+    { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-4", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
+    { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
     { ...sec("The shop", "ti-building-store"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
-      render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name} onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }} /> },
+      render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name}
+        onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }}
+        radius={values.order_radius_m} onRadiusChange={(m) => setField("order_radius_m", m)} /> },
     { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
 
     { ...sec("Tax & terms", "ti-receipt", "NTN or CNIC — one of the two is required."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, alwaysValidate: true,
