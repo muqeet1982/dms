@@ -62,7 +62,7 @@ export const TENANT_MENU: MenuSection[] = [
     title: "ADMINISTRATION", items: [
       { label: "Users Management", icon: "ti-user-shield", children: [{ label: "Users", to: "/app/users", end: true, page: "users" }, { label: "Roles", to: "/app/users/roles", page: "roles" }, { label: "Activity log", to: "/app/users/activity", page: "activity" }] },
       { label: "Settings", icon: "ti-settings", children: [
-        { label: "Company profile", to: "/app/settings/company", page: "settings_company" }, { label: "FBR e-invoicing", to: "/app/settings/company?tab=fbr", page: "settings_company" }, { label: "Branding", to: "/app/settings/branding", page: "settings_branding", feature: "branding" },
+        { label: "Company profile", to: "/app/settings/company", page: "settings_company" }, { label: "FBR e-invoicing", to: "/app/settings/fbr", page: "settings_company" }, { label: "Branding", to: "/app/settings/branding", page: "settings_branding", feature: "branding" },
         { label: "Warehouses & bins", to: "/app/settings/warehouses", page: "settings_warehouses" }, { label: "Locations (racks/bins)", to: "/app/settings/locations", page: "settings_locations" }, { label: "Taxes", to: "/app/settings/taxes", page: "settings_taxes" },
         { label: "Document numbering", to: "/app/settings/numbering", page: "settings_numbering" }, { label: "Posting rules", to: "/app/settings/posting-rules", page: "settings_posting_rules" },
         { label: "Reason codes", to: "/app/settings/reason-codes", page: "settings_reason_codes" }, { label: "Discount contributions", to: "/app/settings/discount-contributions", page: "settings_discount_contributions" }, { label: "Notifications", to: "/app/settings/notifications" },

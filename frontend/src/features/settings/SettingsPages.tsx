@@ -74,7 +74,7 @@ export function CompanySettingsPage() {
   return (
     <>
       <PageHeader title="Company settings" crumbs={[{ label: "Settings" }, { label: "Company" }]} />
-      <Tabs tabs={[{ key: "profile", label: "Profile" }, { key: "contact", label: "Contact & documents" }, { key: "rules", label: "Business rules" }, { key: "fbr", label: "FBR e-invoicing" }]} active={tab} onChange={setTab} />
+      <Tabs tabs={[{ key: "profile", label: "Profile" }, { key: "contact", label: "Contact & documents" }, { key: "rules", label: "Business rules" }]} active={tab} onChange={setTab} />
       {tab === "profile" && (
         <div className="card mb-3"><div className="card-body d-flex align-items-center gap-3">
           <div className="border rounded d-flex align-items-center justify-content-center bg-light" style={{ width: 120, height: 72 }}>
@@ -97,7 +97,6 @@ export function CompanySettingsPage() {
           initial={company.data.settings} onSubmit={saveSettings} /></div></div>
       )}
       {tab === "profile" && <div className="card"><div className="card-body"><ResourceForm fields={[{ name: "legal_name", label: "Legal name", required: true, col: "col-md-6" }, { name: "display_name", label: "Display name", required: true, col: "col-md-6" }, { name: "address", label: "Address", type: "textarea", col: "col-md-6" }, { name: "city", label: "City", col: "col-md-3" }, { name: "phone", label: "Phone", col: "col-md-3" }, { name: "email", label: "Email", type: "email", col: "col-md-4" }, { name: "website", label: "Website", col: "col-md-4" }, { name: "base_currency", label: "Currency", col: "col-md-2", readOnly: true }, { name: "fiscal_year_start_month", label: "Fiscal year starts (month 1–12)", type: "number", col: "col-md-2" }, { name: "timezone", label: "Timezone", col: "col-md-4" }, { name: "ntn", label: "NTN", col: "col-md-2", placeholder: "1234567-8" }, { name: "strn", label: "STRN (sales tax)", col: "col-md-3", placeholder: "03-01-2345-678-90" }]} initial={{ ...t, ntn: t.tax_numbers?.NTN || "", strn: t.tax_numbers?.STRN || "" }} onSubmit={(v: any) => { const { ntn, strn, ...rest } = v; return save({ ...rest, tax_numbers: { ...(t.tax_numbers || {}), ...(ntn ? { NTN: ntn } : {}), ...(strn ? { STRN: strn } : {}) } }); }} /></div></div>}
-      {tab === "fbr" && <FBRSettingsTab />}
       {tab === "rules" && <div className="card"><div className="card-body"><ResourceForm fields={settingFields} initial={{ ...{ credit_policy: "warn", reserve_stock_on_confirm: true, two_step_dispatch: false, accept_external_prices: "flag", customer_requests_need_approval: true, allow_negative_stock: false, transfer_requires_approval: true, block_stock_moves_during_count: true, backorder_auto_cancel_days: 30, min_shelf_life_days: 30, count_tolerance_pct: 2, rep_unsettled_alert_days: 3, geofence_policy: "block", geofence_require_location: false, order_location_rule: "shop", order_proximity_m: 50, rep_order_photo: "optional", tracking_enabled: false, tracking_mode: "work_hours", tracking_from: "09:00", tracking_to: "19:00", tracking_interval_s: 120, tracking_min_distance_m: 50, tracking_retention_days: 90, tracking_notice: "", invoice_footer: "" }, ...t.settings }} onSubmit={(v) => save({ settings: { ...t.settings, ...v } })} /></div></div>}
     </>
   );
@@ -396,6 +395,15 @@ export function DiscountContributionsPage() {
 
 /** FBR Digital Invoicing — identity, the two tokens, the sandbox switch, and reference data sync.
  *  Filing stays opt-in per invoice: nothing here files anything by itself. */
+export function FBRPage() {
+  return (
+    <>
+      <PageHeader title="FBR e-invoicing" crumbs={[{ label: "Settings" }, { label: "FBR e-invoicing" }]} />
+      <FBRSettingsTab />
+    </>
+  );
+}
+
 function FBRSettingsTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["fbr-settings"], queryFn: () => api.get("/api/v1/fbr/settings") });
