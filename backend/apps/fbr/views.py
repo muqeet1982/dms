@@ -89,3 +89,54 @@ class FBRCheckRegistrationView(APIView):
     def post(self, request):
         data = services.check_registration(request.data.get("registration_no") or "")
         return Response({"registration_type": data.get("REGISTRATION_TYPE", ""), "raw": data})
+
+
+class FBRScenarioView(APIView):
+    """The §10 scenario-test screen: list templates with their latest run, run one, paste a template."""
+
+    permission_classes = [IsTenantUser]
+
+    def get(self, request):
+        from .models import FBRScenarioRun, FBRScenarioTemplate
+
+        services.seed_scenarios()
+        latest = {}
+        for r in FBRScenarioRun.objects.order_by("scenario_id", "-created_at"):
+            latest.setdefault(r.scenario_id, r)
+        known = {
+            "SN001": "Goods at standard rate — Registered", "SN002": "Goods at standard rate — Unregistered",
+            "SN003": "Steel melting and re-rolling", "SN004": "Ship breaking", "SN005": "Goods at Reduced Rate",
+            "SN006": "Exempt goods", "SN007": "Goods at zero-rate", "SN008": "3rd Schedule Goods (MRP)",
+            "SN009": "Cotton ginners", "SN010": "Telecommunication services", "SN011": "Toll Manufacturing (blocked by FBR)",
+            "SN012": "Petroleum Products (blocked by FBR)", "SN013": "Electricity to retailers", "SN014": "Gas to CNG stations",
+            "SN015": "Mobile Phones", "SN016": "Processing/Conversion", "SN017": "Goods (FED in ST mode)",
+            "SN018": "Services (FED in ST mode)", "SN019": "Services", "SN020": "Electric Vehicle",
+            "SN021": "Cement / Concrete Block", "SN022": "Potassium Chlorate", "SN023": "CNG Sales",
+            "SN024": "Goods per SRO.297(I)/2023", "SN025": "Non-Adjustable Supplies", "SN026": "Standard rate (retail)",
+            "SN027": "3rd Schedule (retail)", "SN028": "Reduced Rate (retail)",
+        }
+        templates = {t.scenario_id: t for t in FBRScenarioTemplate.objects.all()}
+        rows = []
+        for sid in sorted(set(known) | set(templates)):
+            run = latest.get(sid)
+            rows.append({"scenario_id": sid, "description": (templates.get(sid).description if sid in templates else "") or known.get(sid, ""),
+                         "has_template": sid in templates,
+                         "last": None if run is None else {"passed": run.passed, "at": run.created_at,
+                                                           "code": run.status_code, "error": run.error_text}})
+        return Response({"results": rows})
+
+    def post(self, request):
+        _can_manage(request)
+        from .models import FBRScenarioTemplate
+
+        d = request.data
+        if d.get("template") is not None:
+            sid = (d.get("scenario_id") or "").strip().upper()
+            if not sid.startswith("SN"):
+                raise DomainError("Give the scenario id (SN001…SN028) with the pasted template.")
+            FBRScenarioTemplate.objects.update_or_create(
+                scenario_id=sid, defaults={"payload": d["template"], "description": d.get("description", "")})
+            return Response({"stored": sid})
+        run = services.run_scenario((d.get("scenario_id") or "").strip().upper(), actor=request.user)
+        return Response({"scenario_id": run.scenario_id, "passed": run.passed, "code": run.status_code,
+                         "error": run.error_text, "response": run.response[:2000]})

@@ -276,3 +276,69 @@ def submit(inv, actor=None):
     if not ok:
         raise DomainError(f"FBR refused the invoice: {filing.error_text}", code="fbr_rejected")
     return filing
+
+
+# ── scenario tests (§10): FBR's sample payloads, seller fields and date replaced — NOTHING else ─────
+MINIMAL_ITEM = {
+    "hsCode": "0101.2100", "productDescription": "Test item", "rate": "18%",
+    "uoM": "Numbers, pieces, units", "quantity": 1.0, "totalValues": 1180.0,
+    "valueSalesExcludingST": 1000.0, "fixedNotifiedValueOrRetailPrice": 0,
+    "salesTaxApplicable": 180.0, "salesTaxWithheldAtSource": 0, "extraTax": "",
+    "furtherTax": 0, "sroScheduleNo": "", "fedPayable": 0, "discount": 0,
+    "saleType": "Goods at standard rate (default)", "sroItemSerialNo": "",
+}
+
+
+def seed_scenarios():
+    """SN001/SN002 from the guide's accepted minimal payload; the other 26 are FBR's own samples and
+    must be pasted verbatim (the runner never recomputes a template's amounts — §10)."""
+    from .models import FBRScenarioTemplate
+
+    base = {"invoiceType": "Sale Invoice", "invoiceRefNo": "", "items": [dict(MINIMAL_ITEM)],
+            "buyerProvince": "PUNJAB", "buyerAddress": "Lahore"}
+    seeds = [
+        ("SN001", "Goods at standard rate — Registered buyer",
+         {**base, "buyerNTNCNIC": "3652565", "buyerBusinessName": "Scenario Buyer One",
+          "buyerRegistrationType": "Registered", "scenarioId": "SN001"}),
+        ("SN002", "Goods at standard rate — Unregistered buyer",
+         {**base, "buyerNTNCNIC": "3520212345671", "buyerBusinessName": "Scenario Buyer Two",
+          "buyerRegistrationType": "Unregistered", "scenarioId": "SN002"}),
+    ]
+    made = 0
+    for sid, desc, payload in seeds:
+        _, created = FBRScenarioTemplate.objects.get_or_create(scenario_id=sid,
+                                                               defaults={"description": desc, "payload": payload})
+        made += int(created)
+    return made
+
+
+def run_scenario(scenario_id, actor=None):
+    import copy
+
+    from .models import FBRScenarioRun, FBRScenarioTemplate
+
+    fbr = settings_for()
+    token, sandbox = _require_token(fbr)
+    if not sandbox:
+        raise DomainError("Scenario tests run against the SANDBOX only — switch back to sandbox mode first.",
+                          code="fbr_not_sandbox")
+    tpl = FBRScenarioTemplate.objects.filter(scenario_id=scenario_id).first()
+    if tpl is None:
+        raise DomainError(f"No template stored for {scenario_id} — paste FBR's sample payload for it first.",
+                          code="fbr_no_template")
+    payload = copy.deepcopy(tpl.payload)
+    payload["sellerNTNCNIC"] = engine.trim_ntn(fbr.ntn or fbr.cnic or "")
+    payload["sellerBusinessName"] = engine.fbr_text(fbr.business_name)
+    payload["sellerProvince"] = engine.fbr_province(fbr.province)
+    payload["sellerAddress"] = engine.fbr_text(fbr.address)
+    payload["invoiceDate"] = date.today().strftime("%Y-%m-%d")
+    # FBR dedupes identical invoices — vary the buyer name per run while testing (guide appendix)
+    payload["buyerBusinessName"] = f"{payload.get('buyerBusinessName', 'Scenario Buyer')} {timezone.now():%H%M%S}"
+    data, vr = _call(POST_URL[True], token, payload)
+    passed = vr.get("statusCode") == "00"
+    run = FBRScenarioRun.objects.create(
+        scenario_id=scenario_id, passed=passed, payload=json.dumps(payload, ensure_ascii=False)[:20000],
+        response=json.dumps(data, ensure_ascii=False)[:20000], status_code=str(vr.get("statusCode", "")),
+        error_text="" if passed else engine.errors_of(vr))
+    AuditService.log("fbr.scenario", run, after={"scenario": scenario_id, "passed": passed}, actor=actor)
+    return run

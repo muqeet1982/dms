@@ -175,3 +175,24 @@ def test_unclassified_product_refuses_before_any_call(api, tenant):
         Product.objects.update(fbr_hs_code="")
     r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
     assert r.status_code in (400, 422) and "classified" in str(r.data)
+
+
+def test_scenario_runner_swaps_seller_only_and_records_the_run(api, tenant):
+    _taxed_invoice(api, tenant)   # creates FBRSettings with a sandbox token
+    listed = api.get("/api/v1/fbr/scenarios")
+    assert listed.status_code == 200
+    rows = {r["scenario_id"]: r for r in listed.data["results"]}
+    assert rows["SN001"]["has_template"] and rows["SN002"]["has_template"]
+    assert len(rows) >= 28
+
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)) as post:
+        run = api.post("/api/v1/fbr/scenarios", {"scenario_id": "SN002"}, format="json")
+        assert run.status_code == 200 and run.data["passed"] is True, run.content
+        sent = post.call_args.kwargs["json"]
+        assert sent["sellerNTNCNIC"] == "1234567"                 # seller swapped in
+        assert sent["scenarioId"] == "SN002"
+        assert sent["items"][0]["salesTaxApplicable"] == 180.0    # the template's OWN figures, untouched
+
+    again = api.get("/api/v1/fbr/scenarios")
+    sn2 = next(r for r in again.data["results"] if r["scenario_id"] == "SN002")
+    assert sn2["last"]["passed"] is True

@@ -7,4 +7,5 @@ urlpatterns = [
     path("sync", views.FBRSyncView.as_view()),
     path("lookups", views.FBRLookupView.as_view()),
     path("check-registration", views.FBRCheckRegistrationView.as_view()),
+    path("scenarios", views.FBRScenarioView.as_view()),
 ]

@@ -400,6 +400,7 @@ export function FBRPage() {
     <>
       <PageHeader title="FBR e-invoicing" crumbs={[{ label: "Settings" }, { label: "FBR e-invoicing" }]} />
       <FBRSettingsTab />
+      <FBRScenarios />
     </>
   );
 }
@@ -437,5 +438,44 @@ function FBRSettingsTab() {
         <span className="fs-12 text-muted">cached: {Object.entries(f.lookups || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "nothing yet — sync after saving a token"}</span>
       </div></div>
     </>
+  );
+}
+
+
+/** §10: FBR requires the sandbox scenarios passed before production. Templates are FBR's OWN sample
+ *  payloads — the runner swaps only the seller fields and the date, never the amounts. */
+function FBRScenarios() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["fbr-scenarios"], queryFn: () => api.get("/api/v1/fbr/scenarios") });
+  const [running, setRunning] = useState<string | null>(null);
+  const [paste, setPaste] = useState<{ open: boolean; sid: string; json: string }>({ open: false, sid: "", json: "" });
+  const rows = q.data?.results || [];
+  const passed = rows.filter((r: any) => r.last?.passed).length;
+  return (
+    <div className="card mt-3"><div className="card-header d-flex justify-content-between align-items-center">
+      <strong><i className="ti ti-checklist me-2 text-primary" />Sandbox scenario tests</strong>
+      <span className="fs-12 text-muted">{passed} passed · run only the scenarios matching your business — 26 of 28 is the expected ceiling (SN011/SN012 are blocked at FBR's end)</span>
+    </div><div className="card-body p-0">
+      <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Scenario</th><th>What it covers</th><th>Template</th><th>Last run</th><th style={{ width: 170 }}></th></tr></thead>
+        <tbody>{rows.map((r: any) => (
+          <tr key={r.scenario_id}>
+            <td className="fw-semibold">{r.scenario_id}</td>
+            <td>{r.description}</td>
+            <td>{r.has_template ? <span className="text-success"><i className="ti ti-check" /> stored</span> : <span className="text-muted">paste FBR's sample</span>}</td>
+            <td>{r.last ? (r.last.passed ? <span className="badge bg-success-light text-success">passed</span> : <span className="badge bg-danger-light text-danger" title={r.last.error}>failed — {String(r.last.error).slice(0, 60)}</span>) : <span className="text-muted">never</span>}</td>
+            <td className="text-end pe-2">
+              {r.has_template && <button className="btn btn-sm btn-outline-primary me-1" disabled={!!running} onClick={async () => { setRunning(r.scenario_id); try { const res = await api.post("/api/v1/fbr/scenarios", { scenario_id: r.scenario_id }); res.passed ? toast.success(`${r.scenario_id} passed`) : toast.error(`${r.scenario_id}: ${res.error}`); } catch (e: any) { toast.error(e.message); } finally { setRunning(null); qc.invalidateQueries({ queryKey: ["fbr-scenarios"] }); } }}>{running === r.scenario_id ? "Running…" : "Run"}</button>}
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => setPaste({ open: true, sid: r.scenario_id, json: "" })}>Template</button>
+            </td>
+          </tr>))}</tbody></table>
+      <Modal open={paste.open} title={`Template for ${paste.sid} — FBR's sample payload, verbatim`} onClose={() => setPaste({ open: false, sid: "", json: "" })}>
+        <div className="form-text mb-2">Paste the scenario's sample payload from FBR/PRAL's documentation exactly as given — the runner replaces only the seller fields and the date, never the amounts (some of FBR's own figures do not follow their own formula, and the scenario passes only with their numbers).</div>
+        <textarea className="form-control font-monospace fs-12" rows={12} value={paste.json} onChange={(e) => setPaste({ ...paste, json: e.target.value })} placeholder='{"invoiceType": "Sale Invoice", …}' />
+        <div className="d-flex justify-content-end gap-2 mt-2">
+          <button className="btn btn-light" onClick={() => setPaste({ open: false, sid: "", json: "" })}>Cancel</button>
+          <button className="btn btn-primary" onClick={async () => { try { const body = JSON.parse(paste.json); await api.post("/api/v1/fbr/scenarios", { scenario_id: paste.sid, template: body }); toast.success(`${paste.sid} template stored`); setPaste({ open: false, sid: "", json: "" }); qc.invalidateQueries({ queryKey: ["fbr-scenarios"] }); } catch (e: any) { toast.error(e.message?.includes("JSON") ? "That is not valid JSON" : e.message); } }}>Store template</button>
+        </div>
+      </Modal>
+    </div></div>
   );
 }
