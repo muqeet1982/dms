@@ -58,13 +58,16 @@ class OrderLineSerializer(serializers.ModelSerializer):
     # read it next to `packaging_name` could reasonably render "36 box" for 36 pieces. `qty_base` says what it
     # is in its name, and `packaging_qty_in_base` is the pack factor, so a carton figure can be shown too.
     qty_base = serializers.DecimalField(source="qty_ordered", max_digits=18, decimal_places=3, read_only=True)
+    # the product's own Tax % rides along so the invoice create page can preview each line's tax before
+    # the invoice exists (the server recomputes the real figures at creation)
+    product_tax_pct = serializers.DecimalField(source="variant.product.tax_pct", max_digits=7, decimal_places=3, read_only=True, default=None)
     packaging_qty_in_base = serializers.DecimalField(source="packaging.qty_in_base", max_digits=18, decimal_places=3, read_only=True, default=None)
     tax1_name = serializers.CharField(source="tax1_type.name", read_only=True, default="")
     tax2_name = serializers.CharField(source="tax2_type.name", read_only=True, default="")
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         extra_kwargs = {"unit_price": {"required": False}}
 
