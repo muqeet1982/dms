@@ -676,16 +676,23 @@ class InvoiceService:
 
     @staticmethod
     def recompute(inv):
-        """Re-total an invoice from its lines (used after a discount change)."""
+        """Re-total an invoice from its lines (used after a discount or tax change)."""
         from apps.catalog.services import TaxService
 
+        forced = inv.force_tax_type
+        forced_rate = forced.rate_on(inv.date) if forced else None
         subtotal = discount = t1 = t2 = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
-            t = TaxService.compute(taxable, TaxService.resolve_class(line.variant, inv.customer), inv.date)
-            line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
-            line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
+            if forced is not None:
+                # the invoice's own tax switch beats the products' classes — one tax, every line
+                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, forced_rate, q4(taxable * forced_rate / 100)
+                line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
+            else:
+                t = TaxService.compute(taxable, TaxService.resolve_class(line.variant, inv.customer), inv.date)
+                line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
+                line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
             line.line_total = taxable + line.tax1_amount + line.tax2_amount
             line.save(update_fields=["tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total"])
             subtotal += gross
@@ -693,8 +700,36 @@ class InvoiceService:
             t1 += line.tax1_amount
             t2 += line.tax2_amount
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, discount, t1, t2
+        if forced is not None:
+            inv.tax1_type, inv.tax2_type = forced, None
         inv.total = subtotal - discount + t1 + t2
-        inv.save(update_fields=["subtotal", "discount", "tax1_total", "tax2_total", "total", "updated_at"])
+        inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "total", "updated_at"])
+        return inv
+
+    @staticmethod
+    @transaction.atomic
+    def set_tax(inv, *, apply, tax_type=None, actor=None):
+        """
+        The invoice's tax switch (owner, 24 Oct 2026): ON charges one sales tax on every line — the given
+        type, or the company's sales-tax type — and OFF goes back to the products' tax classes. Draft
+        invoices only: a posted invoice's tax is already in the ledger.
+        """
+        from apps.catalog.models import TaxType
+
+        if inv.status != "draft":
+            raise DomainError("This invoice is already posted — its tax is in the ledger. Use a credit note.")
+        if apply:
+            tt = tax_type or TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
+            if tt is None:
+                raise DomainError("No sales tax type exists — create one under Settings → Taxes first.", code="no_tax_type")
+            if tt.rate_on(inv.date) <= 0:
+                raise DomainError(f"{tt.name} has no rate for {inv.date} — set one under Settings → Taxes.", code="no_tax_rate")
+            inv.force_tax_type = tt
+        else:
+            inv.force_tax_type = None
+        inv.save(update_fields=["force_tax_type", "updated_at"])
+        InvoiceService.recompute(inv)
+        AuditService.log("invoice.tax", inv, after={"apply": bool(apply), "tax_type": inv.force_tax_type.name if inv.force_tax_type else None}, actor=actor)
         return inv
 
     @staticmethod
@@ -738,14 +773,23 @@ class InvoiceService:
         discount row is then taken from, and the page still checks with a pencil.
         """
         customer_part = Decimal("0")
+        tax_shown = (inv.tax1_total or Decimal("0")) + (inv.tax2_total or Decimal("0"))
         for l in lines:
             prod = q4(q4(l.qty * l.unit_price) * (l.product_discount_pct or 0) / 100)
             prod = min(prod, l.discount_amount or Decimal("0"))
             cust = (l.discount_amount or Decimal("0")) - prod
             l.prod_discount = prod
-            l.display_amount = (l.line_total or Decimal("0")) + cust
+            l.tax_amount = (l.tax1_amount or Decimal("0")) + (l.tax2_amount or Decimal("0"))
+            # with tax on the page, the Amount column is pre-tax so Subtotal − Discount + Tax = Total still
+            # checks with a pencil; without tax it stays tax-inclusive as before
+            l.display_amount = (l.line_total or Decimal("0")) + cust - (l.tax_amount if tax_shown else Decimal("0"))
             customer_part += cust
-        return {"customer_discount": q4(customer_part), "display_subtotal": q4((inv.total or Decimal("0")) + customer_part)}
+        tax_label = ""
+        if tax_shown and inv.tax1_type_id:
+            rate = next((l.tax1_rate for l in lines if l.tax1_rate), None)
+            tax_label = f"{inv.tax1_type.name}{f' ({rate.normalize()}%)' if rate else ''}"
+        return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_label": tax_label,
+                "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown)}
 
     @staticmethod
     def _raise_company_claims(inv):

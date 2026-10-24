@@ -233,10 +233,18 @@ class SalesOrderViewSet(DocumentViewSet):
         should_post = request.data.get("post", True) not in (False, "false", "0", 0)
         pct = request.data.get("discount_pct")
         invoices = [InvoiceService.from_delivery_note(n, basis="loaded", post=False) for n in notes]
+        apply_tax = request.data.get("apply_tax")
+        tax_type = None
+        if apply_tax in (True, "true", "1", 1) and request.data.get("tax_type"):
+            from apps.catalog.models import TaxType
+
+            tax_type = TaxType.objects.filter(pk=request.data["tax_type"]).first()
         for inv in invoices:
             # the % was shown on the create page, seeded from the order — apply a change before posting
             if pct is not None and Decimal(str(pct)) != inv.discount_pct:
                 InvoiceService.set_discount(inv, action="apply" if Decimal(str(pct)) > 0 else "remove", percent=pct)
+            if apply_tax in (True, "true", "1", 1):
+                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type, actor=request.user)
             if should_post:
                 InvoiceService.post(inv)
         return Response(SalesInvoiceSerializer(invoices, many=True).data, status=status.HTTP_201_CREATED)
@@ -288,6 +296,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "post_to_ledger": "sales.add_invoice",
         "post": "sales.add_invoice",  # belt and braces: any POST reaching this viewset needs the same right
         "discount": extra_perm("invoices", "discount"),
+        "tax": extra_perm("invoices", "discount"),  # the tax switch rides on the same right as the discount one
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
@@ -371,6 +380,16 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         """POST { action: "remove" | "apply", percent? } — only on a draft invoice."""
         inv = self.get_object()
         InvoiceService.set_discount(inv, action=request.data.get("action", "remove"), percent=request.data.get("percent"), actor=request.user)
+        return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["post"])
+    def tax(self, request, pk=None):
+        """POST { apply: true|false, tax_type? } — the invoice's tax switch; only on a draft invoice."""
+        from apps.catalog.models import TaxType
+
+        inv = self.get_object()
+        tt = TaxType.objects.filter(pk=request.data["tax_type"]).first() if request.data.get("tax_type") else None
+        InvoiceService.set_tax(inv, apply=request.data.get("apply") in (True, "true", "1", 1), tax_type=tt, actor=request.user)
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["get"])
