@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
 import { datetime } from "@/lib/format";
 import { useDoc, useOptions } from "@/lib/hooks";
-import { usePage, usePerms } from "@/lib/perms";
+import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, Field, PageHeader, Spinner, StatusBadge, Tabs } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
@@ -123,6 +123,9 @@ export function UserFormPage() {
         {page.can("manage_access") && <Field label="Roles *" col="col-12">{roles.data ? <RolePicker roles={roleRows} value={form.roles} onChange={(ids) => { setRoleError(null); setForm({ ...form, roles: ids }); }} /> : <Spinner />}{roleError && <div className="text-danger fs-12 mt-1"><i className="ti ti-alert-circle me-1" />{roleError}</div>}</Field>}
         {page.can("manage_access") && hasField && <Field label="Rep record *" col="col-12"><RepLink form={form} setForm={setForm} currentRep={u?.rep_name} error={repError} fieldRoles={fieldRoleNames} /></Field>}
         {page.can("manage_access") && willUnlinkRep && <div className="col-12"><Alert kind="warning">Saving with no field role unlinks <strong>{u.rep_name}</strong> from this login. The rep record and its history stay; this person simply stops being a rep and loses the mobile app.</Alert></div>}
+        {id && u?.supplier_rep && pageRights("supplier_reps").edit && <Field label="Can take orders" col="col-md-6" hint="this rep's own override of the shop-proximity rule — saves immediately">
+          <RepOrderFreedom repId={u.supplier_rep} />
+        </Field>}
         {page.can("manage_access") && <Field label="Can sign in on" col="col-md-6" hint="where this login works — the mobile app, the web, or both">
           <select className="form-select" value={form.login_surface || "both"} onChange={(e) => setForm({ ...form, login_surface: e.target.value })}>
             <option value="both">App and web (default)</option>
@@ -470,5 +473,27 @@ export function ProfilePage() {
       {tab === "sessions" && <div className="card"><div className="card-header d-flex justify-content-between"><strong>Active sessions</strong><button className="btn btn-sm btn-outline-danger" onClick={async () => { await api.post("/api/v1/me/sessions/revoke-all"); useAuth.getState().logout(); window.location.assign("/login"); }}>Sign out everywhere</button></div><div className="card-body p-0"><table className="table table-sm fs-13 mb-0"><thead className="table-light"><tr><th>Device</th><th>Platform</th><th>IP</th><th>Signed in</th><th>Last used</th><th /></tr></thead><tbody>{sessions.data?.map((s: any) => <tr key={s.id}><td className="text-truncate" style={{ maxWidth: 320 }}>{s.device}</td><td>{s.platform}</td><td>{s.ip}</td><td>{datetime(s.created_at)}</td><td>{datetime(s.last_used_at)}</td><td className="text-end"><button className="btn btn-sm btn-outline-danger" onClick={async () => { await api.post(`/api/v1/me/sessions/${s.id}/revoke`); sessions.refetch(); }}>Revoke</button></td></tr>)}</tbody></table></div></div>}
       {tab === "notifications" && prefs.data && <div className="card"><div className="card-body p-0"><table className="table table-sm fs-13 mb-0"><thead className="table-light"><tr><th>Notification</th><th>Push</th><th>Email</th><th>SMS</th></tr></thead><tbody>{prefs.data.map((p: any, i: number) => <tr key={p.type}><td>{p.label}<div className="text-muted fs-11">{p.type}</div></td>{(["push", "email", "sms"] as const).map((ch) => <td key={ch}><input type="checkbox" className="form-check-input" checked={p[ch]} onChange={async (e) => { const next = prefs.data.map((x: any, j: number) => (j === i ? { ...x, [ch]: e.target.checked } : x)); await api.put("/api/v1/me/notification-preferences", next.map((x: any) => ({ type: x.type, push: x.push, email: x.email, sms: x.sms }))); prefs.refetch(); }} /></td>)}</tr>)}</tbody></table></div></div>}
     </>
+  );
+}
+
+/** The rep's own "order from anywhere" switch, editable from the user page the owner actually uses —
+ *  it writes straight onto the rep record, same as Suppliers → Reps → Edit. */
+function RepOrderFreedom({ repId }: { repId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["doc", "/api/v1/supplier-reps", repId], queryFn: () => api.get(`/api/v1/supplier-reps/${repId}`) });
+  if (!q.data) return <Spinner />;
+  return (
+    <select className="form-select" value={q.data.geofence_policy || ""} onChange={async (e) => {
+      try {
+        await api.patch(`/api/v1/supplier-reps/${repId}`, { geofence_policy: e.target.value });
+        toast.success("Saved — applies to the rep's next order");
+        qc.invalidateQueries({ queryKey: ["doc", "/api/v1/supplier-reps", repId] });
+      } catch (err: any) { toast.error(err.message); }
+    }}>
+      <option value="">Company rule (default)</option>
+      <option value="block">At the shop only</option>
+      <option value="warn">Anywhere — flag when away from the shop</option>
+      <option value="off">Anywhere</option>
+    </select>
   );
 }
