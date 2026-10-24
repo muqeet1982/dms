@@ -248,7 +248,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "force_tax_type", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "force_tax_type", "force_tax_rate", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 

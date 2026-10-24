@@ -126,8 +126,10 @@ class SalesInvoice(DocumentModel):
     tax2_type = models.ForeignKey("catalog.TaxType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     tax2_total = models.DecimalField(**MONEY)
     # the invoice's tax switch (owner, 24 Oct 2026): set = charge THIS tax on every line regardless of the
-    # products' tax classes; null = follow the classes as always. Only a draft can flip it.
+    # products' tax classes; null = follow the classes as always. Only a draft can flip it. The rate is the
+    # type's dated rate unless the owner typed their own on this invoice.
     force_tax_type = models.ForeignKey("catalog.TaxType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    force_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     total = models.DecimalField(**MONEY)
     paid_amount = models.DecimalField(**MONEY)
     status = models.CharField(max_length=20, choices=STATUS, default="draft", db_index=True)

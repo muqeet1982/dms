@@ -87,3 +87,22 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         html = render_to_string("sales/invoice.html", {"inv": inv, "lines": lines, "tenant": tenant,
                                                        "logo_url": None, "printed_at": "", "doc_title": "SALES INVOICE", "doc_ref": inv.number, **extra})
         assert ">Tax<" in html and "Sales Tax" in html and "108" in html
+
+
+def test_a_typed_rate_and_a_products_own_tax_pct_beat_the_standard(api, tenant, taxed_world):
+    from apps.catalog.models import Product
+
+    wh, cust, v, tt = taxed_world
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+
+    # the owner types 10 — the invoice taxes at 10, not the type's 18
+    typed = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
+    assert Decimal(typed.data["tax1_total"]) == Decimal("60"), typed.content  # 600 × 10%
+
+    # the product's own Tax % beats the invoice's rate for its line
+    with tenant_context(tenant, tenant.owner):
+        Product.objects.filter(pk=v.product_id).update(tax_pct=Decimal("25"))
+    again = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
+    assert Decimal(again.data["tax1_total"]) == Decimal("150"), again.content  # 600 × 25%

@@ -680,14 +680,16 @@ class InvoiceService:
         from apps.catalog.services import TaxService
 
         forced = inv.force_tax_type
-        forced_rate = forced.rate_on(inv.date) if forced else None
+        forced_rate = (inv.force_tax_rate if inv.force_tax_rate is not None else forced.rate_on(inv.date)) if forced else None
         subtotal = discount = t1 = t2 = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
-                # the invoice's own tax switch beats the products' classes — one tax, every line
-                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, forced_rate, q4(taxable * forced_rate / 100)
+                # the invoice's own tax switch beats the products' classes — and a product's own tax %
+                # beats the invoice's rate for its line
+                rate = line.variant.product.tax_pct if line.variant_id and line.variant.product.tax_pct is not None else forced_rate
+                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(taxable * rate / 100)
                 line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             else:
                 t = TaxService.compute(taxable, TaxService.resolve_class(line.variant, inv.customer), inv.date)
@@ -708,11 +710,12 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
-    def set_tax(inv, *, apply, tax_type=None, actor=None):
+    def set_tax(inv, *, apply, tax_type=None, rate=None, actor=None):
         """
         The invoice's tax switch (owner, 24 Oct 2026): ON charges one sales tax on every line — the given
-        type, or the company's sales-tax type — and OFF goes back to the products' tax classes. Draft
-        invoices only: a posted invoice's tax is already in the ledger.
+        type (or the company's sales-tax type), at the typed rate when the owner sets one, else the type's
+        dated rate — and OFF goes back to the products' tax classes. Draft invoices only: a posted invoice's
+        tax is already in the ledger.
         """
         from apps.catalog.models import TaxType
 
@@ -722,14 +725,19 @@ class InvoiceService:
             tt = tax_type or TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
             if tt is None:
                 raise DomainError("No sales tax type exists — create one under Settings → Taxes first.", code="no_tax_type")
-            if tt.rate_on(inv.date) <= 0:
-                raise DomainError(f"{tt.name} has no rate for {inv.date} — set one under Settings → Taxes.", code="no_tax_rate")
-            inv.force_tax_type = tt
+            if rate is not None:
+                rate = Decimal(str(rate))
+                if rate <= 0 or rate > 100:
+                    raise DomainError("The tax % must be between 0 and 100.", code="bad_tax_rate")
+            elif tt.rate_on(inv.date) <= 0:
+                raise DomainError(f"{tt.name} has no rate for {inv.date} — type a % here or set one under Settings → Taxes.", code="no_tax_rate")
+            inv.force_tax_type, inv.force_tax_rate = tt, rate
         else:
-            inv.force_tax_type = None
-        inv.save(update_fields=["force_tax_type", "updated_at"])
+            inv.force_tax_type, inv.force_tax_rate = None, None
+        inv.save(update_fields=["force_tax_type", "force_tax_rate", "updated_at"])
         InvoiceService.recompute(inv)
-        AuditService.log("invoice.tax", inv, after={"apply": bool(apply), "tax_type": inv.force_tax_type.name if inv.force_tax_type else None}, actor=actor)
+        AuditService.log("invoice.tax", inv, after={"apply": bool(apply), "tax_type": inv.force_tax_type.name if inv.force_tax_type else None,
+                                                   "rate": str(rate) if rate is not None else "type default"}, actor=actor)
         return inv
 
     @staticmethod

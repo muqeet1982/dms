@@ -136,6 +136,9 @@ class Product(TenantModel):
     discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))  # T.P — trade price (what we charge salons / retailers)
     # the standard discount only bites from this many units on a line (owner's rule, 21 Oct 2026); 0 = always
     discount_min_qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0"))
+    # this product's own sales-tax % (owner, 24 Oct 2026): used when an invoice's tax switch is ON, beating
+    # the invoice-level rate for its lines; null = the invoice's rate. It does nothing while the switch is off.
+    tax_pct = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     retail_price = models.DecimalField(**MONEY)  # R.P — retail price / MRP printed for the end consumer
     price_effective_date = models.DateField(null=True, blank=True, help_text="Date of the price list these prices came from")
     min_stock = models.DecimalField(**QTY)

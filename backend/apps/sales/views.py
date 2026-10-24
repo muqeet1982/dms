@@ -244,7 +244,7 @@ class SalesOrderViewSet(DocumentViewSet):
             if pct is not None and Decimal(str(pct)) != inv.discount_pct:
                 InvoiceService.set_discount(inv, action="apply" if Decimal(str(pct)) > 0 else "remove", percent=pct)
             if apply_tax in (True, "true", "1", 1):
-                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type, actor=request.user)
+                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type, rate=request.data.get("tax_percent"), actor=request.user)
             if should_post:
                 InvoiceService.post(inv)
         return Response(SalesInvoiceSerializer(invoices, many=True).data, status=status.HTTP_201_CREATED)
@@ -389,7 +389,8 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
         inv = self.get_object()
         tt = TaxType.objects.filter(pk=request.data["tax_type"]).first() if request.data.get("tax_type") else None
-        InvoiceService.set_tax(inv, apply=request.data.get("apply") in (True, "true", "1", 1), tax_type=tt, actor=request.user)
+        InvoiceService.set_tax(inv, apply=request.data.get("apply") in (True, "true", "1", 1), tax_type=tt,
+                               rate=request.data.get("percent"), actor=request.user)
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["get"])

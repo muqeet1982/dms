@@ -51,6 +51,7 @@ export function InvoiceDetailPage() {
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
   const [edit, setEdit] = useState<{ due_date: string; notes: string; date: string; lines: any[] } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [taxPct, setTaxPct] = useState("");
   const qc = useQueryClient();
   if (q.isLoading) return <Spinner />;
   const inv = q.data;
@@ -69,6 +70,9 @@ export function InvoiceDetailPage() {
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
+          {inv.status === "draft" && page.can("discount") && (Number(inv.tax1_total) > 0
+            ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
+            : <span className="d-inline-flex align-items-center gap-1"><input type="number" step="0.01" className="form-control form-control-sm" style={{ width: 86 }} placeholder="Tax %" value={taxPct} onChange={(e) => setTaxPct(e.target.value)} /><button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("tax", { apply: true, ...(taxPct !== "" ? { percent: taxPct } : {}) }, { success: "Tax applied" })}><i className="ti ti-percentage me-1" />Tax on</button></span>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
           {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0) })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
@@ -153,6 +157,7 @@ export function InvoiceCreatePage() {
   const [order, setOrder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [applyTax, setApplyTax] = useState(false);
+  const [taxPct, setTaxPct] = useState("");
   const [discOverride, setDiscOverride] = useState<string>("");
   const detail = useDoc("/api/v1/sales-orders", order || undefined);
   const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoiced);
@@ -166,7 +171,7 @@ export function InvoiceCreatePage() {
         <div className="row">
           <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={(v) => { setOrder(v); setDiscOverride(""); setApplyTax(false); }} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
           {order && <Field label="Discount %" col="col-md-3" hint="from the order (the customer's rate) — change it for this invoice"><DiscountPctSelect value={effDisc} onChange={setDiscOverride} /></Field>}
-          {order && <Field label="Tax" col="col-md-3" hint="charges the company's sales tax on every line and shows it on the invoice"><div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="chg-tax" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="chg-tax">Charge tax</label></div></Field>}
+          {order && <Field label="Tax" col="col-md-3" hint="charges the company's sales tax on every line and shows it on the invoice"><div className="d-flex align-items-center gap-2 mt-1"><div className="form-check form-switch mb-0"><input className="form-check-input" type="checkbox" id="chg-tax" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="chg-tax">Charge tax</label></div>{applyTax && <div className="input-group input-group-sm" style={{ width: 110 }}><input type="number" step="0.01" className="form-control" placeholder="std rate" value={taxPct} onChange={(e) => setTaxPct(e.target.value)} /><span className="input-group-text">%</span></div>}</div></Field>}
         </div>
         {order && detail.data && (
           uninvoiced.length
@@ -185,7 +190,7 @@ export function InvoiceCreatePage() {
         <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), ...(applyTax ? { apply_tax: true } : {}) }, true);
+            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), ...(applyTax ? { apply_tax: true, ...(taxPct !== "" ? { tax_percent: taxPct } : {}) } : {}) }, true);
             const made = Array.isArray(r) ? r : [r];
             toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
             nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
