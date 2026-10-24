@@ -140,6 +140,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & terms", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
     { ...sec("Tax & terms", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
     { ...sec("Tax & terms", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
+    { ...sec("Tax & terms", "ti-receipt"), name: "fbr_registration_type", label: "FBR registration", type: "custom", col: "col-md-4",
+      hint: "drives the FBR tax invoice — check it with FBR rather than guessing",
+      render: (v, set, values) => <FBRRegTypeField value={v || ""} onChange={set} ntn={values.ntn} cnic={values.cnic} /> },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
@@ -245,4 +248,30 @@ export function TerritoriesPage() {
 export function RoutesPage() {
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   return <CrudPage page="territories" title="Routes" crumbs={[{ label: "Customers", to: "/app/customers" }, { label: "Routes" }]} endpoint="/api/v1/routes" columns={[{ key: "name", header: "Route" }, { key: "territory_name", header: "Territory" }, { key: "day_of_week", header: "Day", render: (r: any) => (r.day_of_week === null ? "—" : days[r.day_of_week]) }, { key: "customers_count", header: "Customers", num: true }, { key: "is_active", header: "Active", render: (r: any) => (r.is_active ? "Yes" : "No") }]} fields={[{ name: "name", label: "Name", required: true }, { name: "territory", label: "Territory", type: "entity", endpoint: "/api/v1/territories", mapOption: (t) => ({ id: t.id, label: t.name }) }, { name: "day_of_week", label: "Day of week", type: "select", options: days.map((d, i) => ({ value: String(i), label: d })) }, { name: "is_active", label: "Active", type: "checkbox", default: true }]} />;
+}
+
+
+/** "Registered" / "Unregistered" for FBR tax invoices — the Check button asks FBR's Get_Reg_Type for
+ *  the customer's NTN/CNIC, because guessing it wrong is a filing rejection. */
+function FBRRegTypeField({ value, onChange, ntn, cnic }: { value: string; onChange: (v: string) => void; ntn?: string; cnic?: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="d-flex gap-2">
+      <select className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Not set</option>
+        <option value="Registered">Registered</option>
+        <option value="Unregistered">Unregistered</option>
+      </select>
+      <button type="button" className="btn btn-outline-secondary text-nowrap" disabled={busy || !(ntn || cnic)}
+        title={ntn || cnic ? "Ask FBR whether this NTN/CNIC is registered" : "Enter the NTN or CNIC first"}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await api.post("/api/v1/fbr/check-registration", { registration_no: ntn || cnic });
+            if (r.registration_type) { onChange(r.registration_type); toast.success(`FBR says: ${r.registration_type}`); }
+            else toast.error("FBR gave no answer for that number.");
+          } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+        }}><i className="ti ti-building-bank me-1" />Check with FBR</button>
+    </div>
+  );
 }
