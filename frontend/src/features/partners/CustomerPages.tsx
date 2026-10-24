@@ -123,6 +123,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "province", label: "Province", type: "select", col: "col-md-3", default: "Punjab", options: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Jammu & Kashmir", "Islamabad Capital Territory"].map((p) => ({ value: p, label: p })) },
     { ...sec("The shop", "ti-building-store"), name: "notes", label: "Notes", type: "textarea", col: "col-md-10" },
     { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
+    { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-2 offset-md-10", suffix: "days", hint: "refuse stock expiring sooner" },
     { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
@@ -151,7 +152,6 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
       render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
 
-    { ...sec("More details", "ti-dots", undefined, true), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-3", suffix: "days", hint: "refuse stock expiring sooner" },
 
     { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger, so it shows in their statement and ageing.", true), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
