@@ -18,6 +18,14 @@ def _issued_order(api, wh, cust, v, qty="4"):
     return r.data["id"]
 
 
+def _product_tax(tenant, variant, pct):
+    from apps.catalog.models import Product
+    from apps.core.tenancy import tenant_context as _tc
+
+    with _tc(tenant, tenant.owner):
+        Product.objects.filter(pk=variant.product_id).update(tax_pct=Decimal(str(pct)))
+
+
 @pytest.fixture
 def taxed_world(api, tenant):
     from django.utils import timezone
@@ -35,6 +43,7 @@ def taxed_world(api, tenant):
 
 def test_the_tax_switch_charges_every_line_and_books_the_ledger(api, tenant, taxed_world):
     wh, cust, v, tt = taxed_world
+    _product_tax(tenant, v, 18)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -54,6 +63,7 @@ def test_the_tax_switch_charges_every_line_and_books_the_ledger(api, tenant, tax
 
 def test_the_switch_flips_both_ways_on_a_draft_and_refuses_posted(api, tenant, taxed_world):
     wh, cust, v, tt = taxed_world
+    _product_tax(tenant, v, 18)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -73,6 +83,7 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
     from apps.sales.services import InvoiceService
 
     wh, cust, v, tt = taxed_world
+    _product_tax(tenant, v, 18)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv_id = (made.data[0] if isinstance(made.data, list) else made.data)["id"]

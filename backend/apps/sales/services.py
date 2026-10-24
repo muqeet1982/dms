@@ -677,7 +677,9 @@ class InvoiceService:
         from apps.catalog.services import TaxService
 
         forced = inv.force_tax_type
-        forced_rate = (inv.force_tax_rate if inv.force_tax_rate is not None else forced.rate_on(inv.date)) if forced else None
+        # with the switch on, the rate is the PRODUCT'S Tax % (owner, 24 Oct 2026) — a line override beats it,
+        # an invoice-level typed rate (API) catches products with none, else the line simply taxes at zero
+        forced_rate = (inv.force_tax_rate if inv.force_tax_rate is not None else Decimal("0")) if forced else None
         subtotal = discount = t1 = t2 = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
             gross = q4(line.qty * line.unit_price)
@@ -728,8 +730,6 @@ class InvoiceService:
                 rate = Decimal(str(rate))
                 if rate <= 0 or rate > 100:
                     raise DomainError("The tax % must be between 0 and 100.", code="bad_tax_rate")
-            elif tt.rate_on(inv.date) <= 0:
-                raise DomainError(f"{tt.name} has no rate for {inv.date} — type a % here or set one under Settings → Taxes.", code="no_tax_rate")
             inv.force_tax_type, inv.force_tax_rate = tt, rate
         else:
             inv.force_tax_type, inv.force_tax_rate = None, None
@@ -781,6 +781,9 @@ class InvoiceService:
         """
         customer_part = Decimal("0")
         tax_shown = (inv.tax1_total or Decimal("0")) + (inv.tax2_total or Decimal("0"))
+        # the column shows whenever the switch is on — zeros included, so a product missing its Tax % is
+        # visible rather than silently untaxed
+        tax_on = bool(inv.force_tax_type_id) or tax_shown > 0
         for l in lines:
             prod = q4(q4(l.qty * l.unit_price) * (l.product_discount_pct or 0) / 100)
             prod = min(prod, l.discount_amount or Decimal("0"))
@@ -789,13 +792,13 @@ class InvoiceService:
             l.tax_amount = (l.tax1_amount or Decimal("0")) + (l.tax2_amount or Decimal("0"))
             # with tax on the page, the Amount column is pre-tax so Subtotal − Discount + Tax = Total still
             # checks with a pencil; without tax it stays tax-inclusive as before
-            l.display_amount = (l.line_total or Decimal("0")) + cust - (l.tax_amount if tax_shown else Decimal("0"))
+            l.display_amount = (l.line_total or Decimal("0")) + cust - (l.tax_amount if tax_on else Decimal("0"))
             customer_part += cust
         tax_label = ""
-        if tax_shown and inv.tax1_type_id:
+        if tax_on and inv.tax1_type_id:
             rate = next((l.tax1_rate for l in lines if l.tax1_rate), None)
             tax_label = f"{inv.tax1_type.name}{f' ({rate.normalize()}%)' if rate else ''}"
-        return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_label": tax_label,
+        return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_on": tax_on, "tax_label": tax_label,
                 "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown)}
 
     @staticmethod
