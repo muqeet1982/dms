@@ -112,8 +112,13 @@ class ProductViewSet(TenantModelViewSet):
     def perform_create(self, serializer):
         data = dict(serializer.validated_data)
         variants = data.pop("variants", None)
+        # this path builds the Product itself (ProductService, not serializer.save()), so the serializer's
+        # own pop of the dated offers never runs — they would reach Product(**data) and 500
+        offer_rows = data.pop("offers_write", None)
         opening = {k: data.pop(f"opening_{k}", None) for k in ("qty", "warehouse", "unit_cost", "batch_no", "expiry_date")}
         product = ProductService.create_product(self.request.tenant, data, variants=variants)
+        if offer_rows is not None:
+            serializer._save_offers(product, offer_rows)
         if opening["qty"]:
             ProductService.post_opening_stock(product, opening["qty"], warehouse=opening["warehouse"], unit_cost=opening["unit_cost"], batch_no=opening["batch_no"] or "", expiry_date=opening["expiry_date"])
         serializer.instance = product

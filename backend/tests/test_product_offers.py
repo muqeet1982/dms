@@ -41,3 +41,22 @@ def test_the_discount_waits_for_its_minimum_and_a_dated_offer_overrides(tenant):
         assert line_pct("10") == Decimal("8.000"), "the live offer replaces the standard"
         assert line_pct("5") == Decimal("5.000"), "under the offer's minimum the standard still rules"
         assert line_pct("2") == Decimal("0"), "an expired offer is dead, whatever its minimum"
+
+
+def test_the_product_form_add_saves_discount_and_offers(api, tenant):
+    """The form posts discount_pct, discount_min_qty AND offers_write together on ADD — the create path
+    bypasses serializer.save(), so the offers must be popped there (this 500'd on 24 Oct 2026)."""
+    from apps.catalog.models import UnitOfMeasure
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        uom = str(UnitOfMeasure.objects.get(code="PC").id)
+    r = api.post("/api/v1/products", {"sku": "OFR-ADD-1", "name": "Offer On Add", "base_uom": uom,
+                                      "cost_price": "100", "sale_price": "150",
+                                      "discount_pct": 5, "discount_min_qty": 12,
+                                      "offers_write": [{"discount_pct": "9", "min_qty": "20",
+                                                        "start_date": "2026-10-24", "end_date": "2026-11-30"}]},
+                 format="json")
+    assert r.status_code == 201, r.content
+    assert str(r.data["discount_pct"]).startswith("5") and str(r.data["discount_min_qty"]).startswith("12")
+    assert len(r.data["offers"]) == 1 and str(r.data["offers"][0]["discount_pct"]).startswith("9")
