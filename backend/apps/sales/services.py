@@ -631,26 +631,23 @@ class InvoiceService:
                 gross = q4(line.qty * line.unit_price)
                 line.discount_amount = max(Decimal("0"), q4(line.discount_amount + gross * (new_pct - line.product_discount_pct) / 100))
                 line.product_discount_pct = new_pct
+            if "tax_pct" in row:
+                # typed per-line %: beats the product's and the invoice's rate while the tax switch is on
+                v = row["tax_pct"]
+                line.tax_pct_override = None if v in (None, "") else Decimal(str(v))
+                if line.tax_pct_override is not None and not (0 <= line.tax_pct_override <= 100):
+                    raise DomainError("A line's tax % must be between 0 and 100.", status_code=400)
             if line.unit_price < 0 or line.discount_amount < 0:
                 raise DomainError("A price or a discount cannot be negative.", status_code=400)
             gross = q4(line.qty * line.unit_price)
             if line.discount_amount > gross:
                 raise DomainError(f"The discount on {line.description} is more than the line is worth.", status_code=400)
-            t = TaxService.compute(gross - line.discount_amount, TaxService.resolve_class(line.variant, inv.customer), inv.date)
-            line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
-            line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
-            line.line_total = gross - line.discount_amount + t["tax1_amount"] + t["tax2_amount"]
             line.save()
 
-        fresh = list(inv.lines.all())
-        inv.subtotal = sum((q4(l.qty * l.unit_price) for l in fresh), Decimal("0"))
-        inv.discount = sum((l.discount_amount for l in fresh), Decimal("0"))
-        inv.tax1_total = sum((l.tax1_amount for l in fresh), Decimal("0"))
-        inv.tax2_total = sum((l.tax2_amount for l in fresh), Decimal("0"))
-        inv.tax1_type = next((l.tax1_type for l in fresh if l.tax1_type_id), None)
-        inv.tax2_type = next((l.tax2_type for l in fresh if l.tax2_type_id), None)
-        inv.total = inv.subtotal - inv.discount + inv.tax1_total + inv.tax2_total
-        inv.save()
+        # one place owns the figures: recompute re-taxes every line (the tax switch, the products' own %,
+        # per-line overrides, else the tax classes) and re-totals the invoice
+        inv.save(update_fields=["date", "due_date", "notes", "updated_at"])
+        InvoiceService.recompute(inv)
         AuditService.log("invoice.corrected", inv, after={"total": str(inv.total)})
         return inv
 
@@ -686,9 +683,11 @@ class InvoiceService:
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
-                # the invoice's own tax switch beats the products' classes — and a product's own tax %
-                # beats the invoice's rate for its line
-                rate = line.variant.product.tax_pct if line.variant_id and line.variant.product.tax_pct is not None else forced_rate
+                # the invoice's own tax switch beats the products' classes; the rate, most specific first:
+                # the % typed on this line, else the product's own Tax %, else the invoice's rate
+                rate = (line.tax_pct_override if line.tax_pct_override is not None
+                        else line.variant.product.tax_pct if line.variant_id and line.variant.product.tax_pct is not None
+                        else forced_rate)
                 line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(taxable * rate / 100)
                 line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             else:

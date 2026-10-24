@@ -106,3 +106,24 @@ def test_a_typed_rate_and_a_products_own_tax_pct_beat_the_standard(api, tenant, 
         Product.objects.filter(pk=v.product_id).update(tax_pct=Decimal("25"))
     again = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
     assert Decimal(again.data["tax1_total"]) == Decimal("150"), again.content  # 600 × 25%
+
+
+def test_a_lines_typed_tax_pct_beats_product_and_invoice(api, tenant, taxed_world):
+    from apps.catalog.models import Product
+
+    wh, cust, v, tt = taxed_world
+    with tenant_context(tenant, tenant.owner):
+        Product.objects.filter(pk=v.product_id).update(tax_pct=Decimal("25"))
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False, "apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("150")  # 600 × the product's 25%
+
+    line_id = inv["lines"][0]["id"]
+    edited = api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line_id, "tax_pct": "5"}]}, format="json")
+    assert edited.status_code == 200, edited.content
+    assert Decimal(edited.data["tax1_total"]) == Decimal("30")  # the typed 5% wins
+    assert Decimal(edited.data["total"]) == Decimal("630")
+
+    cleared = api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line_id, "tax_pct": ""}]}, format="json")
+    assert Decimal(cleared.data["tax1_total"]) == Decimal("150")  # back to the product's 25%

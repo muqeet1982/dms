@@ -74,7 +74,7 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <span className="d-inline-flex align-items-center gap-1"><input type="number" step="0.01" className="form-control form-control-sm" style={{ width: 86 }} placeholder="Tax %" value={taxPct} onChange={(e) => setTaxPct(e.target.value)} /><button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("tax", { apply: true, ...(taxPct !== "" ? { percent: taxPct } : {}) }, { success: "Tax applied" })}><i className="ti ti-percentage me-1" />Tax on</button></span>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0) })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0 })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -105,7 +105,7 @@ export function InvoiceDetailPage() {
               const body: any = { due_date: edit!.due_date || null, notes: edit!.notes };
               if (inv.status === "draft") {
                 body.date = edit!.date || undefined;
-                body.lines = edit!.lines.map((l) => ({ id: l.id, unit_price: l.unit_price, discount_amount: l.discount_amount, product_discount_pct: l.product_discount_pct }));
+                body.lines = edit!.lines.map((l: any) => ({ id: l.id, unit_price: l.unit_price, discount_amount: l.discount_amount, product_discount_pct: l.product_discount_pct, ...(inv.force_tax_type ? { tax_pct: l.tax_pct } : {}) }));
               }
               await api.patch(`/api/v1/invoices/${inv.id}`, body);
               toast.success("Invoice updated");
@@ -130,13 +130,13 @@ export function InvoiceDetailPage() {
             <div className="col-12">
               <label className="form-label fs-12 fw-semibold">Prices</label>
               <div className="table-responsive"><table className="table table-sm align-middle mb-1">
-                <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 90 }}>Qty</th><th className="num" style={{ width: 130 }}>Rate</th><th className="num" style={{ width: 130 }}>Discount</th><th className="num" style={{ width: 100 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th></tr></thead>
+                <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 90 }}>Qty</th><th className="num" style={{ width: 130 }}>Rate</th><th className="num" style={{ width: 130 }}>Discount</th><th className="num" style={{ width: 100 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{inv.force_tax_type && <th className="num" style={{ width: 100 }} title="This line's tax % — blank follows the product's own Tax %, else the invoice's rate">Tax %</th>}</tr></thead>
                 <tbody>{edit.lines.map((l: any, i: number) => (
                   <tr key={l.id}>
                     <td className="fs-12">{l.description}</td>
                     <td className="num fs-12">{qty(l.qty)}</td>
                     <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.unit_price} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, unit_price: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
-                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, discount_amount: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td><td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, product_discount_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
+                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, discount_amount: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td><td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, product_discount_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>{inv.force_tax_type && <td><input type="number" step="0.01" min="0" max="100" className="form-control form-control-sm text-end" placeholder={String(l.tax_rate_now)} title="blank = the product's own Tax % or the invoice's rate" value={l.tax_pct} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, tax_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>}
                   </tr>))}</tbody>
               </table></div>
               <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. Tax is recalculated from the corrected figures when you save.</div>

@@ -150,6 +150,9 @@ class SalesInvoice(DocumentModel):
 
 
 class SalesInvoiceLine(TaxLineMixin, TenantModel):
+    # a typed per-line tax % (owner, 24 Oct 2026): beats the product's own % and the invoice's rate while
+    # the invoice's tax switch is on; null = inherit. Survives recompute, unlike tax1_rate which it feeds.
+    tax_pct_override = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.CASCADE, related_name="lines")
     order_line = models.ForeignKey(SalesOrderLine, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     variant = models.ForeignKey("catalog.ProductVariant", on_delete=models.PROTECT, related_name="+")

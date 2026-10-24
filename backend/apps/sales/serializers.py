@@ -156,7 +156,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoiceLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
 
 
 class SalesInvoiceEditSerializer(serializers.ModelSerializer):
