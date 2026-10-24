@@ -93,10 +93,10 @@ export function StorePinPicker({ lat, lng, name, onChange, compact, radius, onRa
           {label(`Order radius — rep must be within ${r} m to order`)}
           <div className="d-flex align-items-center gap-2">
             <button type="button" className="btn btn-sm btn-outline-secondary px-2" onClick={() => setR(r - 10)}>−</button>
-            <input type="range" className="form-range flex-grow-1" min={10} max={300} step={5} value={Math.min(r, 300)} onChange={(e) => setR(Number(e.target.value))} />
+            <input type="range" className="form-range" style={{ maxWidth: 150 }} min={10} max={300} step={5} value={Math.min(r, 300)} onChange={(e) => setR(Number(e.target.value))} />
             <button type="button" className="btn btn-sm btn-outline-secondary px-2" onClick={() => setR(r + 10)}>+</button>
-            <div className="input-group input-group-sm" style={{ width: 96 }}>
-              <input type="number" className="form-control" value={r} onChange={(e) => setR(Number(e.target.value) || 50)} />
+            <div className="input-group flex-nowrap" style={{ width: 130, minWidth: 130 }}>
+              <input type="number" className="form-control text-end" value={r} onChange={(e) => setR(Number(e.target.value) || 50)} />
               <span className="input-group-text">m</span>
             </div>
           </div>
