@@ -20,7 +20,7 @@ export function InvoicesPage() {
   const stats = useQuery({ queryKey: ["invoice-stats"], queryFn: () => api.get("/api/v1/invoices/stats") });
   const cols: Column<any>[] = [
     { key: "number", header: "Invoice #", sortKey: "number", render: (i) => <span className="fw-semibold text-dark">{i.number}</span> },
-    { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}<div className="text-muted fs-11">due {date(i.due_date)}</div></> },
+    { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
     { key: "customer_name", header: "Customer", render: (i) => <>{i.customer_name}<div className="text-muted fs-11">{i.customer_code}</div></> },
     { key: "order_number", header: "Order / DN", render: (i) => <>{i.order_number}<div className="text-muted fs-11">{i.delivery_note_number}</div></> },
     { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
@@ -77,7 +77,7 @@ export function InvoiceDetailPage() {
       <div className="row g-3 mb-3">
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #F26522" }}><div className="card-body py-3 text-center"><div className="fw-bold text-primary fs-18">{money(inv.total)}</div><div className="text-muted fs-12">Invoice total</div></div></div></div>
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #03C95A" }}><div className="card-body py-3 text-center"><div className="fw-bold text-success fs-18">{money(inv.paid_amount)}</div><div className="text-muted fs-12">Paid</div></div></div></div>
-        <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #E70D0D" }}><div className="card-body py-3 text-center"><div className="fw-bold text-danger fs-18">{money(inv.balance)}</div><div className="text-muted fs-12">Balance due {date(inv.due_date)}</div></div></div></div>
+        <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #E70D0D" }}><div className="card-body py-3 text-center"><div className="fw-bold text-danger fs-18">{money(inv.balance)}</div><div className="text-muted fs-12">{inv.due_date && inv.due_date !== inv.date ? <>Balance due {date(inv.due_date)}</> : "Balance due — cash"}</div></div></div></div>
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #1B84FF" }}><div className="card-body py-3 text-center"><div className="fw-bold fs-16"><Link to={`/app/customers/${inv.customer}`}>{inv.customer_name}</Link></div><div className="text-muted fs-12">{inv.customer_code}</div></div></div></div>
       </div>
       <div className="card mb-3"><div className="card-body">

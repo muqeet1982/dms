@@ -174,8 +174,9 @@ def test_a_confirmed_order_is_still_editable_until_the_warehouse_starts(api, ten
     assert str(late.data["lines"][0]["qty_ordered"]).startswith("1")
 
 
-def test_an_invoice_falls_due_in_45_days_unless_the_customer_has_terms(api, tenant):
-    """The owner's figure: no credit days on the customer means 45 days, not due-on-issue."""
+def test_the_customers_credit_days_are_the_invoice_due_date(api, tenant):
+    """The owner's rule (24 Oct 2026): due date = invoice date + the customer's credit days; zero days is a
+    cash sale and the documents show no due date at all."""
     from datetime import timedelta
 
     from django.utils import timezone
@@ -183,15 +184,25 @@ def test_an_invoice_falls_due_in_45_days_unless_the_customer_has_terms(api, tena
     from .conftest import seed_basic
 
     wh, _sup, v, cust = seed_basic(tenant)
-    assert not cust.credit_days, "the fixture customer carries no terms of its own"
+    assert not cust.credit_days, "the fixture customer is a cash customer"
+
+    def invoice_for(order_id):
+        pl = api.post(f"/api/v1/sales-orders/{order_id}/load-form", {}, format="json")
+        issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+        api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
+        made = api.post(f"/api/v1/sales-orders/{order_id}/invoice", {}, format="json")
+        return made.data[0] if isinstance(made.data, list) else made.data
+
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                           "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
-    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
-    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
-    api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
-    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {}, format="json")
-    inv = made.data[0] if isinstance(made.data, list) else made.data
-    assert inv["due_date"] == str(timezone.localdate() + timedelta(days=45)), inv["due_date"]
+    cash = invoice_for(r.data["id"])
+    assert cash["due_date"] == cash["date"], (cash["due_date"], cash["date"])
+
+    api.patch(f"/api/v1/customers/{cust.id}", {"credit_days": 15}, format="json")
+    r2 = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                           "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    credit = invoice_for(r2.data["id"])
+    assert credit["due_date"] == str(timezone.localdate() + timedelta(days=15)), credit["due_date"]
 
 
 def test_a_product_with_nothing_available_cannot_be_put_on_an_order(api, tenant):

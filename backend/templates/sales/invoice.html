@@ -12,7 +12,7 @@ words under it.
 <table class="grid">
   <tr>
     <td><span class="k">Invoice date</span>{{ inv.date }}</td>
-    <td><span class="k">Due date</span>{{ inv.due_date }}</td>
+    <td><span class="k">Due date</span>{% if inv.due_date and inv.due_date != inv.date %}{{ inv.due_date }}{% else %}—{% endif %}</td>
     <td><span class="k">Payment term</span>{% if inv.customer.credit_days %}{{ inv.customer.credit_days }} days credit{% else %}Cash on delivery{% endif %}</td>
     <td><span class="k">Sales person</span>{% if inv.rep %}{{ inv.rep.name }}{% elif inv.order.rep %}{{ inv.order.rep.name }}{% elif inv.order.trip.rep %}{{ inv.order.trip.rep.name }}{% elif inv.delivery_note.trip.rep %}{{ inv.delivery_note.trip.rep.name }}{% else %}—{% endif %}</td>
   </tr>
