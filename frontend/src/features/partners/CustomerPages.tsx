@@ -107,15 +107,22 @@ function RepPicker({ value, onChange }: { value: string[]; onChange: (ids: strin
 export function customerFields(can: (p: string) => boolean): FieldDef[] {
   const sec = (section: string, sectionIcon: string, sectionHint?: string, sectionCollapsed = false) => ({ section, sectionIcon, sectionHint, sectionCollapsed });
   return [
-    // ── the daily case fits in three tight cards: the shop, where it is, and the money terms ──────────
+    // ── the owner's field order (24 Oct 2026): identity, contacts, place, notes, status — all on top ──
     { ...sec("The shop", "ti-building-store"), name: "name", label: "Trading name", required: true, col: "col-md-4", placeholder: "Al-Madina Store", autoComplete: "off", icon: "ti-building-store" },
+    { ...sec("The shop", "ti-building-store"), name: "business_name", label: "Registered business name", col: "col-md-4", placeholder: "same as trading name if left blank" },
+    { ...sec("The shop", "ti-building-store"), name: "code", label: "Customer code", col: "col-md-2", hint: "auto if left blank", maxLength: 30 },
     { ...sec("The shop", "ti-building-store"), name: "type", label: "Type", type: "select", options: TYPES, default: "retailer", col: "col-md-2", required: true },
-    { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
     { ...sec("The shop", "ti-building-store"), name: "contact_person", label: "Contact person", col: "col-md-3", icon: "ti-user", autoComplete: "name" },
+    { ...sec("The shop", "ti-building-store"), name: "phone", label: "Mobile", col: "col-md-3", mask: "phone", prefix: "🇵🇰", placeholder: "+92 300 1234567", autoComplete: "tel" },
+    { ...sec("The shop", "ti-building-store"), name: "alt_mobile", label: "Alt mobile", col: "col-md-2", mask: "phone", prefix: "🇵🇰" },
+    { ...sec("The shop", "ti-building-store"), name: "landline", label: "Landline", col: "col-md-2", mask: "phone", prefix: "🇵🇰" },
+    { ...sec("The shop", "ti-building-store"), name: "email", label: "Email", type: "email", col: "col-md-2", autoComplete: "email" },
 
     { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
     { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
     { ...sec("The shop", "ti-building-store"), name: "province", label: "Province", type: "select", col: "col-md-3", default: "Punjab", options: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Jammu & Kashmir", "Islamabad Capital Territory"].map((p) => ({ value: p, label: p })) },
+    { ...sec("The shop", "ti-building-store"), name: "notes", label: "Notes", type: "textarea", col: "col-md-10" },
+    { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
     { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
@@ -138,13 +145,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
       render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
 
-    { ...sec("More details", "ti-dots", "Codes, extra contacts, registration and stock rules — all optional.", true), name: "code", label: "Customer code", col: "col-md-2", hint: "auto if left blank", maxLength: 30 },
-    { ...sec("More details", "ti-dots", undefined, true), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "alt_mobile", label: "Alt mobile", col: "col-md-2", mask: "phone", prefix: "🇵🇰" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "landline", label: "Landline", col: "col-md-3", mask: "phone", prefix: "🇵🇰" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "email", label: "Email", type: "email", col: "col-md-3", icon: "ti-mail", autoComplete: "email" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "business_name", label: "Registered business name", col: "col-md-4", placeholder: "same as trading name if left blank" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "filer_status", label: "FBR status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-2" },
+    { ...sec("More details", "ti-dots", "Registration and stock rules — all optional.", true), name: "filer_status", label: "FBR status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-2" },
     { ...sec("More details", "ti-dots", undefined, true), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17 },
     { ...sec("More details", "ti-dots", undefined, true), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3", hint: "e.g. unregistered → further tax" },
     { ...sec("More details", "ti-dots", undefined, true), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-3", suffix: "days", hint: "refuse stock expiring sooner" },
@@ -152,7 +153,6 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger, so it shows in their statement and ageing.", true), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
 
-    { ...sec("Notes", "ti-note", undefined, true), name: "notes", label: "Internal notes", type: "textarea", col: "col-md-12" },
   ];
 }
 
