@@ -388,8 +388,9 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
             extra["fbr_number"] = filing.fbr_invoice_number
             extra["fbr_qr"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
             extra["fbr_sandbox"] = filing.sandbox
+        doc_title = "SALES TAX INVOICE" if extra.get("tax_on") else "SALES INVOICE"
         return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number,
-                          title="SALES INVOICE", ref=inv.number)
+                          title=doc_title, ref=inv.number)
 
     @action(detail=True, methods=["post"])
     def discount(self, request, pk=None):

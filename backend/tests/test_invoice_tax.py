@@ -84,6 +84,12 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
 
     wh, cust, v, tt = taxed_world
     _product_tax(tenant, v, 18)
+    with tenant_context(tenant, tenant.owner):
+        from apps.catalog.models import Product
+
+        Product.objects.filter(pk=v.product_id).update(fbr_hs_code="7306.3090")
+        cust.fbr_registration_type = "Unregistered"
+        cust.save(update_fields=["fbr_registration_type"])
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv_id = (made.data[0] if isinstance(made.data, list) else made.data)["id"]
@@ -98,6 +104,9 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         html = render_to_string("sales/invoice.html", {"inv": inv, "lines": lines, "tenant": tenant,
                                                        "logo_url": None, "printed_at": "", "doc_title": "SALES INVOICE", "doc_ref": inv.number, **extra})
         assert ">Tax<" in html and "Sales Tax" in html and "108" in html
+        # the FBR face of a tax invoice: HS column with the product's code, buyer's FBR identity
+        assert ">HS Code<" in html and "7306.3090" in html
+        assert "FBR: Unregistered" in html
 
 
 def test_a_typed_rate_and_a_products_own_tax_pct_beat_the_standard(api, tenant, taxed_world):

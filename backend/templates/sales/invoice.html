@@ -8,6 +8,8 @@ words under it.
 {% block doc_ref %}{{ inv.number }}{% endblock %}
 {% block watermark %}{% if inv.status == 'draft' %}<div class="mark">DRAFT</div>{% elif inv.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% endif %}{% endblock %}
 
+{% block company_tax %}{% if tax_on %}{% for k, v in tenant.tax_numbers.items %}{% if v %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}{% else %}{{ block.super }}{% endif %}{% endblock %}
+
 {% block meta %}
 <table class="grid">
   <tr>
@@ -34,6 +36,7 @@ words under it.
     {% if inv.customer.city %}<div>{{ inv.customer.city }}</div>{% endif %}
     <div class="muted">{% if inv.customer.phone %}Tel {{ inv.customer.phone }}{% endif %}{% if inv.customer.contact_person %} · {{ inv.customer.contact_person }}{% endif %}</div>
     {% if inv.customer.ntn %}<div class="muted">NTN: {{ inv.customer.ntn }}</div>{% endif %}
+    {% if tax_on %}{% if inv.customer.cnic and not inv.customer.ntn %}<div class="muted">CNIC: {{ inv.customer.cnic }}</div>{% endif %}{% if inv.customer.strn %}<div class="muted">STRN: {{ inv.customer.strn }}</div>{% endif %}{% if inv.customer.fbr_registration_type %}<div class="muted">FBR: {{ inv.customer.fbr_registration_type }}</div>{% endif %}{% endif %}
   </div>
 </div>
 {% endblock %}
@@ -44,7 +47,7 @@ words under it.
     <th style="width:6mm">#</th><th>Item</th>
     <th class="r" style="width:12mm">Qty</th>
     <th class="r" style="width:17mm">Rate</th><th class="r" style="width:16mm">Discount</th>
-    {% if tax_on %}<th class="r" style="width:16mm">Tax</th>{% endif %}
+    {% if tax_on %}<th style="width:19mm">HS Code</th><th class="r" style="width:16mm">Tax</th>{% endif %}
     <th class="r" style="width:21mm">Amount</th>
   </tr></thead>
   <tbody>
@@ -54,14 +57,23 @@ words under it.
     <td class="r">{{ l.qty|qty }}</td>
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.prod_discount %}{{ l.prod_discount|num }}{% else %}—{% endif %}</td>
-    {% if tax_on %}<td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}</td>{% endif %}
+    {% if tax_on %}<td>{{ l.variant.product.fbr_hs_code|default:"—" }}</td><td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.display_amount|default:l.line_total|num }}</td>
   </tr>{% endfor %}
   </tbody>
 </table>
 {% endblock %}
 
-{% block words %}{% if inv.total %}<div class="words"><strong>Amount in words:</strong> {{ inv.total|in_words }}</div>{% endif %}{% endblock %}
+{% block words %}{% if inv.total %}<div class="words"><strong>Amount in words:</strong> {{ inv.total|in_words }}</div>{% endif %}
+{% if fbr_number %}
+<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:6px 8px;border:1px solid #d7dbe3;border-radius:4px">
+  <img src="{{ fbr_qr }}" alt="FBR QR" style="width:17mm;height:17mm">
+  <div>
+    <div style="font-size:8px;color:#6B7280;text-transform:uppercase;letter-spacing:.3px">FBR Invoice Number{% if fbr_sandbox %} — SANDBOX (not a legal filing){% endif %}</div>
+    <div style="font-weight:bold;font-size:10.5px;letter-spacing:.5px">{{ fbr_number }}</div>
+  </div>
+</div>
+{% endif %}{% endblock %}
 
 {% block notes %}
 {% if inv.notes %}<div class="note"><strong>Notes:</strong> {{ inv.notes }}</div>{% endif %}

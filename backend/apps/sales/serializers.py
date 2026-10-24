@@ -151,6 +151,7 @@ class SalesOrderSerializer(SalesOrderListSerializer):
 
 
 class InvoiceLineSerializer(serializers.ModelSerializer):
+    hs_code = serializers.CharField(source="variant.product.fbr_hs_code", read_only=True, default="")
     variant_name = serializers.CharField(source="variant.name", read_only=True)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     batch_no = serializers.CharField(source="batch.batch_no", read_only=True, default="")
@@ -159,7 +160,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoiceLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "hs_code", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
 
 
 class SalesInvoiceEditSerializer(serializers.ModelSerializer):
