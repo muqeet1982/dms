@@ -133,24 +133,24 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
         radius={values.order_radius_m} onRadiusChange={(m) => setField("order_radius_m", m)} /> },
     { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
 
-    { ...sec("Tax & terms", "ti-receipt", "NTN or CNIC — one of the two is required."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, alwaysValidate: true,
+    { ...sec("Tax & FBR", "ti-receipt", "NTN or CNIC — one of the two is required. The FBR row matters only for customers who get tax invoices."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, alwaysValidate: true,
       validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
-    { ...sec("Tax & terms", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15, alwaysValidate: true,
+    { ...sec("Tax & FBR", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15, alwaysValidate: true,
       validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
-    { ...sec("Tax & terms", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
-    { ...sec("Tax & terms", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
-    { ...sec("Tax & terms", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
-    { ...sec("Tax & terms", "ti-receipt"), name: "fbr_registration_type", label: "FBR registration", type: "custom", col: "col-md-4",
+    { ...sec("Tax & FBR", "ti-receipt"), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17, hint: "your records only — not sent to FBR" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "filer_status", label: "ATL filer status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-3", hint: "filer and registered are different things" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "FBR registration", type: "custom", col: "col-md-4",
       hint: "drives the FBR tax invoice — check it with FBR rather than guessing",
       render: (v, set, values) => <FBRRegTypeField value={v || ""} onChange={set} ntn={values.ntn} cnic={values.cnic} customerId={values.id} /> },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-2", hint: "e.g. unregistered → further tax" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
       render: (v: any, set: any) => <LocationsEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
 
-    { ...sec("More details", "ti-dots", "Registration and stock rules — all optional.", true), name: "filer_status", label: "FBR status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-2" },
-    { ...sec("More details", "ti-dots", undefined, true), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17 },
-    { ...sec("More details", "ti-dots", undefined, true), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-3", hint: "e.g. unregistered → further tax" },
     { ...sec("More details", "ti-dots", undefined, true), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-3", suffix: "days", hint: "refuse stock expiring sooner" },
 
     { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger, so it shows in their statement and ageing.", true), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
