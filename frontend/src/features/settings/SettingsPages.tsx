@@ -20,7 +20,8 @@ const acctOption = (a: any) => ({ id: a.id, label: `${a.code} ${a.name}` });
 export function CompanySettingsPage() {
   const qc = useQueryClient();
   const me = useAuth((s) => s.me);
-  const [tab, setTab] = useState("profile");
+  const [spTab] = useSearchParams();
+  const [tab, setTab] = useState(spTab.get("tab") || "profile");
   const t = me?.tenant;
   if (!t) return <Spinner />;
   const company = useQuery({ queryKey: ["company"], queryFn: () => api.get("/api/v1/settings/company") });
