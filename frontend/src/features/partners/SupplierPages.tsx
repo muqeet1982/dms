@@ -147,17 +147,13 @@ export function SupplierRepDetailPage() {
   const orders = useQuery({ queryKey: ["rep-orders", id], queryFn: () => api.list("/api/v1/sales-orders", { rep: id, page_size: 50 }), enabled: Boolean(id) });
   const customers = useQuery({ queryKey: ["rep-customers", id], queryFn: () => api.list("/api/v1/customers", { assigned_reps: id, page_size: 200 }), enabled: Boolean(id) });
   const [tab, setTab] = useState("orders");
-  const [editing, setEditing] = useState(false);
-  const qc = useQueryClient();
   if (q.isLoading) return <Spinner />;
   const r = q.data;
   if (!r) return null;
   const p = perf.data;
   return (
     <>
-      <PageHeader title={r.name} badge={<StatusBadge status={r.is_active ? "active" : "inactive"} />} crumbs={[{ label: "Suppliers", to: "/app/suppliers" }, { label: r.supplier_name, to: `/app/suppliers/${r.supplier}` }, { label: r.name }]}
-        actions={pageRights("supplier_reps").edit && <button className="btn btn-outline-primary" onClick={() => setEditing(true)}><i className="ti ti-edit me-1" />Edit</button>} />
-      <ResourceModal open={editing} onClose={() => setEditing(false)} title="Edit rep" endpoint="/api/v1/supplier-reps" id={r.id} initial={{ ...r, create_login: false }} fields={repFields(r.supplier)} onSaved={() => qc.invalidateQueries({ queryKey: ["doc", "/api/v1/supplier-reps", id] })} />
+      <PageHeader title={r.name} badge={<StatusBadge status={r.is_active ? "active" : "inactive"} />} crumbs={[{ label: "Suppliers", to: "/app/suppliers" }, { label: r.supplier_name, to: `/app/suppliers/${r.supplier}` }, { label: r.name }]} />
       {p && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Orders" value={p.orders} icon="ti-clipboard-list" color="primary" sub={`${p.rejected} rejected`} /></div><div className="col-6 col-md-3"><StatCard label="Order value" value={money(p.order_value, 0)} icon="ti-cash" color="success" sub={`delivered ${money(p.delivered_value, 0)}`} /></div><div className="col-6 col-md-3"><StatCard label="Cash held" value={money(p.cash_held, 0)} icon="ti-wallet" color={Number(p.cash_held) > 0 ? "warning" : "secondary"} /></div><div className="col-6 col-md-3"><StatCard label="Monthly target" value={money(p.target, 0)} icon="ti-target" color="info" /></div></div>}
       <div className="card mb-3"><div className="card-body"><div className="row g-3"><InfoItem label="Code">{r.code}</InfoItem><InfoItem label="Contact">{r.phone}<div className="fs-12 text-muted">{r.email}</div></InfoItem><InfoItem label="Territory">{r.territory || "—"}</InfoItem><InfoItem label="External role">{r.role_name || "—"}<div className="fs-12 text-muted">{r.has_login ? `login: ${r.user_email}` : "no login"}</div></InfoItem><InfoItem label="Can take orders">{({ off: "Anywhere", warn: "Anywhere — flag when away from the shop", block: "At the shop only" } as any)[r.geofence_policy] || "Company rule"}</InfoItem></div></div></div>
       <div className="card"><div className="card-body">
