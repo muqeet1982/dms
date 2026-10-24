@@ -155,7 +155,7 @@ class Product(TenantModel):
 
     @property
     def fbr_ready(self):
-        return bool(self.fbr_hs_code and self.fbr_rate_desc and self.fbr_sale_type)
+        return bool(self.fbr_hs_code and self.fbr_rate_desc and self.fbr_sale_type and self.fbr_uom)
 
     def save(self, *args, **kwargs):
         # FBR's gateway refuses ANY payload containing a double quote (guide §11.2), and the rejection

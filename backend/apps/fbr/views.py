@@ -74,7 +74,7 @@ class FBRLookupView(APIView):
         elif kind == "sroschedule" and parent:
             rows = services.schedules_for(parent)
         elif kind == "hs_uom" and parent:
-            rows = services.uoms_for_hs(parent) or list(FBRLookup.objects.filter(kind="uom"))
+            rows = services.uoms_for_hs(parent)   # empty for a 01–97 code = the code is wrong, and the UI says so
         else:
             qs = FBRLookup.objects.filter(kind=kind)
             if q:

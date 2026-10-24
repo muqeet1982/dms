@@ -225,3 +225,48 @@ def party_fbr_problems(customer) -> list:
     if not (getattr(customer, "fbr_registration_type", "") or "").strip():
         problems.append("Registration type is not set — use Check with FBR on the customer.")
     return problems
+
+
+# ── the product pre-flight (HS guide §6, §12): everything that would fail a filing, all at once ─────
+def product_fbr_problems(p) -> list:
+    problems = []
+    if not (p.fbr_hs_code or "").strip():
+        problems.append("No HS code — pick it from FBR's list on the product.")
+    if not (p.fbr_sale_type or "").strip():
+        problems.append("No FBR sale type.")
+    if not (p.fbr_rate_desc or "").strip():
+        problems.append("No FBR rate.")
+    if not (p.fbr_uom or "").strip():
+        problems.append("No FBR unit of measure — it must be one the HS code allows.")
+    rate = (p.fbr_rate_desc or "").strip()
+    # §6: at any rate other than 18% the SRO schedule AND its item serial are both mandatory
+    if rate and rate != "18%":
+        if not (p.fbr_sro_schedule or "").strip():
+            problems.append(f"Rate {rate} needs an SRO schedule (mandatory for any rate other than 18%).")
+        if not (p.fbr_sro_item or "").strip():
+            problems.append(f"Rate {rate} needs the SRO item serial too.")
+    if is_mrp_sale_type(p.fbr_sale_type) and not (p.mrp_ex_tax or 0):
+        problems.append("3rd Schedule goods need the printed retail price (MRP, per unit).")
+    return problems
+
+
+# ── §9.1 / §12: FBR's own words sometimes point at the wrong field — say what to actually check ─────
+_ERROR_HINTS = {
+    "does not match with provided sale type":
+        " (FBR's message is misleading: first check the HS code EXISTS in FBR's list — this usually means "
+        "the code itself is wrong, not the sale type)",
+    "uom is not allowed against the provided hs code":
+        " (pick the unit from the ones FBR allows for this HS code, on the product)",
+    "in case of 3rd schedule":
+        " (the tax base must be the printed retail price × quantity when that is higher)",
+    "sro/schedule no. is mandatory":
+        " (any rate other than 18% needs the SRO schedule and its item serial, on the product)",
+}
+
+
+def translate_error(text: str) -> str:
+    low = (text or "").lower()
+    for needle, hint in _ERROR_HINTS.items():
+        if needle in low:
+            return text + hint
+    return text

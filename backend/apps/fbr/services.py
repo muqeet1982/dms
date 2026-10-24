@@ -70,13 +70,21 @@ def sync_reference(kinds=None):
         if kinds and kind not in kinds:
             continue
         rows = _get(f"{GW}/pdi/{path}", token)
+        # FBR returns three HS codes twice with identical descriptions (guide §3) — first row wins
+        seen, unique = set(), []
+        for r in rows:
+            k = str(r.get(key_field, ""))
+            if r.get(key_field) is None or k in seen:
+                continue
+            seen.add(k)
+            unique.append(r)
         FBRLookup.objects.filter(kind=kind).delete()
         FBRLookup.objects.bulk_create([
             FBRLookup(tenant_id=get_current_tenant().id, kind=kind, key=str(r.get(key_field, "")),
                       description=str(r.get(desc_field, ""))[:500])
-            for r in rows if r.get(key_field) is not None
+            for r in unique
         ], batch_size=1000)
-        done[kind] = len(rows)
+        done[kind] = len(unique)
     return done
 
 
@@ -113,12 +121,16 @@ def schedules_for(rate_id, on_date=None):
 
 
 def uoms_for_hs(hs_code):
+    """Empty for a 01–97 code means THE CODE IS WRONG (guide §5), never "no restriction";
+    chapter 98 is a service heading, absent from the goods list, and takes the neutral unit."""
     cached = list(FBRLookup.objects.filter(kind="hs_uom", parent_key=str(hs_code)))
     if cached:
         return cached
     fbr = settings_for()
     token, _sb = _require_token(fbr)
     rows = _get(f"{GW}/pdi/v2/HS_UOM", token, {"hs_code": hs_code, "annexure_id": 3})
+    if not rows and str(hs_code).startswith("98"):
+        rows = [{"uoM_ID": "0", "description": "Numbers, pieces, units"}]
     return [FBRLookup.objects.create(kind="hs_uom", key=str(r["uoM_ID"]), description=str(r["description"])[:500],
                                      parent_key=str(hs_code))
             for r in rows]
@@ -139,9 +151,9 @@ def build_payload(inv, filing, *, use_sandbox):
     items = []
     for line in inv.lines.select_related("variant__product"):
         p = line.variant.product if line.variant_id else None
-        if p is None or not (p.fbr_hs_code and p.fbr_rate_desc and p.fbr_sale_type):
-            raise DomainError(f"{line.description} is not FBR-classified — set HS code, sale type and "
-                              "rate on the product first.", code="fbr_not_ready")
+        problems = engine.product_fbr_problems(p) if p is not None else ["no product on the line"]
+        if problems:
+            raise DomainError(f"{line.description}: " + " ".join(problems), code="fbr_not_ready")
         mrp = p.mrp_ex_tax if engine.is_mrp_sale_type(p.fbr_sale_type) else None
         money = engine.compute_line(
             quantity=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
@@ -245,7 +257,7 @@ def validate(inv, actor=None):
     AuditService.log("fbr.validated" if ok else "fbr.validate_failed", inv,
                      after={"code": filing.validate_code, "error": filing.error_text[:300]}, actor=actor)
     if not ok:
-        raise DomainError(f"FBR refused the invoice: {filing.error_text}", code="fbr_rejected")
+        raise DomainError(f"FBR refused the invoice: {engine.translate_error(filing.error_text)}", code="fbr_rejected")
     return filing
 
 

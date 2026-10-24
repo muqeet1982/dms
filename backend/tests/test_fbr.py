@@ -176,7 +176,7 @@ def test_unclassified_product_refuses_before_any_call(api, tenant):
     with tenant_context(tenant, tenant.owner):
         Product.objects.update(fbr_hs_code="")
     r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
-    assert r.status_code in (400, 422) and "classified" in str(r.data)
+    assert r.status_code in (400, 422) and "HS code" in str(r.data)
 
 
 def test_scenario_runner_swaps_seller_only_and_records_the_run(api, tenant):
@@ -235,3 +235,32 @@ def test_validate_reports_all_buyer_problems_in_one_breath(api, tenant):
     assert r.status_code in (400, 422)
     text = str(r.data)
     assert "NTN or CNIC" in text and "Province" in text and "Registration type" in text
+
+
+
+def test_hs_guide_vectors_sro_rule_dedupe_and_worked_example():
+    from types import SimpleNamespace as P
+
+    # §12 worked example: 95.2 KG at 165, 18% → 2,827.44 / 18,535.44
+    m = engine.compute_line(quantity="95.2", unit_price="165", discount_amount=0, rate_str="18%")
+    assert m["salesTaxApplicable"] == Decimal("2827.44") and m["totalValues"] == Decimal("18535.44")
+    # the same line as 3rd Schedule with MRP 200/unit → base 19,040, gst 3,427.20
+    t = engine.compute_line(quantity="95.2", unit_price="165", discount_amount=0, rate_str="18%",
+                            sale_type="3rd Schedule Goods", mrp="200")
+    assert t["salesTaxApplicable"] == Decimal("3427.20")
+
+    # §6: any rate other than 18% demands the SRO pair — reported together, with everything else
+    prod = P(fbr_hs_code="1006.3010", fbr_sale_type="Goods at Reduced Rate", fbr_rate_desc="1%",
+             fbr_uom="KG", fbr_sro_schedule="", fbr_sro_item="", mrp_ex_tax=None)
+    probs = engine.product_fbr_problems(prod)
+    assert any("SRO schedule" in x for x in probs) and any("item serial" in x for x in probs)
+    ok = P(fbr_hs_code="7306.3090", fbr_sale_type="Goods at standard rate (default)", fbr_rate_desc="18%",
+           fbr_uom="KG", fbr_sro_schedule="", fbr_sro_item="", mrp_ex_tax=None)
+    assert engine.product_fbr_problems(ok) == []
+    third = P(fbr_hs_code="3004.9099", fbr_sale_type="3rd Schedule Goods", fbr_rate_desc="18%",
+              fbr_uom="Packs", fbr_sro_schedule="3rd Schedule goods", fbr_sro_item="1", mrp_ex_tax=None)
+    assert any("retail price" in x for x in engine.product_fbr_problems(third))
+
+    # §9.1: the misleading error gains the real instruction
+    hinted = engine.translate_error("HS Code does not match with provided sale type. Please refer…")
+    assert "EXISTS in FBR" in hinted or "EXISTS" in hinted

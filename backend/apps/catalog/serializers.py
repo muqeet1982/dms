@@ -125,6 +125,20 @@ class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    def validate_fbr_hs_code(self, value):
+        """HS guide §9.1: a chapter 01–97 code must exist in FBR's list (the rejection weeks later blames
+        the sale type and sends you to the wrong field). Chapter 98 service headings are legitimately
+        absent. Only enforced once the list has been synced."""
+        code = (value or "").strip()
+        if not code or code.startswith("98"):
+            return code
+        from apps.fbr.models import FBRLookup
+
+        if FBRLookup.objects.filter(kind="hscode").exists() and not FBRLookup.objects.filter(kind="hscode", key=code).exists():
+            raise serializers.ValidationError(
+                f"{code} is not in FBR's current HS code list — re-sync the list under Settings → FBR, or pick the nearest valid code.")
+        return code
+
     variants = ProductVariantSerializer(many=True, read_only=True)
     # dated offers: [{discount_pct, min_qty, start_date, end_date}] — writing replaces the whole set
     offers = serializers.SerializerMethodField()

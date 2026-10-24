@@ -101,6 +101,7 @@ export function ProductsPage() {
     { key: "unit_size", header: "Unit", sortKey: "unit_size", render: (p) => p.unit_size || <span className="text-muted">{p.base_uom_code}</span> }, { key: "packing", header: "Packing", num: true, sortKey: "packing", render: (p) => (p.packing > 1 ? p.packing : <span className="text-muted">1</span>) },
     { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <span className="fw-semibold">{money(p.sale_price)}</span> },
     { key: "location_name", header: "Location", sortKey: "location__name", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
+    { key: "fbr_ready", header: "FBR", render: (p) => p.fbr_hs_code || p.fbr_rate_desc ? (p.fbr_ready ? <span className="badge bg-success-light text-success" title="Classified — can go on an FBR tax invoice">ready</span> : <span className="badge bg-warning-light text-warning" title="Classification started but incomplete">incomplete</span>) : <span className="text-muted fs-11">—</span> },
     { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
     { key: "status", header: "Status", sortKey: "status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
   ];
@@ -307,6 +308,8 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           <option value="">—</option>
           {(uoms.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
         </select>
+        {Boolean(values.fbr_hs_code) && uoms.data && (uoms.data.results || []).length === 0 && !String(values.fbr_hs_code).startsWith("98") && (
+          <div className="text-danger fs-11 mt-1"><i className="ti ti-alert-circle me-1" />FBR allows no unit for this code — it is not a valid HS code; pick another.</div>)}
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">Sale type</div>
@@ -337,7 +340,19 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
         <input type="number" step="0.01" className="form-control" value={values.mrp_ex_tax ?? ""} onChange={(e) => setField("mrp_ex_tax", e.target.value === "" ? null : Number(e.target.value))} />
       </div>}
-      <div className="col-12 form-text">{values.fbr_hs_code && values.fbr_rate_desc && values.fbr_sale_type ? <span className="text-success"><i className="ti ti-check me-1" />FBR-ready — this product can go on an FBR tax invoice.</span> : "Not FBR-ready: HS code, sale type and rate are the minimum."}</div>
+      <div className="col-12 form-text">{(() => {
+        const probs: string[] = [];
+        if (!values.fbr_hs_code) probs.push("HS code");
+        if (!values.fbr_sale_type) probs.push("sale type");
+        if (!values.fbr_rate_desc) probs.push("rate");
+        if (!values.fbr_uom) probs.push("UoM");
+        const rate = String(values.fbr_rate_desc || "").trim();
+        if (rate && rate !== "18%") { if (!values.fbr_sro_schedule) probs.push(`SRO schedule (mandatory at ${rate})`); if (!values.fbr_sro_item) probs.push("SRO item serial"); }
+        if (third && !values.mrp_ex_tax) probs.push("printed retail price (MRP)");
+        return probs.length === 0
+          ? <span className="text-success"><i className="ti ti-check me-1" />FBR-ready — this product can go on an FBR tax invoice.</span>
+          : <span className="text-warning">Not FBR-ready — missing: {probs.join(", ")}.</span>;
+      })()}</div>
     </div>
   );
 }

@@ -73,6 +73,17 @@ class TaxClassViewSet(TenantModelViewSet):
     pagination_class = None
     queryset = TaxClass.objects.select_related("tax1", "tax2")
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        want = self.request.query_params.get("fbr")
+        if want == "ready":
+            qs = qs.exclude(fbr_hs_code="").exclude(fbr_rate_desc="").exclude(fbr_sale_type="").exclude(fbr_uom="")
+        elif want == "not_ready":
+            from django.db.models import Q
+
+            qs = qs.filter(Q(fbr_hs_code="") | Q(fbr_rate_desc="") | Q(fbr_sale_type="") | Q(fbr_uom=""))
+        return qs
+
     def perform_create(self, serializer):
         if serializer.validated_data.get("is_default"):
             TaxClass.objects.update(is_default=False)
