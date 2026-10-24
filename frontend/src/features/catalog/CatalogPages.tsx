@@ -301,6 +301,13 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
                 <strong>{r.key}</strong> <span className="text-muted">{r.description.slice(0, 80)}</span>
               </div>))}
           </div>)}
+        {/* chapter 98 = a service heading: legitimately absent from FBR's goods list yet accepted — offer it directly */}
+        {/^98\d\d\.\d{4}$/.test(hsQ.trim()) && hsQ.trim() !== values.fbr_hs_code && (
+          <div className="border rounded mt-1 px-2 py-1 fs-12 cursor-pointer bg-light" onClick={() => { const c = hsQ.trim(); setField("fbr_hs_code", c); setField("fbr_uom", "Numbers, pieces, units"); setHsQ(c); }}>
+            <strong>{hsQ.trim()}</strong> <span className="text-muted">— chapter 98 service heading: not in the goods list, accepted by FBR (unit set to "Numbers, pieces, units")</span>
+          </div>)}
+        {hsQ.length >= 4 && hs.data && (hs.data.results || []).length === 0 && !/^98/.test(hsQ.trim()) && hsQ !== values.fbr_hs_code && (
+          <div className="form-text text-warning mt-1">{/\d{4}\.\d{4}/.test(hsQ) ? "Not in FBR's goods list — the code is wrong, or the list has not been synced yet (Settings → FBR e-invoicing)." : "No match — sync FBR's reference data under Settings → FBR e-invoicing if the list is empty."}</div>)}
       </div>
       <div className="col-md-2">
         <div className="form-label fs-12 mb-1">UoM</div>
