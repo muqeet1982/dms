@@ -72,6 +72,10 @@ export function InvoiceDetailPage() {
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
+          {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && page.can("fbr_file") && inv.fbr?.status !== "submitted" && <>
+            <button className="btn btn-outline-info" disabled={!!busy} onClick={() => run("fbr-validate", {}, { success: "FBR accepted the dry run — ready to submit" })}><i className="ti ti-building-bank me-1" />Validate with FBR</button>
+            {inv.fbr?.status === "validated" && <button className="btn btn-info" disabled={!!busy} onClick={() => run("fbr-submit", {}, { success: "Filed — FBR number issued" })}><i className="ti ti-send me-1" />Submit to FBR</button>}
+          </>}
           {inv.status === "draft" && page.can("discount") && (inv.force_tax_type
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item taxes at its product's own Tax %" onClick={() => run("tax", { apply: true }, { success: "Tax on — each item at its product's Tax %" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
@@ -80,6 +84,9 @@ export function InvoiceDetailPage() {
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
+      {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
+        <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
+      </Alert>}
       <div className="row g-3 mb-3">
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #F26522" }}><div className="card-body py-3 text-center"><div className="fw-bold text-primary fs-18">{money(inv.total)}</div><div className="text-muted fs-12">Invoice total</div></div></div></div>
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #03C95A" }}><div className="card-body py-3 text-center"><div className="fw-bold text-success fs-18">{money(inv.paid_amount)}</div><div className="text-muted fs-12">Paid</div></div></div></div>

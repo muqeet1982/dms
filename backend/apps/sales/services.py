@@ -880,6 +880,9 @@ class InvoiceService:
             raise DomainError("A cancelled invoice cannot be reopened — raise a fresh invoice.")
         if inv.paid_amount > 0 or inv.status in ("partially_paid", "paid"):
             raise DomainError("Money has been received against this invoice — remove the receipts first, or correct it with a credit note.", code="has_payments")
+        filing = getattr(inv, "fbr_filing", None)
+        if filing is not None and filing.status == "submitted":
+            raise DomainError("This invoice is filed with FBR and must stay exactly as filed — correct it with a credit note.", code="fbr_submitted")
         memo = f"Invoice {inv.number} reopened for editing"
         for claim in inv.company_claims.exclude(status="cancelled"):
             for je in JournalEntry.objects.filter(source_type="CompanyClaim", source_id=str(claim.pk), status="posted"):
@@ -899,6 +902,9 @@ class InvoiceService:
     def cancel(inv, reason=""):
         if inv.paid_amount > 0:
             raise DomainError("Invoice has payments; cancel them first.")
+        filing = getattr(inv, "fbr_filing", None)
+        if filing is not None and filing.status == "submitted":
+            raise DomainError("This invoice is filed with FBR and must stay exactly as filed — correct it with a credit note.", code="fbr_submitted")
         from apps.accounting.services import PostingService
 
         if inv.journal_id:

@@ -1,0 +1,177 @@
+"""FBR Digital Invoicing — the guide's own test vectors (§12) plus the flow against a mocked gateway."""
+import json
+from decimal import Decimal
+from unittest import mock
+
+import pytest
+
+from apps.core.tenancy import tenant_context
+from apps.fbr import engine
+
+pytestmark = pytest.mark.django_db
+
+
+# ── §12 vectors, verbatim ───────────────────────────────────────────────────────────────────────────
+def test_trim_ntn_keeps_letters_and_a_cnics_thirteen_digits():
+    assert engine.trim_ntn("A014841-0") == "A014841"
+    assert engine.trim_ntn("1234567-8") == "1234567"
+    assert engine.trim_ntn("42101-1234567-1") == "4210112345671"
+    assert engine.trim_ntn("3520212345679") == "3520212345679"
+
+
+def test_rate_parser_handles_all_eleven_shapes():
+    cases = [("18%", 18, 0), ("0.5%", Decimal("0.5"), 0), ("1.43%", Decimal("1.43"), 0),
+             ("Exempt", 0, 0), ("Rs.200", 0, 200), ("Rs. 5", 0, 5), ("Rs.3", 0, 3),
+             ("Rs.700/MT", 0, 700), ("Rs.1,000", 0, 1000),
+             ("18% along with rupees 60 per kilogram", 18, 60), ("18% and Rs. 80 per Liter", 18, 80)]
+    for rate, pct, fixed in cases:
+        assert engine.gst_rate_num(rate) == pct, rate
+        assert engine.fixed_tax_amount(rate) == fixed, rate
+
+
+def test_third_schedule_taxes_the_printed_retail_price_per_unit():
+    m = engine.compute_line(quantity=10, unit_price=100, discount_amount=0,
+                            rate_str="18%", sale_type="3rd Schedule Goods", mrp=150)
+    assert m["salesTaxApplicable"] == Decimal("270.00")   # 150 × 10 × 18%, not 180
+    plain = engine.compute_line(quantity=10, unit_price=100, discount_amount=0, rate_str="18%")
+    assert plain["salesTaxApplicable"] == Decimal("180.00")
+
+
+def test_withholding_is_subtracted_in_total():
+    m = engine.compute_line(quantity=1, unit_price=1000, discount_amount=0, rate_str="18%", withheld_rate=4)
+    assert m["totalValues"] == Decimal("1000") + Decimal("180") - Decimal("40")
+
+
+def test_duplicate_lines_combine_and_every_money_field_sums():
+    line = {"hsCode": "1", "productDescription": "X", "rate": "18%", "saleType": "s", "uoM": "KG",
+            "sroScheduleNo": "", "sroItemSerialNo": "", "quantity": 2, "totalValues": 10.0,
+            "valueSalesExcludingST": 8.0, "salesTaxApplicable": 2.0, "salesTaxWithheldAtSource": 0.0,
+            "extraTax": "", "furtherTax": 0.0, "fedPayable": 0.0, "discount": 0.0,
+            "fixedNotifiedValueOrRetailPrice": 0.0}
+    out = engine.combine_duplicate_lines([dict(line), {**line, "quantity": 3, "totalValues": 15.0,
+                                                      "valueSalesExcludingST": 12.0, "salesTaxApplicable": 3.0}])
+    assert len(out) == 1 and out[0]["quantity"] == 5
+    assert out[0]["totalValues"] == 25.0 and out[0]["salesTaxApplicable"] == 5.0
+    assert out[0]["extraTax"] == ""                       # "" survives when both blank
+    # every money field named in the payload is in the summed set — walk, don't trust
+    for f in ("totalValues", "valueSalesExcludingST", "salesTaxApplicable", "salesTaxWithheldAtSource",
+              "extraTax", "furtherTax", "fedPayable", "discount"):
+        assert f in engine._SUMMED
+
+
+def test_response_parser_handles_all_four_shapes():
+    class R:
+        def __init__(self, body):
+            self.text = body
+        def json(self):
+            return json.loads(self.text)
+
+    ok = R('{"invoiceNumber":"X","validationResponse":{"statusCode":"00","status":"Valid"}}')
+    assert engine.parse_fbr_response(ok)[1]["statusCode"] == "00"
+    gateway = R('{"Code":"03","error":"Requested JSON in Malformed"}')
+    vr = engine.parse_fbr_response(gateway)[1]
+    assert vr["statusCode"] == "03" and "Malformed" in vr["error"]
+    trailing = R('{"validationResponse":{"statusCode":"01","status":"Invalid",}}')
+    assert engine.parse_fbr_response(trailing)[1]["statusCode"] == "01"
+    garbage = R("<html>Service Unavailable</html>")
+    assert engine.parse_fbr_response(garbage) == ({}, {})
+
+
+def test_fbr_text_and_province_and_scenarios():
+    assert engine.fbr_text('PVC TAPE 3 4" NITTO') == "PVC TAPE 3 4'' NITTO"
+    assert engine.fbr_province("Khyber Pakhtunkhwa") == "KPK"
+    assert engine.fbr_province("Islamabad Capital Territory") == "ICT"
+    assert engine.scenario_for("Goods at standard rate (default)", "Unregistered") == "SN002"
+    assert engine.scenario_for("Goods at standard rate (default)", "Registered") == "SN001"
+    assert engine.scenario_for("3rd Schedule Goods", "Registered") == "SN008"
+
+
+# ── the flow, against a mocked gateway ──────────────────────────────────────────────────────────────
+def _taxed_invoice(api, tenant):
+    from datetime import date
+
+    from django.utils import timezone
+
+    from apps.catalog.models import Product, TaxRate, TaxType
+
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        tt = TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")
+        TaxRate.objects.create(tax_type=tt, rate_pct=Decimal("18"), valid_from=timezone.localdate())
+        Product.objects.filter(pk=v.product_id).update(
+            tax_pct=Decimal("18"), fbr_hs_code="7306.3090", fbr_uom="KG",
+            fbr_sale_type="Goods at standard rate (default)", fbr_rate_desc="18%")
+        cust.cnic = "35202-1234567-1"
+        cust.business_name = "Salon One Traders"
+        cust.save(update_fields=["cnic", "business_name"])
+        from apps.fbr.models import FBRSettings
+
+        FBRSettings.objects.create(ntn="1234567-8", business_name="DEMO DISTRIBUTORS",
+                                   address="Plot 12 Lahore", province="Punjab", sandbox_token="tok-sb")
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+    api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"apply_tax": True}, format="json")
+    return (made.data[0] if isinstance(made.data, list) else made.data)
+
+
+def _resp(body):
+    m = mock.Mock()
+    m.text = json.dumps(body)
+    m.json = lambda: body
+    return m
+
+
+ACCEPT = {"invoiceNumber": "3520277029257DIKVSTDE857820",
+          "validationResponse": {"statusCode": "00", "status": "Valid", "error": "", "invoiceStatuses": []}}
+
+
+def test_validate_then_submit_files_the_invoice_and_freezes_it(api, tenant):
+    inv = _taxed_invoice(api, tenant)
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)) as post:
+        ok = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+        assert ok.status_code == 200 and ok.data["status"] == "validated", ok.content
+        sent = post.call_args.kwargs["json"]
+        assert sent["scenarioId"] == "SN002"                       # sandbox + unregistered buyer
+        assert sent["sellerNTNCNIC"] == "1234567"                  # check digit dropped
+        assert sent["buyerNTNCNIC"] == "3520212345671"             # CNIC's 13 digits kept
+        assert sent["items"][0]["rate"] == "18%"
+        assert sent["items"][0]["salesTaxApplicable"] == 108.0     # 600 × 18%
+        assert sent["items"][0]["extraTax"] == ""
+        done = api.post(f"/api/v1/invoices/{inv['id']}/fbr-submit", {}, format="json")
+        assert done.status_code == 200 and done.data["fbr_invoice_number"].endswith("857820"), done.content
+
+    # §8.3: a submitted invoice is immutable — reopen and cancel both refuse
+    reopened = api.post(f"/api/v1/invoices/{inv['id']}/reopen", {}, format="json")
+    assert reopened.status_code in (400, 422) and "FBR" in str(reopened.data)
+    cancelled = api.post(f"/api/v1/invoices/{inv['id']}/cancel", {}, format="json")
+    assert cancelled.status_code in (400, 422) and "FBR" in str(cancelled.data)
+
+    detail = api.get(f"/api/v1/invoices/{inv['id']}")
+    assert detail.data["fbr"]["status"] == "submitted" and detail.data["fbr"]["sandbox"] is True
+
+
+def test_rejection_is_reported_with_fbrs_words_and_submit_needs_validation(api, tenant):
+    inv = _taxed_invoice(api, tenant)
+    refused = api.post(f"/api/v1/invoices/{inv['id']}/fbr-submit", {}, format="json")
+    assert refused.status_code in (400, 422)                      # no validation yet
+    reject = {"validationResponse": {"statusCode": "01", "status": "Invalid", "error": "",
+                                     "invoiceStatuses": [{"itemSNo": "1", "statusCode": "01",
+                                                          "error": "DUPLICATE INVOICE EXISTS"}]}}
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(reject)):
+        bad = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+        assert bad.status_code in (400, 422) and "DUPLICATE INVOICE EXISTS" in str(bad.data)
+
+
+def test_unclassified_product_refuses_before_any_call(api, tenant):
+    inv = _taxed_invoice(api, tenant)
+    from apps.catalog.models import Product
+
+    with tenant_context(tenant, tenant.owner):
+        Product.objects.update(fbr_hs_code="")
+    r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+    assert r.status_code in (400, 422) and "classified" in str(r.data)

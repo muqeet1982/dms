@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "apps.accounting",
     "apps.reports",
     "apps.integrations",
+    "apps.fbr",
 ]
 
 MIDDLEWARE = [

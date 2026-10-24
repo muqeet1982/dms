@@ -139,6 +139,31 @@ class Product(TenantModel):
     # this product's own sales-tax % (owner, 24 Oct 2026): used when an invoice's tax switch is ON, beating
     # the invoice-level rate for its lines; null = the invoice's rate. It does nothing while the switch is off.
     tax_pct = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
+    # ── FBR Digital Invoicing classification (FBR_INTEGRATION_GUIDE.md §5.3) — all from reference data,
+    # chained: transaction type → rate → SRO schedule → SRO item. A product missing HS code or rate
+    # cannot go on an FBR tax invoice (filing is opt-in per invoice; these sit idle otherwise).
+    fbr_hs_code = models.CharField(max_length=30, blank=True, default="")
+    fbr_uom = models.CharField(max_length=100, blank=True, default="")
+    fbr_trans_type_id = models.CharField(max_length=20, blank=True, default="")
+    fbr_sale_type = models.CharField(max_length=200, blank=True, default="")     # the DESCRIPTION, echoed
+    fbr_rate_id = models.CharField(max_length=20, blank=True, default="")
+    fbr_rate_desc = models.CharField(max_length=200, blank=True, default="")     # prose: "18%", "Rs.200"…
+    fbr_sro_schedule = models.CharField(max_length=200, blank=True, default="")
+    fbr_sro_item = models.CharField(max_length=100, blank=True, default="")
+    # 3rd Schedule only: the retail price printed on the packet, PER UNIT
+    mrp_ex_tax = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+
+    @property
+    def fbr_ready(self):
+        return bool(self.fbr_hs_code and self.fbr_rate_desc and self.fbr_sale_type)
+
+    def save(self, *args, **kwargs):
+        # FBR's gateway refuses ANY payload containing a double quote (guide §11.2), and the rejection
+        # names your JSON, not the product. Scrub at the door so the form, the importer and the shell
+        # all keep the invoice, the PDF and the filing saying the same name.
+        if self.name and '"' in self.name:
+            self.name = self.name.replace('"', "''")
+        return super().save(*args, **kwargs)
     retail_price = models.DecimalField(**MONEY)  # R.P — retail price / MRP printed for the end consumer
     price_effective_date = models.DateField(null=True, blank=True, help_text="Date of the price list these prices came from")
     min_stock = models.DecimalField(**QTY)

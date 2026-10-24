@@ -129,6 +129,9 @@ class Customer(TenantModel):
                  ("Balochistan", "Balochistan"), ("Gilgit-Baltistan", "Gilgit-Baltistan"),
                  ("Azad Jammu & Kashmir", "Azad Jammu & Kashmir"), ("Islamabad Capital Territory", "Islamabad Capital Territory")]
     province = models.CharField(max_length=40, blank=True, default="Punjab")
+    # FBR: "Registered"/"Unregistered", set from Get_Reg_Type when checked — drives the DI payload's
+    # buyerRegistrationType and the sandbox scenario; guessing it wrong is a rejection
+    fbr_registration_type = models.CharField(max_length=30, blank=True, default="")
     gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     # how close a rep must be to take an order here; blank = the company's order_proximity_m (a kiosk and a

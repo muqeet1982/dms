@@ -298,6 +298,8 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "discount": extra_perm("invoices", "discount"),
         "tax": extra_perm("invoices", "discount"),  # the tax switch rides on the same right as the discount one
         "reopen": "sales.view_invoice",  # the real gate is inside: owner, or the matrix's edit-posted switch
+        "fbr_validate": extra_perm("invoices", "fbr_file"),
+        "fbr_submit": extra_perm("invoices", "fbr_file"),
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
@@ -373,6 +375,19 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         inv = self.get_object()
         lines = list(inv.lines.select_related("variant__product", "batch").order_by("sequence"))
         extra = InvoiceService.present_lines(inv, lines)
+        # a filed tax invoice must print FBR's number with a QR encoding it — the legal requirement
+        filing = getattr(inv, "fbr_filing", None)
+        if filing is not None and filing.status == "submitted" and filing.fbr_invoice_number:
+            import base64
+            import io
+
+            import segno
+
+            buf = io.BytesIO()
+            segno.make(filing.fbr_invoice_number).save(buf, kind="png", scale=3, border=1)
+            extra["fbr_number"] = filing.fbr_invoice_number
+            extra["fbr_qr"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+            extra["fbr_sandbox"] = filing.sandbox
         return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number,
                           title="SALES INVOICE", ref=inv.number)
 
@@ -391,6 +406,26 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
             raise DomainError("Only the owner can reopen a posted invoice for editing.", status_code=403)
         inv = InvoiceService.reopen(self.get_object(), reason=request.data.get("reason", ""), actor=request.user)
         return Response(self.get_serializer(inv).data)
+
+    @action(detail=True, methods=["post"], url_path="fbr-validate")
+    def fbr_validate(self, request, pk=None):
+        """Dry-run this invoice against FBR — free, catches classification errors, issues no number."""
+        from apps.fbr import services as fbr
+
+        inv = self.get_object()
+        if inv.status == "draft":
+            raise DomainError("Post the invoice first — FBR files final invoices, not drafts.")
+        filing = fbr.validate(inv, actor=request.user)
+        return Response({"status": filing.status, "code": filing.validate_code, "sandbox": filing.sandbox})
+
+    @action(detail=True, methods=["post"], url_path="fbr-submit")
+    def fbr_submit(self, request, pk=None):
+        """Post this invoice to FBR for real; the 28-character number lands on the printed copy."""
+        from apps.fbr import services as fbr
+
+        filing = fbr.submit(self.get_object(), actor=request.user)
+        return Response({"status": filing.status, "fbr_invoice_number": filing.fbr_invoice_number,
+                         "sandbox": filing.sandbox})
 
     @action(detail=True, methods=["post"])
     def tax(self, request, pk=None):

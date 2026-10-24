@@ -44,6 +44,17 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "brand", label: "Brand", type: "entity", endpoint: "/api/v1/brands", mapOption: (b) => ({ id: b.id, label: b.name }), col: "col-md-3" }, { name: "category", label: "Category", type: "entity", endpoint: "/api/v1/categories", mapOption: (c) => ({ id: c.id, label: c.path || c.name }), col: "col-md-3" },
   { name: "supplier", label: "Supplier (manufacturer)", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }), col: "col-md-3" }, { name: "base_uom", label: "Base unit", type: "entity", endpoint: "/api/v1/uoms", mapOption: (u) => ({ id: u.id, label: `${u.code} — ${u.name}` }), required: true, col: "col-md-3" },
   { name: "unit_size", label: "Unit / size", col: "col-md-3", placeholder: "60ml, 1L, 500g, pcs" }, { name: "packing", label: "Units per box", type: "number", col: "col-md-3", default: 1, hint: "How many units in one box / carton" }, { name: "box_upc", label: "Box UPC (barcode on the box)", col: "col-md-3", hint: "One scan = one box", inputMode: "numeric", autoComplete: "off", showIf: (v) => Number(v.packing) > 1 }, { name: "location", label: "Location (rack / shelf / bin)", type: "custom", col: "col-md-3", render: (v, set) => <LocationField value={v || null} onChange={set} /> }, { name: "tax_pct", label: "Tax %", type: "number", col: "col-md-3", suffix: "%", hint: "shows on each invoice line for this product when the invoice charges tax" },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionHint: "Only for products that go on FBR tax invoices — classification comes from FBR's own lists (sync them under Settings → FBR e-invoicing).", sectionCollapsed: true,
+    name: "fbr_hs_code", label: "", type: "custom", col: "col-md-12",
+    render: (_v: any, _set: any, values: any, setField: any) => <FBRClassifier values={values} setField={setField} /> },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_uom", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_trans_type_id", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sale_type", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_rate_id", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_rate_desc", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_schedule", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_item", label: "", type: "custom", col: "d-none", render: () => null },
+  { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "mrp_ex_tax", label: "", type: "custom", col: "d-none", render: () => null },
   { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: "T.P — trade price", type: "money", col: "col-md-3", default: 0 }, { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
   { name: "discount_pct", label: "Product discount %", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "applies on this product's sales lines once the minimum quantity is reached; separate from the customer's co-funded discount", validate: (v: any) => (Number(v) > 100 ? "Cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
   { name: "discount_min_qty", label: "Discount from (qty)", type: "number", col: "col-md-2", default: 0, hint: "0 = always" },
@@ -261,5 +272,72 @@ export function LocationsPage() {
       columns={[{ key: "code", header: "Location", render: (b: any) => <span className="fw-semibold">{b.code}</span> }, { key: "name", header: "Description", render: (b: any) => b.name || "—" }, { key: "warehouse_name", header: "Warehouse" }, { key: "products_count", header: "Products", num: true }]}
       fields={[{ name: "warehouse", label: "Warehouse", type: "select", required: true, col: "col-md-6", options: (warehouses.data || []).map((w: any) => ({ value: w.id, label: w.name })) },
         { name: "code", label: "Location code", required: true, col: "col-md-3", placeholder: "A-01" }, { name: "name", label: "Description", col: "col-md-3", placeholder: "Rack A, shelf 1" }]} />
+  );
+}
+
+
+/** FBR classification, chained per the guide: HS code → UoM-for-HS; sale type → rate → SRO schedule.
+ *  Reads the local cache (synced under Settings → FBR); free-typing any of these gets a rejection. */
+function FBRClassifier({ values, setField }: { values: any; setField: (k: string, v: any) => void }) {
+  const [hsQ, setHsQ] = useState(values.fbr_hs_code || "");
+  const look = (kind: string, parent?: string, q?: string) =>
+    api.get("/api/v1/fbr/lookups", { kind, ...(parent ? { parent } : {}), ...(q ? { q } : {}) });
+  const hs = useQuery({ queryKey: ["fbr-l", "hscode", hsQ], queryFn: () => look("hscode", undefined, hsQ), enabled: hsQ.length >= 2 });
+  const uoms = useQuery({ queryKey: ["fbr-l", "hs_uom", values.fbr_hs_code], queryFn: () => look("hs_uom", values.fbr_hs_code), enabled: Boolean(values.fbr_hs_code) });
+  const trans = useQuery({ queryKey: ["fbr-l", "transtype"], queryFn: () => look("transtype") });
+  const rates = useQuery({ queryKey: ["fbr-l", "rate", values.fbr_trans_type_id], queryFn: () => look("rate", values.fbr_trans_type_id), enabled: Boolean(values.fbr_trans_type_id) });
+  const sros = useQuery({ queryKey: ["fbr-l", "sroschedule", values.fbr_rate_id], queryFn: () => look("sroschedule", values.fbr_rate_id), enabled: Boolean(values.fbr_rate_id) });
+  const third = (values.fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods";
+  return (
+    <div className="row g-2">
+      <div className="col-md-4">
+        <div className="form-label fs-12 mb-1">HS code {values.fbr_hs_code ? <span className="badge bg-light text-dark ms-1">{values.fbr_hs_code}</span> : null}</div>
+        <input className="form-control" placeholder="type 2+ characters to search FBR's list…" value={hsQ} onChange={(e) => setHsQ(e.target.value)} />
+        {hsQ.length >= 2 && (hs.data?.results?.length || 0) > 0 && hsQ !== values.fbr_hs_code && (
+          <div className="border rounded mt-1" style={{ maxHeight: 160, overflowY: "auto" }}>
+            {hs.data.results.slice(0, 20).map((r: any) => (
+              <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer" onClick={() => { setField("fbr_hs_code", r.key); setField("fbr_uom", ""); setHsQ(r.key); }}>
+                <strong>{r.key}</strong> <span className="text-muted">{r.description.slice(0, 80)}</span>
+              </div>))}
+          </div>)}
+      </div>
+      <div className="col-md-2">
+        <div className="form-label fs-12 mb-1">UoM</div>
+        <select className="form-select" value={values.fbr_uom || ""} onChange={(e) => setField("fbr_uom", e.target.value)}>
+          <option value="">—</option>
+          {(uoms.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
+        </select>
+      </div>
+      <div className="col-md-3">
+        <div className="form-label fs-12 mb-1">Sale type</div>
+        <select className="form-select" value={values.fbr_trans_type_id || ""} onChange={(e) => { const r = (trans.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_trans_type_id", e.target.value); setField("fbr_sale_type", r?.description || ""); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); }}>
+          <option value="">{values.fbr_sale_type || "—"}</option>
+          {(trans.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
+        </select>
+      </div>
+      <div className="col-md-3">
+        <div className="form-label fs-12 mb-1">Rate</div>
+        <select className="form-select" value={values.fbr_rate_id || ""} onChange={(e) => { const r = (rates.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_rate_id", e.target.value); setField("fbr_rate_desc", r?.description || ""); setField("fbr_sro_schedule", ""); }}>
+          <option value="">{values.fbr_rate_desc || "—"}</option>
+          {(rates.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
+        </select>
+      </div>
+      <div className="col-md-4">
+        <div className="form-label fs-12 mb-1">SRO schedule (often none)</div>
+        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => setField("fbr_sro_schedule", e.target.value)}>
+          <option value="">none</option>
+          {(sros.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
+        </select>
+      </div>
+      <div className="col-md-3">
+        <div className="form-label fs-12 mb-1">SRO item serial</div>
+        <input className="form-control" value={values.fbr_sro_item || ""} onChange={(e) => setField("fbr_sro_item", e.target.value)} placeholder="from the SRO item list" />
+      </div>
+      {third && <div className="col-md-3">
+        <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
+        <input type="number" step="0.01" className="form-control" value={values.mrp_ex_tax ?? ""} onChange={(e) => setField("mrp_ex_tax", e.target.value === "" ? null : Number(e.target.value))} />
+      </div>}
+      <div className="col-12 form-text">{values.fbr_hs_code && values.fbr_rate_desc && values.fbr_sale_type ? <span className="text-success"><i className="ti ti-check me-1" />FBR-ready — this product can go on an FBR tax invoice.</span> : "Not FBR-ready: HS code, sale type and rate are the minimum."}</div>
+    </div>
   );
 }

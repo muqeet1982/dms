@@ -1,0 +1,278 @@
+"""
+Talking to FBR: reference sync, the payload built from a DMS invoice, validate and post (§2, §7, §8).
+
+Filing is opt-in per invoice — these run only when someone presses the button on one invoice.
+"""
+import json
+from datetime import date
+
+import requests
+from django.utils import timezone
+
+from apps.core.audit import AuditService
+from apps.core.exceptions import DomainError
+from apps.core.tenancy import get_current_tenant
+
+from . import engine
+from .models import FBRFiling, FBRLookup, FBRSettings
+
+GW = "https://gw.fbr.gov.pk"
+POST_URL = {True: f"{GW}/di_data/v1/di/postinvoicedata_sb", False: f"{GW}/di_data/v1/di/postinvoicedata"}
+VALIDATE_URL = {True: f"{GW}/di_data/v1/di/validateinvoicedata_sb", False: f"{GW}/di_data/v1/di/validateinvoicedata"}
+REF_TIMEOUT, TX_TIMEOUT = 15, 30
+
+
+def settings_for(tenant=None) -> FBRSettings:
+    tenant = tenant or get_current_tenant()
+    obj = FBRSettings.objects.first()
+    if obj is None:
+        obj = FBRSettings.objects.create()
+    return obj
+
+
+def _headers(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _require_token(fbr):
+    token, sandbox = fbr.token()
+    if not token:
+        raise DomainError(f"No FBR {'sandbox' if fbr.use_sandbox else 'production'} token is saved — "
+                          "add it under Settings → FBR.", code="fbr_no_token")
+    return token, sandbox
+
+
+# ── reference data (§4): cache locally, sync from an admin action, never per request ────────────────
+def _get(url, token, params=None):
+    r = requests.get(url, headers=_headers(token), params=params or {}, timeout=REF_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def sync_reference(kinds=None):
+    """
+    The static lists. Parametric ones (rates per transaction type) sync lazily through
+    `rates_for` / `schedules_for` / `uoms_for_hs` when a dropdown first asks.
+    """
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    done = {}
+    plans = {
+        "province": ("v1/provinces", "stateProvinceCode", "stateProvinceDesc"),
+        "doctype": ("v1/doctypecode", "docTypeId", "docDescription"),
+        "hscode": ("v1/itemdesccode", "hS_CODE", "description"),
+        # §4: sroitemcode WITH a parameter answers the UoM list — a server-side bug. No parameters, ever.
+        "sroitem": ("v1/sroitemcode", "srO_ITEM_ID", "srO_ITEM_DESC"),
+        "transtype": ("v1/transtypecode", "transactioN_TYPE_ID", "transactioN_DESC"),
+        "uom": ("v1/uom", "uoM_ID", "description"),
+    }
+    for kind, (path, key_field, desc_field) in plans.items():
+        if kinds and kind not in kinds:
+            continue
+        rows = _get(f"{GW}/pdi/{path}", token)
+        FBRLookup.objects.filter(kind=kind).delete()
+        FBRLookup.objects.bulk_create([
+            FBRLookup(tenant_id=get_current_tenant().id, kind=kind, key=str(r.get(key_field, "")),
+                      description=str(r.get(desc_field, ""))[:500])
+            for r in rows if r.get(key_field) is not None
+        ], batch_size=1000)
+        done[kind] = len(rows)
+    return done
+
+
+def _ref_date(d=None) -> str:
+    """§4: the parametric lookups want DD-MMM-YYYY; an ISO date answers HTTP 500 with no body."""
+    return (d or date.today()).strftime("%d-%b-%Y")
+
+
+def rates_for(trans_type_id, on_date=None):
+    cached = list(FBRLookup.objects.filter(kind="rate", parent_key=str(trans_type_id)))
+    if cached:
+        return cached
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    rows = _get(f"{GW}/pdi/v2/SaleTypeToRate", token,
+                {"date": _ref_date(on_date), "transTypeId": trans_type_id, "originationSupplier": 1})
+    out = [FBRLookup.objects.create(kind="rate", key=str(r["ratE_ID"]), description=str(r["ratE_DESC"])[:500],
+                                    parent_key=str(trans_type_id), meta={"rate_value": r.get("ratE_VALUE")})
+           for r in rows]
+    return out
+
+
+def schedules_for(rate_id, on_date=None):
+    cached = list(FBRLookup.objects.filter(kind="sroschedule", parent_key=str(rate_id)))
+    if cached:
+        return cached
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    rows = _get(f"{GW}/pdi/v1/SroSchedule", token,
+                {"rate_id": rate_id, "date": _ref_date(on_date), "origination_supplier_csv": 1})
+    return [FBRLookup.objects.create(kind="sroschedule", key=str(r["srO_ID"]), description=str(r["srO_DESC"])[:500],
+                                     parent_key=str(rate_id), meta={"serNo": r.get("serNo")})
+            for r in rows]          # empty is NORMAL: no SRO applies
+
+
+def uoms_for_hs(hs_code):
+    cached = list(FBRLookup.objects.filter(kind="hs_uom", parent_key=str(hs_code)))
+    if cached:
+        return cached
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    rows = _get(f"{GW}/pdi/v2/HS_UOM", token, {"hs_code": hs_code, "annexure_id": 3})
+    return [FBRLookup.objects.create(kind="hs_uom", key=str(r["uoM_ID"]), description=str(r["description"])[:500],
+                                     parent_key=str(hs_code))
+            for r in rows]
+
+
+def check_registration(reg_no):
+    """Get_Reg_Type: set the buyer's registration type from FBR, not from a guess."""
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    r = requests.post(f"{GW}/dist/v1/Get_Reg_Type", headers=_headers(token),
+                      json={"Registration_No": engine.trim_ntn(reg_no)}, timeout=REF_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+# ── the payload, from a DMS invoice (§7) ────────────────────────────────────────────────────────────
+def build_payload(inv, filing, *, use_sandbox):
+    items = []
+    for line in inv.lines.select_related("variant__product"):
+        p = line.variant.product if line.variant_id else None
+        if p is None or not (p.fbr_hs_code and p.fbr_rate_desc and p.fbr_sale_type):
+            raise DomainError(f"{line.description} is not FBR-classified — set HS code, sale type and "
+                              "rate on the product first.", code="fbr_not_ready")
+        mrp = p.mrp_ex_tax if engine.is_mrp_sale_type(p.fbr_sale_type) else None
+        money = engine.compute_line(
+            quantity=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
+            rate_str=p.fbr_rate_desc, sale_type=p.fbr_sale_type, mrp=mrp,
+            further_rate=0, withheld_rate=0,
+        )
+        items.append({
+            "hsCode": p.fbr_hs_code,
+            "productDescription": engine.fbr_text((p.name or "").strip() or line.description),  # §11.3
+            "rate": p.fbr_rate_desc,
+            "uoM": p.fbr_uom or "Numbers, pieces, units",
+            "quantity": float(line.qty),
+            "totalValues": engine._f(money["totalValues"]),
+            "valueSalesExcludingST": engine._f(money["valueSalesExcludingST"]),
+            "fixedNotifiedValueOrRetailPrice": engine._f(mrp or 0) if mrp else 0.0,   # 0.00 unless 3rd Schedule
+            "salesTaxApplicable": engine._f(money["salesTaxApplicable"]),
+            "salesTaxWithheldAtSource": engine._f(money["salesTaxWithheldAtSource"]),
+            "extraTax": engine._f(money["extraTax"]) if money["extraTax"] else "",    # "" when zero — §7.2
+            "furtherTax": engine._f(money["furtherTax"]),
+            "sroScheduleNo": p.fbr_sro_schedule or "",
+            "fedPayable": engine._f(money["fedPayable"]),
+            "discount": engine._f(money["discount"]),
+            "saleType": p.fbr_sale_type,
+            "sroItemSerialNo": p.fbr_sro_item or "",
+        })
+    payload = {
+        "invoiceType": "Sale Invoice",
+        "invoiceDate": inv.date.strftime("%Y-%m-%d"),     # ISO here, UNLIKE the reference APIs
+        "sellerNTNCNIC": engine.trim_ntn(filing.seller_ntn_cnic),
+        "sellerBusinessName": engine.fbr_text(filing.seller_business_name),
+        "sellerProvince": engine.fbr_province(filing.seller_province),
+        "sellerAddress": engine.fbr_text(filing.seller_address),
+        "buyerNTNCNIC": engine.trim_ntn(filing.buyer_ntn_cnic),
+        "buyerBusinessName": engine.fbr_text(filing.buyer_business_name),
+        "buyerProvince": engine.fbr_province(filing.buyer_province),
+        "buyerAddress": engine.fbr_text(filing.buyer_address),
+        "buyerRegistrationType": filing.buyer_registration_type or "Unregistered",
+        "invoiceRefNo": "0",
+        "items": engine.combine_duplicate_lines(items),   # §7.4 — unconditionally
+    }
+    if use_sandbox:                                        # §7.3: absent entirely in production
+        first = payload["items"][0] if payload["items"] else {}
+        payload["scenarioId"] = engine.scenario_for(first.get("saleType", ""), payload["buyerRegistrationType"])
+    return payload
+
+
+def refresh_snapshot(inv) -> FBRFiling:
+    """§8.1: refresh seller/buyer onto the filing right before building — then it freezes at submit."""
+    fbr = settings_for()
+    filing, _ = FBRFiling.objects.get_or_create(invoice=inv)
+    if filing.status == "submitted":
+        raise DomainError("This invoice is already filed with FBR — correct it with a credit note.", code="fbr_submitted")
+    c = inv.customer
+    filing.seller_ntn_cnic = fbr.ntn or fbr.cnic or ""
+    filing.seller_business_name = fbr.business_name
+    filing.seller_province = fbr.province
+    filing.seller_address = fbr.address
+    filing.buyer_ntn_cnic = (c.ntn or c.cnic or "").strip()
+    filing.buyer_business_name = c.business_name or c.name
+    filing.buyer_province = getattr(c, "province", "") or ""
+    filing.buyer_address = " ".join(filter(None, [c.address, c.city]))
+    filing.buyer_registration_type = c.fbr_registration_type or "Unregistered"
+    filing.save()
+    if not filing.seller_ntn_cnic or not filing.seller_business_name or not filing.seller_address:
+        raise DomainError("Fill the seller identity under Settings → FBR first (NTN, business name, address).",
+                          code="fbr_seller_incomplete")
+    if not filing.buyer_ntn_cnic:
+        # §5.2: an FBR invoice must name the buyer by NTN or CNIC; an unregistered consumer's CNIC is fine
+        raise DomainError(f"{filing.buyer_business_name} has no NTN or CNIC on file, and FBR files an "
+                          "invoice under the buyer's number. Add one on the customer.", code="fbr_no_buyer_id")
+    return filing
+
+
+def _call(url, token, payload):
+    try:
+        resp = requests.post(url, json=payload, headers=_headers(token), timeout=TX_TIMEOUT)
+    except requests.exceptions.Timeout:
+        raise DomainError("FBR did not answer within 30 seconds — try again shortly.", code="fbr_timeout")
+    except requests.exceptions.ConnectionError as e:
+        raise DomainError(f"Could not reach FBR's gateway: {e}", code="fbr_unreachable")
+    return engine.parse_fbr_response(resp)
+
+
+def validate(inv, actor=None):
+    """Dry run — identical payload, records nothing at FBR, catches classification errors for free."""
+    fbr = settings_for()
+    token, sandbox = _require_token(fbr)
+    filing = refresh_snapshot(inv)
+    payload = build_payload(inv, filing, use_sandbox=sandbox)
+    filing.last_payload = json.dumps(payload, ensure_ascii=False)
+    filing.sandbox = sandbox
+    filing.save(update_fields=["last_payload", "sandbox", "updated_at"])   # §8.2: payload BEFORE the call
+    data, vr = _call(VALIDATE_URL[sandbox], token, payload)
+    filing.validate_response = json.dumps(data, ensure_ascii=False)[:20000]
+    filing.validate_code = str(vr.get("statusCode", ""))
+    filing.validated_at = timezone.now()
+    ok = vr.get("statusCode") == "00"
+    filing.status = "validated" if ok else "failed"
+    filing.error_text = "" if ok else engine.errors_of(vr)
+    filing.save()
+    AuditService.log("fbr.validated" if ok else "fbr.validate_failed", inv,
+                     after={"code": filing.validate_code, "error": filing.error_text[:300]}, actor=actor)
+    if not ok:
+        raise DomainError(f"FBR refused the invoice: {filing.error_text}", code="fbr_rejected")
+    return filing
+
+
+def submit(inv, actor=None):
+    """Post for real. Only a validated filing may post (§8), and a submitted one is immutable."""
+    fbr = settings_for()
+    token, sandbox = _require_token(fbr)
+    filing = FBRFiling.objects.filter(invoice=inv).first()
+    if filing is None or filing.status != "validated" or filing.sandbox != sandbox:
+        raise DomainError("Validate with FBR first — posting without a passed validation burns rejections.",
+                          code="fbr_not_validated")
+    payload = json.loads(filing.last_payload)
+    data, vr = _call(POST_URL[sandbox], token, payload)
+    filing.response = json.dumps(data, ensure_ascii=False)[:20000]
+    filing.response_code = str(vr.get("statusCode", ""))
+    ok = vr.get("statusCode") == "00"
+    if ok:
+        filing.fbr_invoice_number = data.get("invoiceNumber", "")
+        filing.submitted_at = timezone.now()
+        filing.status = "submitted"
+        filing.error_text = ""
+    else:
+        filing.status = "failed"
+        filing.error_text = engine.errors_of(vr)
+    filing.save()
+    AuditService.log("fbr.submitted" if ok else "fbr.submit_failed", inv,
+                     after={"number": filing.fbr_invoice_number, "error": filing.error_text[:300]}, actor=actor)
+    if not ok:
+        raise DomainError(f"FBR refused the invoice: {filing.error_text}", code="fbr_rejected")
+    return filing
