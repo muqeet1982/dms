@@ -138,3 +138,83 @@ def test_a_lines_typed_tax_pct_beats_product_and_invoice(api, tenant, taxed_worl
 
     cleared = api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line_id, "tax_pct": ""}]}, format="json")
     assert Decimal(cleared.data["tax1_total"]) == Decimal("150")  # back to the product's 25%
+
+
+def test_reopen_reverses_everything_and_reposting_rebuilds_it(api, tenant, taxed_world):
+    """The owner edits a POSTED invoice the book-true way: reopen reverses posting, COGS, claims and
+    net-offs; re-posting rebuilds them from the corrected figures."""
+    from decimal import Decimal as D
+
+    from apps.sales.models import DiscountContribution
+
+    wh, cust, v, tt = taxed_world
+    with tenant_context(tenant, tenant.owner):
+        DiscountContribution.objects.get_or_create(total_pct=D("5"), defaults={"distributor_pct": D("3"), "company_pct": D("2")})
+        tenant.settings["claim_settlement"] = "auto_net_off"
+        tenant.save(update_fields=["settings"])
+        cust.default_discount_pct = D("5")
+        cust.save(update_fields=["default_discount_pct"])
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert inv["status"] == "posted" and D(inv["discount"]) == D("30")  # 600 × 5%
+
+    with tenant_context(tenant, tenant.owner):
+        from apps.accounting.services import ReportQueries, account_for
+
+        recv = account_for("manufacturer_claim", "company_claim")
+        assert ReportQueries.account_balance(recv) == 0  # auto-netted
+
+    r = api.post(f"/api/v1/invoices/{inv['id']}/reopen", {"reason": "price typo"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "draft", r.content
+    with tenant_context(tenant, tenant.owner):
+        from apps.accounting.services import ReportQueries, account_for
+        from apps.sales.models import CompanyClaim, SalesInvoice
+
+        assert not CompanyClaim.objects.filter(invoice_id=inv["id"]).exclude(status="cancelled").exists()
+        # every head this invoice touched is flat again
+        for role, doc in (("sales", "sales_invoice"), ("discount", "sales_invoice"),
+                          ("manufacturer_incentive", "company_claim"), ("manufacturer_claim", "company_claim")):
+            assert ReportQueries.account_balance(account_for(role, doc)) == 0, role
+
+    line = r.data["lines"][0]
+    api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line["id"], "unit_price": "200"}]}, format="json")
+    posted = api.post(f"/api/v1/invoices/{inv['id']}/post", {}, format="json")
+    assert posted.status_code == 200, posted.content
+    with tenant_context(tenant, tenant.owner):
+        from apps.accounting.services import ReportQueries, account_for
+        from apps.sales.models import CompanyClaim, SalesInvoice
+
+        fresh = SalesInvoice.objects.get(id=inv["id"])
+        assert fresh.subtotal == D("800") and fresh.journal_id  # 4 × 200
+        assert CompanyClaim.objects.filter(invoice=fresh, status="paid").exists()  # re-raised and re-netted
+        assert -ReportQueries.account_balance(account_for("sales", "sales_invoice")) == D("800")
+
+
+def test_reopen_is_the_owners_unless_granted_and_paid_refuses(api, tenant, taxed_world):
+    from apps.accounts.services import RoleService, UserService
+    from rest_framework.test import APIClient
+
+    wh, cust, v, tt = taxed_world
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+
+    with tenant_context(tenant, tenant.owner):
+        role = RoleService.create_role(tenant, "Biller", ["sales.view_invoice"], role_type="internal")
+        UserService.create_tenant_user(tenant, "Biller", email="bill@probe.pk", password="Abcd-1234", roles=[role], warehouses=[])
+        from apps.accounts.models import User
+
+        User.objects.filter(email="bill@probe.pk").update(must_change_password=False)
+    c = APIClient()
+    login = c.post("/api/v1/auth/login", {"identifier": "bill@probe.pk", "password": "Abcd-1234"}, format="json")
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}", HTTP_X_TENANT_ID=str(tenant.id))
+    refused = c.post(f"/api/v1/invoices/{inv['id']}/reopen", {}, format="json")
+    assert refused.status_code == 403, refused.content
+
+    # money received blocks even the owner
+    api.post("/api/v1/accounting/payments", {"direction": "in", "partner_type": "customer", "partner_id": str(cust.id),
+                                             "amount": "100", "method": "cash",
+                                             "allocations": [{"document_type": "sales_invoice", "document_id": inv["id"], "amount": "100"}]}, format="json")
+    blocked = api.post(f"/api/v1/invoices/{inv['id']}/reopen", {}, format="json")
+    assert blocked.status_code in (400, 422) and "receipt" in str(blocked.data).lower() or blocked.status_code in (400, 422)

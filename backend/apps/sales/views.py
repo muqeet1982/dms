@@ -297,6 +297,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "post": "sales.add_invoice",  # belt and braces: any POST reaching this viewset needs the same right
         "discount": extra_perm("invoices", "discount"),
         "tax": extra_perm("invoices", "discount"),  # the tax switch rides on the same right as the discount one
+        "reopen": "sales.view_invoice",  # the real gate is inside: owner, or the matrix's edit-posted switch
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
@@ -381,6 +382,15 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         inv = self.get_object()
         InvoiceService.set_discount(inv, action=request.data.get("action", "remove"), percent=request.data.get("percent"), actor=request.user)
         return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=["post"])
+    def reopen(self, request, pk=None):
+        """Posted → draft by reversing everything it booked — the owner's call, or a role holding the switch."""
+        m = self.request.membership
+        if not (m.is_owner or m.has_perm("sales.edit_posted_invoice")):
+            raise DomainError("Only the owner can reopen a posted invoice for editing.", status_code=403)
+        inv = InvoiceService.reopen(self.get_object(), reason=request.data.get("reason", ""), actor=request.user)
+        return Response(self.get_serializer(inv).data)
 
     @action(detail=True, methods=["post"])
     def tax(self, request, pk=None):

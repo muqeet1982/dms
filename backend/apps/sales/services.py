@@ -823,7 +823,16 @@ class InvoiceService:
             total = sum((amt for _, _, amt in items), Decimal("0"))
             if total <= 0:
                 continue
-            claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=row.company_pct, total=total)
+            # a reopened invoice re-posts onto the SAME row (one claim per invoice×supplier): the cancelled
+            # claim revives with the corrected figures instead of colliding with itself
+            claim = CompanyClaim.objects.filter(invoice=inv, supplier=supplier).first()
+            if claim is not None:
+                claim.date, claim.discount_pct, claim.company_pct, claim.total = inv.date, inv.discount_pct, row.company_pct, total
+                claim.status, claim.paid_amount = "posted", Decimal("0")
+                claim.save(update_fields=["date", "discount_pct", "company_pct", "total", "status", "paid_amount", "updated_at"])
+                claim.lines.all().delete()
+            else:
+                claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=row.company_pct, total=total)
             for _, line, amt in items:
                 CompanyClaimLine.objects.create(claim=claim, variant=line.variant, qty=line.qty, base_amount=q4(line.qty * line.unit_price), company_amount=amt)
             claim.journal = PostingService.post_company_claim(claim)
@@ -850,6 +859,39 @@ class InvoiceService:
                 OrderService._set(order, "invoiced", "invoiced")
         AuditService.log("status.posted", inv, after={"total": str(inv.total), "journal": inv.journal.number if inv.journal else None})
         emit("invoice.created", invoice=inv)
+        return inv
+
+    @staticmethod
+    @transaction.atomic
+    def reopen(inv, *, reason="", actor=None):
+        """
+        Edit a POSTED invoice the way books allow it (owner, 24 Oct 2026): nothing is mutated behind the
+        ledger. Every journal this invoice put on the books — its posting, its COGS, its manufacturer
+        claims and their net-offs — is reversed; the claims are cancelled; the invoice stands at draft
+        again with its figures free to correct; posting it re-books everything from the corrected numbers,
+        claims included. Money already received blocks it: remove the receipts first, or use a credit note.
+        """
+        from apps.accounting.models import JournalEntry
+        from apps.accounting.services import PostingService
+
+        if inv.status == "draft":
+            return inv
+        if inv.status == "cancelled":
+            raise DomainError("A cancelled invoice cannot be reopened — raise a fresh invoice.")
+        if inv.paid_amount > 0 or inv.status in ("partially_paid", "paid"):
+            raise DomainError("Money has been received against this invoice — remove the receipts first, or correct it with a credit note.", code="has_payments")
+        memo = f"Invoice {inv.number} reopened for editing"
+        for claim in inv.company_claims.exclude(status="cancelled"):
+            for je in JournalEntry.objects.filter(source_type="CompanyClaim", source_id=str(claim.pk), status="posted"):
+                PostingService.reverse(je, memo=memo)
+            claim.status, claim.paid_amount = "cancelled", Decimal("0")
+            claim.save(update_fields=["status", "paid_amount", "updated_at"])
+        for je in JournalEntry.objects.filter(source_type="SalesInvoice", source_id=str(inv.pk), status="posted"):
+            PostingService.reverse(je, memo=memo)
+        inv.journal = None
+        inv.status = "draft"
+        inv.save(update_fields=["journal", "status", "updated_at"])
+        AuditService.log("invoice.reopened", inv, after={"reason": reason}, actor=actor)
         return inv
 
     @staticmethod

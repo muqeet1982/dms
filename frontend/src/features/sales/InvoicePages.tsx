@@ -39,13 +39,14 @@ export function InvoicesPage() {
 export function InvoiceDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { can } = usePerms();
+  const { can, isOwner } = usePerms();
   const page = usePage("invoices");
   const creditNotes = usePage("credit_notes");
   const q = useDoc("/api/v1/invoices", id);
   const pays = useQuery({ queryKey: ["invoice-payments", id], queryFn: () => api.get(`/api/v1/invoices/${id}/payments`), enabled: Boolean(id) });
   const { run, busy } = useAction("/api/v1/invoices", id);
   const [cancel, setCancel] = useState(false);
+  const [reopen, setReopen] = useState(false);
   const contribs = useQuery({ queryKey: ["crud", "/api/v1/settings/discount-contributions"], queryFn: () => api.get("/api/v1/settings/discount-contributions", { page_size: 100 }), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
@@ -70,6 +71,7 @@ export function InvoiceDetailPage() {
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
+          {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
           {inv.status === "draft" && page.can("discount") && (inv.force_tax_type
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item taxes at its product's own Tax %" onClick={() => run("tax", { apply: true }, { success: "Tax on — each item at its product's Tax %" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
@@ -144,6 +146,7 @@ export function InvoiceDetailPage() {
           </> : <div className="col-12"><Alert kind="info">The amounts cannot be changed here. This invoice is already in the ledger and owed by the customer, so a wrong figure is corrected with a <strong>credit note</strong>, which the customer also receives.</Alert></div>}
         </div>}
       </Modal>
+      <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); }} />
       <ConfirmDialog open={cancel} title="Cancel invoice" withReason danger confirmText="Cancel invoice" onClose={() => setCancel(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancel(false); }} />
     </>
   );
