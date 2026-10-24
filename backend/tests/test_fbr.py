@@ -105,7 +105,9 @@ def _taxed_invoice(api, tenant):
             fbr_sale_type="Goods at standard rate (default)", fbr_rate_desc="18%")
         cust.cnic = "35202-1234567-1"
         cust.business_name = "Salon One Traders"
-        cust.save(update_fields=["cnic", "business_name"])
+        cust.address, cust.city, cust.province = "Mall Road", "Lahore", "Punjab"
+        cust.fbr_registration_type = "Unregistered"
+        cust.save(update_fields=["cnic", "business_name", "address", "city", "province", "fbr_registration_type"])
         from apps.fbr.models import FBRSettings
 
         FBRSettings.objects.create(ntn="1234567-8", business_name="DEMO DISTRIBUTORS",
@@ -196,3 +198,40 @@ def test_scenario_runner_swaps_seller_only_and_records_the_run(api, tenant):
     again = api.get("/api/v1/fbr/scenarios")
     sn2 = next(r for r in again.data["results"] if r["scenario_id"] == "SN002")
     assert sn2["last"]["passed"] is True
+
+
+def test_party_preflight_lists_every_problem_and_the_vectors_hold(api, tenant):
+    from apps.partners.models import Customer
+
+    # buyer_tax_id precedence: NTN wins over CNIC; vectors from the party guide §7
+    assert engine.trim_ntn("") == ""
+    with tenant_context(tenant, tenant.owner):
+        from .conftest import seed_basic
+
+        seed_basic(tenant)
+        bad = Customer.objects.create(code="C-FBR", name="", business_name='AL-FALAH 3/4" PIPES',
+                                      province="", address="", city="")
+        bad.refresh_from_db()
+        assert '"' not in bad.business_name            # scrubbed at save: AL-FALAH 3/4'' PIPES
+        probs = engine.party_fbr_problems(bad)
+        assert len(probs) >= 3                          # id, province, address, reg type — all at once
+        assert any("NTN or CNIC" in p for p in probs)
+        assert any("Province" in p for p in probs)
+        assert any("Registration type" in p for p in probs)
+
+        good = Customer.objects.create(code="C-OK", name="Okay Store", business_name="Okay Traders",
+                                       cnic="35202-1234567-1", province="Punjab", address="Mall Road",
+                                       city="Lahore", fbr_registration_type="Unregistered")
+        assert engine.party_fbr_problems(good) == []
+
+
+def test_validate_reports_all_buyer_problems_in_one_breath(api, tenant):
+    inv = _taxed_invoice(api, tenant)
+    from apps.partners.models import Customer
+
+    with tenant_context(tenant, tenant.owner):
+        Customer.objects.update(cnic="", ntn="", province="", fbr_registration_type="")
+    r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+    assert r.status_code in (400, 422)
+    text = str(r.data)
+    assert "NTN or CNIC" in text and "Province" in text and "Registration type" in text

@@ -87,8 +87,22 @@ class FBRCheckRegistrationView(APIView):
     permission_classes = [IsTenantUser]
 
     def post(self, request):
+        from django.utils import timezone
+
+        from apps.partners.models import Customer
+
         data = services.check_registration(request.data.get("registration_no") or "")
-        return Response({"registration_type": data.get("REGISTRATION_TYPE", ""), "raw": data})
+        raw = (data.get("REGISTRATION_TYPE") or "").strip()
+        normalized = "Registered" if raw.lower() == "registered" else ("Unregistered" if raw else "")
+        # given a customer, FBR's answer is written onto it with the check time — never typed, never guessed
+        if request.data.get("customer_id") and normalized:
+            c = Customer.objects.filter(pk=request.data["customer_id"]).first()
+            if c is not None:
+                c.fbr_registration_type = normalized
+                c.fbr_reg_checked_at = timezone.now()
+                c.save(update_fields=["fbr_registration_type", "fbr_reg_checked_at", "updated_at"])
+                AuditService.log("fbr.reg_checked", c, after={"status": raw}, request=request)
+        return Response({"registration_type": normalized, "raw_status": raw})
 
 
 class FBRScenarioView(APIView):

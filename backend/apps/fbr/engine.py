@@ -203,3 +203,25 @@ def scenario_for(sale_type, reg_type) -> str:
     if s is None:
         s = "SN002" if "unregistered" in (reg_type or "").lower() else "SN001"
     return s
+
+
+# ── the party pre-flight (party guide §4): everything that would make a filing fail, ALL at once ────
+def party_fbr_problems(customer) -> list:
+    problems = []
+    name = (getattr(customer, "business_name", "") or getattr(customer, "name", "") or "").strip()
+    if not name:
+        problems.append("Business name is required.")
+    if '"' in name:
+        problems.append("Business name contains a double quote; FBR rejects the whole invoice.")
+    if not ((customer.ntn or "").strip() or (customer.cnic or "").strip()):
+        problems.append("No NTN or CNIC — FBR files the invoice under the buyer's number.")
+    province = (getattr(customer, "province", "") or "").strip()
+    if not province:
+        problems.append("Province is required.")
+    elif not fbr_province(province):
+        problems.append(f"Province '{province}' is not one FBR recognises.")
+    if not " ".join(filter(None, [customer.address or "", getattr(customer, "city", "") or ""])).strip():
+        problems.append("Address is required.")
+    if not (getattr(customer, "fbr_registration_type", "") or "").strip():
+        problems.append("Registration type is not set — use Check with FBR on the customer.")
+    return problems

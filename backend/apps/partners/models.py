@@ -130,8 +130,20 @@ class Customer(TenantModel):
                  ("Azad Jammu & Kashmir", "Azad Jammu & Kashmir"), ("Islamabad Capital Territory", "Islamabad Capital Territory")]
     province = models.CharField(max_length=40, blank=True, default="Punjab")
     # FBR: "Registered"/"Unregistered", set from Get_Reg_Type when checked — drives the DI payload's
-    # buyerRegistrationType and the sandbox scenario; guessing it wrong is a rejection
+    # buyerRegistrationType and the sandbox scenario; guessing it wrong is a rejection. The timestamp says
+    # when FBR last answered: a party's status can change, so the page offers a re-check, never trusts age.
     fbr_registration_type = models.CharField(max_length=30, blank=True, default="")
+    fbr_reg_checked_at = models.DateTimeField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        # FBR's gateway refuses ANY payload containing a double quote (guide §11.2) — scrub at the door,
+        # covering the form, the importer, the rep app and the shell alike, so the name on the invoice,
+        # the PDF and the filing stay identical
+        for field in ("name", "business_name"):
+            v = getattr(self, field, None)
+            if v and '"' in v:
+                setattr(self, field, v.replace('"', "''"))
+        return super().save(*args, **kwargs)
     gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     # how close a rep must be to take an order here; blank = the company's order_proximity_m (a kiosk and a

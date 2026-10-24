@@ -208,10 +208,10 @@ def refresh_snapshot(inv) -> FBRFiling:
     if not filing.seller_ntn_cnic or not filing.seller_business_name or not filing.seller_address:
         raise DomainError("Fill the seller identity under Settings → FBR first (NTN, business name, address).",
                           code="fbr_seller_incomplete")
-    if not filing.buyer_ntn_cnic:
-        # §5.2: an FBR invoice must name the buyer by NTN or CNIC; an unregistered consumer's CNIC is fine
-        raise DomainError(f"{filing.buyer_business_name} has no NTN or CNIC on file, and FBR files an "
-                          "invoice under the buyer's number. Add one on the customer.", code="fbr_no_buyer_id")
+    # the party pre-flight: every buyer problem in ONE message, not one per attempt
+    problems = engine.party_fbr_problems(c)
+    if problems:
+        raise DomainError(f"{filing.buyer_business_name or c.name}: " + " ".join(problems), code="fbr_buyer_problems")
     return filing
 
 

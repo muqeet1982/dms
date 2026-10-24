@@ -142,7 +142,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & terms", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
     { ...sec("Tax & terms", "ti-receipt"), name: "fbr_registration_type", label: "FBR registration", type: "custom", col: "col-md-4",
       hint: "drives the FBR tax invoice — check it with FBR rather than guessing",
-      render: (v, set, values) => <FBRRegTypeField value={v || ""} onChange={set} ntn={values.ntn} cnic={values.cnic} /> },
+      render: (v, set, values) => <FBRRegTypeField value={v || ""} onChange={set} ntn={values.ntn} cnic={values.cnic} customerId={values.id} /> },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
@@ -213,7 +213,7 @@ export function CustomerDetailPage() {
       </div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3">
         <InfoItem label="Code">{c.code}</InfoItem><InfoItem label="Type">{titleCase(c.type)}</InfoItem><InfoItem label="Contact">{c.contact_person || "—"}<div className="fs-12 text-muted">{c.phone} {c.phone2} {c.email}</div></InfoItem><InfoItem label="Address">{c.address || "—"}<div className="fs-12 text-muted">{c.city}</div></InfoItem>
-        <InfoItem label="Reps">{c.rep_names?.join(", ") || "—"}</InfoItem><InfoItem label="GPS">{c.gps_lat ? <><a href={`https://maps.google.com/?q=${c.gps_lat},${c.gps_lng}`} target="_blank" rel="noreferrer">{c.gps_lat}, {c.gps_lng}</a><div className="fs-12 text-muted">{pinStory(c)}</div></> : <span className="text-warning">No location yet — the rep can set it at the first visit</span>}</InfoItem><InfoItem label="Tax numbers">{Object.entries(c.tax_numbers || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}{c.tax_class_override_name && <div className="fs-12 text-muted">tax class {c.tax_class_override_name}</div>}</InfoItem><InfoItem label="Notes">{c.notes || "—"}</InfoItem>
+        <InfoItem label="Reps">{c.rep_names?.join(", ") || "—"}</InfoItem><InfoItem label="GPS">{c.gps_lat ? <><a href={`https://maps.google.com/?q=${c.gps_lat},${c.gps_lng}`} target="_blank" rel="noreferrer">{c.gps_lat}, {c.gps_lng}</a><div className="fs-12 text-muted">{pinStory(c)}</div></> : <span className="text-warning">No location yet — the rep can set it at the first visit</span>}</InfoItem><InfoItem label="Tax numbers">{Object.entries(c.tax_numbers || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}{c.tax_class_override_name && <div className="fs-12 text-muted">tax class {c.tax_class_override_name}</div>}</InfoItem><InfoItem label="FBR">{(c.fbr_problems || []).length === 0 ? <span className="text-success"><i className="ti ti-check me-1" />Ready for tax invoices{c.fbr_registration_type ? ` · ${c.fbr_registration_type}` : ""}{c.fbr_reg_checked_at ? <div className="fs-12 text-muted">checked {date(c.fbr_reg_checked_at)}</div> : null}</span> : <span className="text-warning" title={(c.fbr_problems || []).join(" ")}>{c.fbr_problems.length} issue(s) before a tax invoice can file<div className="fs-12 text-muted">{c.fbr_problems[0]}</div></span>}</InfoItem><InfoItem label="Notes">{c.notes || "—"}</InfoItem>
       </div></div></div>
       <div className="card"><div className="card-body">
         <Tabs tabs={[...(page.can("ledger") ? [{ key: "ledger", label: "Ledger" }, { key: "statement", label: "Statement & ageing" }] : []), { key: "orders", label: "Orders" }, { key: "invoices", label: "Invoices" }, { key: "attachments", label: "Documents" }, { key: "history", label: "History" }]} active={tab} onChange={setTab} />
@@ -253,7 +253,7 @@ export function RoutesPage() {
 
 /** "Registered" / "Unregistered" for FBR tax invoices — the Check button asks FBR's Get_Reg_Type for
  *  the customer's NTN/CNIC, because guessing it wrong is a filing rejection. */
-function FBRRegTypeField({ value, onChange, ntn, cnic }: { value: string; onChange: (v: string) => void; ntn?: string; cnic?: string }) {
+function FBRRegTypeField({ value, onChange, ntn, cnic, customerId }: { value: string; onChange: (v: string) => void; ntn?: string; cnic?: string; customerId?: string }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="d-flex gap-2">
@@ -267,7 +267,7 @@ function FBRRegTypeField({ value, onChange, ntn, cnic }: { value: string; onChan
         onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.post("/api/v1/fbr/check-registration", { registration_no: ntn || cnic });
+            const r = await api.post("/api/v1/fbr/check-registration", { registration_no: ntn || cnic, ...(customerId ? { customer_id: customerId } : {}) });
             if (r.registration_type) { onChange(r.registration_type); toast.success(`FBR says: ${r.registration_type}`); }
             else toast.error("FBR gave no answer for that number.");
           } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
