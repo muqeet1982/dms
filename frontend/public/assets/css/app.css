@@ -79,7 +79,7 @@ body.mini-sidebar.expand-menu .sidebar .sidebar-menu ul li.submenu.open > ul { d
   z-index: 3;
   width: 100%;
   height: auto;
-  min-height: 50px;
+  min-height: 62px;
   display: flex;
   align-items: center;
   background: #FFF;

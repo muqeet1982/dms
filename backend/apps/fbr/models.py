@@ -48,7 +48,8 @@ class FBRLookup(TenantModel):
              ("sroschedule", "SRO schedule"), ("rate", "Rate"), ("hs_uom", "UoM for HS code")]
     kind = models.CharField(max_length=12, choices=KINDS, db_index=True)
     key = models.CharField(max_length=60)            # FBR's id for the row (hS_CODE, ratE_ID, …)
-    description = models.CharField(max_length=500)
+    # TextField: FBR's tariff descriptions run past 500 chars, and a cut one reads as missing data (owner, 25 Oct 2026)
+    description = models.TextField()
     parent_key = models.CharField(max_length=60, blank=True, default="", db_index=True)
     meta = models.JSONField(default=dict, blank=True)  # e.g. {"rate_value": 18}
 

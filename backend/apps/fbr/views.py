@@ -84,7 +84,8 @@ class FBRLookupView(APIView):
             qs = FBRLookup.objects.filter(kind=kind)
             if q:
                 qs = qs.filter(description__icontains=q) | qs.filter(key__icontains=q)
-            rows = list(qs[:60])
+            # the classifier's dropdowns scroll, so give the whole match — a cut list reads as missing data
+            rows = list(qs.order_by("key")[:200])
         return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows]})
 
 

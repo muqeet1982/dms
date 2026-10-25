@@ -32,7 +32,7 @@ export function Sidebar({ sections, badges, open, onClose }: { sections: MenuSec
     <>
       <div className={`sidebar ${open ? "opened" : ""}`} id="sidebar">
         <div className="sidebar-logo">
-          <NavLink to="/" className="logo logo-normal">{logo ? <img src={logo} alt={brand} style={{ maxHeight: 36 }} /> : <span className="fw-bold text-primary fs-18">{brand}</span>}</NavLink>
+          <NavLink to="/" className="logo logo-normal">{logo ? <img src={logo} alt={brand} style={{ maxHeight: 48 }} /> : <span className="fw-bold text-primary fs-20">{brand}</span>}</NavLink>
           <NavLink to="/" className="logo-small"><span className="fw-bold text-primary fs-18">{brand.slice(0, 1)}</span></NavLink>
         </div>
         <div className="modern-profile p-3 pb-0">

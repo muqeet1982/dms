@@ -336,8 +336,8 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           <button type="button" className="btn btn-outline-secondary" onClick={() => setHsOpen((v) => !v)} title="Browse FBR's HS code list"><i className={`ti ${hsOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>
         </div>
         {hsOpen && (hs.data?.results?.length || 0) > 0 && (
-          <div className="border rounded mt-1" style={{ maxHeight: 160, overflowY: "auto" }}>
-            {hs.data.results.slice(0, 20).map((r: any) => (
+          <div className="border rounded mt-1" style={{ maxHeight: 240, overflowY: "auto" }}>
+            {hs.data.results.map((r: any) => (
               <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer border-bottom" onClick={() => { setField("fbr_hs_code", r.key); setField("fbr_uom", ""); setHsQ(r.key); setHsOpen(false); }}>
                 <strong>{r.key}</strong> — <strong>{r.description.split(" - ").map((x: string) => x.trim()).filter(Boolean).pop()}</strong>
                 <div className="text-muted fs-11">{r.description}</div>
@@ -392,8 +392,8 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           <button type="button" className="btn btn-outline-secondary" onClick={() => setSroOpen((v) => !v)} title="Browse FBR's SRO item list"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>
         </div>
         {sroOpen && (sroItems.data?.results?.length || 0) > 0 && (
-          <div className="border rounded mt-1" style={{ maxHeight: 150, overflowY: "auto" }}>
-            {sroItems.data.results.slice(0, 20).map((r: any) => (
+          <div className="border rounded mt-1" style={{ maxHeight: 240, overflowY: "auto" }}>
+            {sroItems.data.results.map((r: any) => (
               <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer border-bottom" onClick={() => { setField("fbr_sro_item", r.description); setSroQ(r.description); setSroOpen(false); }}>
                 {r.description}
               </div>))}

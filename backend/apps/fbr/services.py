@@ -81,7 +81,7 @@ def sync_reference(kinds=None):
         FBRLookup.objects.filter(kind=kind).delete()
         FBRLookup.objects.bulk_create([
             FBRLookup(tenant_id=get_current_tenant().id, kind=kind, key=str(r.get(key_field, "")),
-                      description=str(r.get(desc_field, ""))[:500])
+                      description=str(r.get(desc_field, "") or "").strip())
             for r in unique
         ], batch_size=1000)
         done[kind] = len(unique)
