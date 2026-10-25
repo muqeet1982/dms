@@ -80,8 +80,10 @@ def sync_reference(kinds=None):
             unique.append(r)
         FBRLookup.objects.filter(kind=kind).delete()
         FBRLookup.objects.bulk_create([
+            # verbatim, spaces and all: FBR ships ' 3rd Schedule Goods ' and friends (field-flow A1), the
+            # payload echoes the stored description, and every comparison in engine.py strips for itself
             FBRLookup(tenant_id=get_current_tenant().id, kind=kind, key=str(r.get(key_field, "")),
-                      description=str(r.get(desc_field, "") or "").strip())
+                      description=str(r.get(desc_field, "") or ""))
             for r in unique
         ], batch_size=1000)
         done[kind] = len(unique)
