@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -316,8 +316,15 @@ export function LocationsPage() {
 function FBRClassifier({ values, setField }: { values: any; setField: (k: string, v: any) => void }) {
   const [hsQ, setHsQ] = useState(values.fbr_hs_code || "");
   const [hsOpen, setHsOpen] = useState(false);
-  const [sroQ, setSroQ] = useState(values.fbr_sro_item || "");
+  const [sroQ, setSroQ] = useState("");
   const [sroOpen, setSroOpen] = useState(false);
+  const [sroActive, setSroActive] = useState(0);
+  const sroBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => sroBox.current && !sroBox.current.contains(e.target as Node) && setSroOpen(false);
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
   const look = (kind: string, parent?: string, q?: string) =>
     api.get("/api/v1/fbr/lookups", { kind, ...(parent ? { parent } : {}), ...(q ? { q } : {}) });
   const hs = useQuery({ queryKey: ["fbr-l", "hscode", hsQ, hsOpen], queryFn: () => look("hscode", undefined, hsQ.length >= 2 ? hsQ : undefined), enabled: hsOpen || hsQ.length >= 2 });
@@ -327,7 +334,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   const sros = useQuery({ queryKey: ["fbr-l", "sroschedule", values.fbr_rate_id], queryFn: () => look("sroschedule", values.fbr_rate_id), enabled: Boolean(values.fbr_rate_id) });
   // the chosen schedule narrows the item list (field-flow guide §8); without one the full list is searched
   const sroParent = (sros.data?.results || []).find((r: any) => r.description === values.fbr_sro_schedule)?.key;
-  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ.length >= 2 ? sroQ : undefined), enabled: sroOpen || sroQ.length >= 2 || Boolean(sroParent && !values.fbr_sro_item) });
+  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ || undefined), enabled: sroOpen || Boolean(sroParent && !values.fbr_sro_item) });
   // a handful of goods codes legitimately have no unit list (guide §4) — offer the full 44 units instead
   const noUnitList = Boolean(values.fbr_hs_code) && Boolean(uoms.data) && !(uoms.data?.results || []).length && !uoms.data?.hint && !String(values.fbr_hs_code).startsWith("98");
   const allUoms = useQuery({ queryKey: ["fbr-l", "uom"], queryFn: () => look("uom"), enabled: noUnitList });
@@ -362,7 +369,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   }, [sros.data, values.fbr_rate_id]);
   useEffect(() => {
     const rs = sroItems.data?.results || [];
-    if (sroParent && !values.fbr_sro_item && !sroQ && rs.length === 1) { setField("fbr_sro_item", rs[0].description); setSroQ(rs[0].description); }
+    if (sroParent && !values.fbr_sro_item && !sroQ && rs.length === 1) setField("fbr_sro_item", rs[0].description);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sroItems.data, sroParent]);
   return (
@@ -425,19 +432,39 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">SRO Item Serial No</div>
-        <div className="input-group">
-          <input className="form-control" placeholder="search FBR's SRO item list…" value={sroQ} onChange={(e) => { setSroQ(e.target.value); setSroOpen(true); }} onFocus={() => setSroOpen(true)} />
-          <button type="button" className="btn btn-outline-secondary" onClick={() => setSroOpen((v) => !v)} title="Browse FBR's SRO item list"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>
+        {/* the house searchable dropdown (EntitySelect's look and keys), fed by the lookup cache */}
+        <div className="entity-select" ref={sroBox}>
+          <div className="input-group">
+            <input className="form-control" placeholder={values.fbr_sro_item || "— Select SRO item —"}
+              value={sroOpen ? sroQ : values.fbr_sro_item || ""}
+              onFocus={() => { setSroOpen(true); setSroQ(""); setSroActive(0); }}
+              onChange={(e) => { setSroQ(e.target.value); setSroActive(0); if (!sroOpen) setSroOpen(true); }}
+              onKeyDown={(e) => {
+                if (!sroOpen) return;
+                const opts = sroItems.data?.results || [];
+                if (e.key === "ArrowDown") { e.preventDefault(); setSroActive((a) => Math.min(a + 1, opts.length - 1)); }
+                if (e.key === "ArrowUp") { e.preventDefault(); setSroActive((a) => Math.max(a - 1, 0)); }
+                if (e.key === "Enter" && opts[sroActive]) { e.preventDefault(); setField("fbr_sro_item", opts[sroActive].description); setSroQ(""); setSroOpen(false); }
+                if (e.key === "Escape") setSroOpen(false);
+              }}
+              autoComplete="off" />
+            {values.fbr_sro_item && !sroOpen
+              ? <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { setField("fbr_sro_item", ""); setSroQ(""); }} title="Clear"><i className="ti ti-x" /></button>
+              : <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { setSroOpen((v) => !v); setSroQ(""); }} title="Browse FBR's SRO item list"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>}
+          </div>
+          {sroOpen && (
+            <div className="es-menu">
+              {(sroItems.data?.results || []).map((r: any, i: number) => (
+                <div key={r.key} className={`es-item ${i === sroActive ? "active" : ""}`}
+                  onMouseDown={(e) => { e.preventDefault(); setField("fbr_sro_item", r.description); setSroQ(""); setSroOpen(false); }}
+                  onMouseEnter={() => setSroActive(i)}>
+                  {r.description}
+                </div>))}
+              {sroItems.data && (sroItems.data.results || []).length === 0 && (
+                <div className="es-item text-muted">{sroItems.data.hint || "No matches"}</div>)}
+              {!sroItems.data && sroItems.isFetching && <div className="es-item text-muted">Loading…</div>}
+            </div>)}
         </div>
-        {sroOpen && (sroItems.data?.results?.length || 0) > 0 && (
-          <div className="border rounded mt-1" style={{ maxHeight: 240, overflowY: "auto" }}>
-            {sroItems.data.results.map((r: any) => (
-              <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer border-bottom" onClick={() => { setField("fbr_sro_item", r.description); setSroQ(r.description); setSroOpen(false); }}>
-                {r.description}
-              </div>))}
-          </div>)}
-        {sroOpen && sroItems.data && (sroItems.data.results || []).length === 0 && (
-          <div className="form-text text-warning">{sroItems.data.hint || "SRO item list is empty — sync FBR reference data under Settings → FBR."}</div>)}
       </div>
       {third && <div className="col-md-3">
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
