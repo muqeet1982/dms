@@ -26,6 +26,14 @@ def _product_tax(tenant, variant, pct):
         Product.objects.filter(pk=variant.product_id).update(tax_pct=Decimal(str(pct)))
 
 
+def _product_fbr(tenant, variant, rate_str):
+    from apps.catalog.models import Product
+    from apps.core.tenancy import tenant_context as _tc
+
+    with _tc(tenant, tenant.owner):
+        Product.objects.filter(pk=variant.product_id).update(fbr_rate_desc=rate_str)
+
+
 @pytest.fixture
 def taxed_world(api, tenant):
     from django.utils import timezone
@@ -43,7 +51,7 @@ def taxed_world(api, tenant):
 
 def test_the_tax_switch_charges_every_line_and_books_the_ledger(api, tenant, taxed_world):
     wh, cust, v, tt = taxed_world
-    _product_tax(tenant, v, 18)
+    _product_fbr(tenant, v, "18%")
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -63,7 +71,7 @@ def test_the_tax_switch_charges_every_line_and_books_the_ledger(api, tenant, tax
 
 def test_the_switch_flips_both_ways_on_a_draft_and_refuses_posted(api, tenant, taxed_world):
     wh, cust, v, tt = taxed_world
-    _product_tax(tenant, v, 18)
+    _product_fbr(tenant, v, "18%")
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -83,11 +91,10 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
     from apps.sales.services import InvoiceService
 
     wh, cust, v, tt = taxed_world
-    _product_tax(tenant, v, 18)
     with tenant_context(tenant, tenant.owner):
         from apps.catalog.models import Product
 
-        Product.objects.filter(pk=v.product_id).update(fbr_hs_code="7306.3090")
+        Product.objects.filter(pk=v.product_id).update(fbr_hs_code="7306.3090", fbr_rate_desc="18%")
         cust.fbr_registration_type = "Unregistered"
         cust.save(update_fields=["fbr_registration_type"])
     oid = _issued_order(api, wh, cust, v)
@@ -109,23 +116,21 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         assert "FBR: Unregistered" in html
 
 
-def test_a_typed_rate_and_a_products_own_tax_pct_beat_the_standard(api, tenant, taxed_world):
-    from apps.catalog.models import Product
-
+def test_only_the_fbr_rate_counts_not_tax_pct_or_typed_percent(api, tenant, taxed_world):
+    """Owner, 25 Oct 2026: "no dated rate need. if tax on then use fbr rate via hs code." A product
+    Tax % or a typed invoice percent no longer makes a line taxable — only the FBR classification."""
     wh, cust, v, tt = taxed_world
+    _product_tax(tenant, v, 25)  # the old field is dead weight now
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
+    refused = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
+    assert refused.status_code in (400, 422), refused.content
+    assert "FBR" in str(refused.data)
 
-    # the owner types 10 — the invoice taxes at 10, not the type's 18
-    typed = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
-    assert Decimal(typed.data["tax1_total"]) == Decimal("60"), typed.content  # 600 × 10%
-
-    # the product's own Tax % beats the invoice's rate for its line
-    with tenant_context(tenant, tenant.owner):
-        Product.objects.filter(pk=v.product_id).update(tax_pct=Decimal("25"))
-    again = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
-    assert Decimal(again.data["tax1_total"]) == Decimal("150"), again.content  # 600 × 25%
+    _product_fbr(tenant, v, "17%")
+    on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert Decimal(on.data["tax1_total"]) == Decimal("102"), on.content  # 600 × FBR 17, not 25, not 10
 
 
 def test_a_lines_typed_tax_pct_beats_product_and_invoice(api, tenant, taxed_world):
@@ -133,7 +138,7 @@ def test_a_lines_typed_tax_pct_beats_product_and_invoice(api, tenant, taxed_worl
 
     wh, cust, v, tt = taxed_world
     with tenant_context(tenant, tenant.owner):
-        Product.objects.filter(pk=v.product_id).update(tax_pct=Decimal("25"))
+        Product.objects.filter(pk=v.product_id).update(fbr_rate_desc="25%")
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False, "apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -229,16 +234,16 @@ def test_reopen_is_the_owners_unless_granted_and_paid_refuses(api, tenant, taxed
     assert blocked.status_code in (400, 422) and "receipt" in str(blocked.data).lower() or blocked.status_code in (400, 422)
 
 
-def test_with_no_product_pct_the_types_dated_rate_catches_the_line(api, tenant, taxed_world):
-    """The silent-zero bug (owner, 25 Oct 2026): switch on, no Tax % on any product — the invoice
-    charged 0 and printed "Tax 0.00". The type's dated rate is the promised fallback."""
+def test_a_dated_rate_does_not_rescue_an_unclassified_product(api, tenant, taxed_world):
+    """Owner, 25 Oct 2026: "no dated rate need" — the type's dated 18% exists in this fixture, but an
+    unclassified product still refuses the switch; only the FBR classification makes a line taxable."""
     wh, cust, v, tt = taxed_world
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
-    assert on.status_code == 200, on.content
-    assert Decimal(on.data["tax1_total"]) == Decimal("108")  # 600 × the type's dated 18%
+    assert on.status_code in (400, 422), on.content
+    assert "FBR" in str(on.data)
 
 
 def test_the_fbr_rate_is_the_switchs_first_source(api, tenant, taxed_world):
@@ -286,7 +291,7 @@ def test_tax_on_with_no_rate_anywhere_refuses_with_directions(api, tenant):
     inv = made.data[0] if isinstance(made.data, list) else made.data
     r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
     assert r.status_code in (400, 422), r.content
-    assert "Settings" in str(r.data), r.data
+    assert "FBR" in str(r.data), r.data
     fresh = api.get(f"/api/v1/invoices/{inv['id']}")
     assert fresh.data["force_tax_type"] is None and Decimal(fresh.data["tax1_total"]) == 0
 
@@ -295,7 +300,7 @@ def test_a_credit_note_against_a_forced_invoice_reverses_the_charged_rate(api, t
     """A return against a tax-switch invoice must reverse the tax that was actually charged, not
     whatever the tax classes would say (they said nothing — that was the mismatch)."""
     wh, cust, v, tt = taxed_world
-    _product_tax(tenant, v, 18)
+    _product_fbr(tenant, v, "18%")
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data

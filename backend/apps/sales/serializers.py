@@ -121,9 +121,6 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
 class SalesOrderSerializer(SalesOrderListSerializer):
     lines = OrderLineSerializer(many=True)
-    # the company's dated sales-tax rate today: the invoice preview's fallback for lines whose product
-    # has neither its own Tax % nor an FBR rate (mirrors InvoiceService.forced_line_rate)
-    sales_tax_rate_today = serializers.SerializerMethodField()
     gps = serializers.SerializerMethodField()   # where the rep was standing when they took it
     confirmed_by_name = serializers.CharField(source="confirmed_by.full_name", read_only=True, default="")
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True, default="")
@@ -140,16 +137,8 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         days = getattr(obj.customer, "credit_days", 0) or 0
         return f"{days} days credit" if days else "Cash on delivery"
 
-    def get_sales_tax_rate_today(self, obj):
-        from django.utils import timezone
-
-        from apps.catalog.models import TaxType
-
-        tt = TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
-        return str(tt.rate_on(timezone.localdate())) if tt else None
-
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "sales_tax_rate_today", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
         read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
