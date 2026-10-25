@@ -78,15 +78,25 @@ class FBRLookupView(APIView):
                 # no token yet: an empty dropdown with the reason beats a silent one
                 return Response({"results": [], "hint": str(e.detail) if hasattr(e, "detail") else str(e)})
             return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows], "hint": hint})
-        if False:
-            pass
-        else:
-            qs = FBRLookup.objects.filter(kind=kind)
-            if q:
-                qs = qs.filter(description__icontains=q) | qs.filter(key__icontains=q)
-            # the classifier's dropdowns scroll, so give the whole match — a cut list reads as missing data
-            rows = list(qs.order_by("key")[:200])
-        return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows]})
+        if kind == "sroitem" and parent:
+            # the items of ONE schedule (field-flow guide §8); FBR's per-id endpoint is buggy for some
+            # ids, and a schedule we cannot resolve falls back to the full synced list
+            try:
+                rows = services.sroitems_for(parent)
+            except DomainError:
+                rows = []
+            if rows:
+                if q:
+                    ql = q.lower()
+                    rows = [r for r in rows if ql in r.description.lower() or ql in r.key.lower()]
+                return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows], "hint": hint})
+            hint = "FBR has no per-schedule item list for this schedule — searching the full SRO item list."
+        qs = FBRLookup.objects.filter(kind=kind, parent_key="")
+        if q:
+            qs = qs.filter(description__icontains=q) | qs.filter(key__icontains=q)
+        # the classifier's dropdowns scroll, so give the whole match — a cut list reads as missing data
+        rows = list(qs.order_by("key")[:200])
+        return Response({"results": [{"key": r.key, "description": r.description, "meta": r.meta} for r in rows], "hint": hint})
 
 
 class FBRCheckRegistrationView(APIView):

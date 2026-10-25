@@ -120,6 +120,33 @@ def schedules_for(rate_id, on_date=None):
             for r in rows]          # empty is NORMAL: no SRO applies
 
 
+def sroitems_for(sro_id, on_date=None):
+    """
+    The items inside one SRO schedule. FBR's `sroitemcode?sro_id=` is server-side buggy for some
+    ids (field-flow guide §14.4: wrong schedule's items, an empty list, or the UoM list shape), so a
+    response whose rows lack `srO_ITEM_ID` is discarded rather than cached, and the caller falls back
+    to the flat synced list.
+    """
+    cached = list(FBRLookup.objects.filter(kind="sroitem", parent_key=str(sro_id)))
+    if cached:
+        return cached
+    fbr = settings_for()
+    token, _sb = _require_token(fbr)
+    rows = _get(f"{GW}/pdi/v1/sroitemcode", token, {"date": _ref_date(on_date), "sro_id": sro_id})
+    good = [r for r in rows if isinstance(r, dict) and r.get("srO_ITEM_ID") is not None]
+    if not good:
+        return []
+    seen, out = set(), []
+    for r in good:
+        k = str(r["srO_ITEM_ID"])
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(FBRLookup.objects.create(kind="sroitem", key=k, parent_key=str(sro_id),
+                                            description=str(r.get("srO_ITEM_DESC", "") or "").strip()))
+    return out
+
+
 def uoms_for_hs(hs_code):
     """Empty for a 01–97 code means THE CODE IS WRONG (guide §5), never "no restriction";
     chapter 98 is a service heading, absent from the goods list, and takes the neutral unit."""

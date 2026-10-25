@@ -325,7 +325,12 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   const trans = useQuery({ queryKey: ["fbr-l", "transtype"], queryFn: () => look("transtype") });
   const rates = useQuery({ queryKey: ["fbr-l", "rate", values.fbr_trans_type_id], queryFn: () => look("rate", values.fbr_trans_type_id), enabled: Boolean(values.fbr_trans_type_id) });
   const sros = useQuery({ queryKey: ["fbr-l", "sroschedule", values.fbr_rate_id], queryFn: () => look("sroschedule", values.fbr_rate_id), enabled: Boolean(values.fbr_rate_id) });
-  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroQ, sroOpen], queryFn: () => look("sroitem", undefined, sroQ.length >= 2 ? sroQ : undefined), enabled: sroOpen || sroQ.length >= 2 });
+  // the chosen schedule narrows the item list (field-flow guide §8); without one the full list is searched
+  const sroParent = (sros.data?.results || []).find((r: any) => r.description === values.fbr_sro_schedule)?.key;
+  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ.length >= 2 ? sroQ : undefined), enabled: sroOpen || sroQ.length >= 2 || Boolean(sroParent && !values.fbr_sro_item) });
+  // a handful of goods codes legitimately have no unit list (guide §4) — offer the full 44 units instead
+  const noUnitList = Boolean(values.fbr_hs_code) && Boolean(uoms.data) && !(uoms.data?.results || []).length && !uoms.data?.hint && !String(values.fbr_hs_code).startsWith("98");
+  const allUoms = useQuery({ queryKey: ["fbr-l", "uom"], queryFn: () => look("uom"), enabled: noUnitList });
   const third = (values.fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods";
   // the cascade answers itself: each dropdown auto-selects what FBR's lists make obvious (owner, 25 Oct 2026)
   useEffect(() => {
@@ -355,6 +360,11 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
     if (values.fbr_rate_id && !values.fbr_sro_schedule && rs.length === 1) setField("fbr_sro_schedule", rs[0].description);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sros.data, values.fbr_rate_id]);
+  useEffect(() => {
+    const rs = sroItems.data?.results || [];
+    if (sroParent && !values.fbr_sro_item && !sroQ && rs.length === 1) { setField("fbr_sro_item", rs[0].description); setSroQ(rs[0].description); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sroItems.data, sroParent]);
   return (
     <div className="row g-2">
       <div className="col-md-4">
@@ -383,23 +393,23 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <div className="form-label fs-12 mb-1">FBR UoM</div>
         <select className="form-select" value={values.fbr_uom || ""} onChange={(e) => setField("fbr_uom", e.target.value)}>
           <option value="">—</option>
-          {(uoms.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
+          {((uoms.data?.results?.length ? uoms.data.results : allUoms.data?.results) || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
         </select>
         {Boolean(values.fbr_hs_code) && uoms.data && (uoms.data.results || []).length === 0 && !String(values.fbr_hs_code).startsWith("98") && (
           uoms.data.hint
             ? <div className="form-text text-warning">{uoms.data.hint}</div>
-            : <div className="text-danger fs-11 mt-1"><i className="ti ti-alert-circle me-1" />FBR allows no unit for this code — it is not a valid HS code; pick another.</div>)}
+            : <div className="form-text text-warning">FBR lists no unit for this code (a few goods codes have none) — pick the unit yourself; the code still files.</div>)}
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">FBR Sale Type</div>
-        <select className="form-select" value={values.fbr_trans_type_id || ""} onChange={(e) => { const r = (trans.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_trans_type_id", e.target.value); setField("fbr_sale_type", r?.description || ""); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); }}>
+        <select className="form-select" value={values.fbr_trans_type_id || ""} onChange={(e) => { const r = (trans.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_trans_type_id", e.target.value); setField("fbr_sale_type", r?.description || ""); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}>
           <option value="">{values.fbr_sale_type || "—"}</option>
           {(trans.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
         </select>
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">GST Rate</div>
-        <select className="form-select" value={values.fbr_rate_id || ""} onChange={(e) => { const r = (rates.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_rate_id", e.target.value); setField("fbr_rate_desc", r?.description || ""); setField("fbr_sro_schedule", ""); }}>
+        <select className="form-select" value={values.fbr_rate_id || ""} onChange={(e) => { const r = (rates.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_rate_id", e.target.value); setField("fbr_rate_desc", r?.description || ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}>
           <option value="">{values.fbr_rate_desc || "—"}</option>
           {(rates.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
         </select>
@@ -408,7 +418,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
       </div>
       <div className="col-md-4">
         <div className="form-label fs-12 mb-1">SRO Schedule No <span className="text-muted">(often none)</span></div>
-        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => setField("fbr_sro_schedule", e.target.value)}>
+        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => { setField("fbr_sro_schedule", e.target.value); setField("fbr_sro_item", ""); setSroQ(""); }}>
           <option value="">none</option>
           {(sros.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
         </select>
@@ -427,7 +437,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
               </div>))}
           </div>)}
         {sroOpen && sroItems.data && (sroItems.data.results || []).length === 0 && (
-          <div className="form-text text-warning">SRO item list is empty — sync FBR reference data under Settings → FBR.</div>)}
+          <div className="form-text text-warning">{sroItems.data.hint || "SRO item list is empty — sync FBR reference data under Settings → FBR."}</div>)}
       </div>
       {third && <div className="col-md-3">
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>

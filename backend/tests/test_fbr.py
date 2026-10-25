@@ -264,3 +264,33 @@ def test_hs_guide_vectors_sro_rule_dedupe_and_worked_example():
     # §9.1: the misleading error gains the real instruction
     hinted = engine.translate_error("HS Code does not match with provided sale type. Please refer…")
     assert "EXISTS in FBR" in hinted or "EXISTS" in hinted
+
+
+def test_sro_items_narrow_to_the_schedule_and_fall_back_when_fbr_cannot_answer(api, tenant, monkeypatch):
+    """Field-flow guide §8 + §14.4: the chosen schedule filters the item list; FBR's buggy per-id
+    answer (UoM-shaped rows) is discarded uncached, and with no answer the full list serves."""
+    from apps.core.tenancy import tenant_context
+    from apps.fbr import services
+    from apps.fbr.models import FBRLookup
+
+    with tenant_context(tenant, tenant.owner):
+        FBRLookup.objects.create(kind="sroitem", key="1", description="Flat item one")
+        FBRLookup.objects.create(kind="sroitem", key="2", description="Second flat")
+
+    # no token stored: the per-schedule fetch cannot run — the full list answers, and says why
+    r = api.get("/api/v1/fbr/lookups", {"kind": "sroitem", "parent": "369"})
+    assert r.status_code == 200 and len(r.data["results"]) == 2 and r.data["hint"]
+
+    monkeypatch.setattr(services, "_require_token", lambda fbr: ("tok", True))
+    monkeypatch.setattr(services, "_get", lambda *a, **k: [{"uoM_ID": 1, "description": "KG"}])
+    with tenant_context(tenant, tenant.owner):
+        assert services.sroitems_for("369") == []
+        assert FBRLookup.objects.filter(kind="sroitem", parent_key="369").count() == 0
+
+    monkeypatch.setattr(services, "_get", lambda *a, **k: [{"srO_ITEM_ID": 17, "srO_ITEM_DESC": "Only item"},
+                                                           {"srO_ITEM_ID": 17, "srO_ITEM_DESC": "Only item"}])
+    with tenant_context(tenant, tenant.owner):
+        rows = services.sroitems_for("369")
+        assert len(rows) == 1 and rows[0].description == "Only item", "duplicates collapse, the row caches"
+    r = api.get("/api/v1/fbr/lookups", {"kind": "sroitem", "parent": "369"})
+    assert [x["description"] for x in r.data["results"]] == ["Only item"]
