@@ -121,9 +121,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
     { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
     { ...sec("The shop", "ti-building-store"), name: "province", label: "Province", type: "select", col: "col-md-3", default: "Punjab", options: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Jammu & Kashmir", "Islamabad Capital Territory"].map((p) => ({ value: p, label: p })) },
-    { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-2", suffix: "days", hint: "refuse stock expiring sooner" },
+    { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-2 align-self-end", suffix: "days", hint: "refuse stock expiring sooner" },
     { ...sec("The shop", "ti-building-store"), name: "notes", label: "Notes", type: "textarea", col: "col-md-8" },
-    { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2" },
+    { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2 align-self-end" },
     { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
@@ -134,19 +134,15 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
         radius={values.order_radius_m} onRadiusChange={(m) => setField("order_radius_m", m)} /> },
     { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
 
-    { ...sec("Tax & FBR", "ti-receipt", "NTN or CNIC — one of the two is required. The FBR row matters only for customers who get tax invoices."), name: "ntn", label: "NTN", col: "col-md-3", mask: "ntn", placeholder: "1234567-8", maxLength: 9, alwaysValidate: true,
-      validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
+    { ...sec("Tax & FBR", "ti-receipt", "NTN or CNIC — one of the two is required. The FBR row matters only for customers who get tax invoices."), name: "ntn", label: "NTN", type: "custom", col: "col-md-4", alwaysValidate: true,
+      validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two"),
+      render: (v, set, values, setField) => <NTNWithFBRCheck value={v || ""} onChange={set} cnic={values.cnic} customerId={values.id} checkedAt={values.fbr_reg_checked_at} regType={values.fbr_registration_type} onRegType={(rt) => setField("fbr_registration_type", rt)} /> },
     { ...sec("Tax & FBR", "ti-receipt"), name: "cnic", label: "CNIC", col: "col-md-3", mask: "cnic", placeholder: "35202-1234567-1", maxLength: 15, alwaysValidate: true,
       validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two") },
     { ...sec("Tax & FBR", "ti-receipt"), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17, hint: "your records only — not sent to FBR" },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "filer_status", label: "ATL filer status", type: "select", options: [{ value: "unknown", label: "Not known" }, { value: "filer", label: "Filer" }, { value: "non_filer", label: "Non-filer (higher withholding)" }], default: "unknown", col: "col-md-3", hint: "filer and registered are different things" },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "FBR registration", type: "custom", col: "col-md-4",
-      hint: "drives the FBR tax invoice — check it with FBR rather than guessing",
-      render: (v, set, values) => <FBRRegTypeField value={v || ""} onChange={set} ntn={values.ntn} cnic={values.cnic} customerId={values.id} /> },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "tax_class_override", label: "Tax class override", type: "entity", endpoint: "/api/v1/settings/tax-classes", mapOption: (t) => ({ id: t.id, label: t.name }), col: "col-md-2", hint: "e.g. unregistered → further tax" },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "Registration Status", type: "select", col: "col-md-3",
+      options: [{ value: "", label: "Not set" }, { value: "Registered", label: "Registered" }, { value: "Unregistered", label: "Unregistered" }] },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
@@ -155,6 +151,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
 
     { ...sec("Opening balance", "ti-scale", "What they already owed when you started using DMS. Saving posts it to the ledger, so it shows in their statement and ageing.", true), name: "opening_balance", label: "Amount they owe", type: "money", col: "col-md-3", default: 0, prefix: "PKR" },
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
+    { ...sec("Opening balance", "ti-scale", undefined, true), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
+    { ...sec("Opening balance", "ti-scale", undefined, true), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
+    { ...sec("Opening balance", "ti-scale", undefined, true), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
 
   ];
 }
@@ -253,25 +252,27 @@ export function RoutesPage() {
 
 /** "Registered" / "Unregistered" for FBR tax invoices — the Check button asks FBR's Get_Reg_Type for
  *  the customer's NTN/CNIC, because guessing it wrong is a filing rejection. */
-function FBRRegTypeField({ value, onChange, ntn, cnic, customerId }: { value: string; onChange: (v: string) => void; ntn?: string; cnic?: string; customerId?: string }) {
+function NTNWithFBRCheck({ value, onChange, cnic, customerId, checkedAt, regType, onRegType }: {
+  value: string; onChange: (v: string) => void; cnic?: string; customerId?: string; checkedAt?: string; regType?: string; onRegType: (v: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
   return (
-    <div className="d-flex gap-2">
-      <select className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Not set</option>
-        <option value="Registered">Registered</option>
-        <option value="Unregistered">Unregistered</option>
-      </select>
-      <button type="button" className="btn btn-outline-secondary text-nowrap" disabled={busy || !(ntn || cnic)}
-        title={ntn || cnic ? "Ask FBR whether this NTN/CNIC is registered" : "Enter the NTN or CNIC first"}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            const r = await api.post("/api/v1/fbr/check-registration", { registration_no: ntn || cnic, ...(customerId ? { customer_id: customerId } : {}) });
-            if (r.registration_type) { onChange(r.registration_type); toast.success(`FBR says: ${r.registration_type}`); }
-            else toast.error("FBR gave no answer for that number.");
-          } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
-        }}><i className="ti ti-building-bank me-1" />Check with FBR</button>
-    </div>
+    <>
+      <div className="input-group">
+        <input className="form-control" placeholder="1234567-8" maxLength={9} value={value} onChange={(e) => onChange(e.target.value)} />
+        <button type="button" className="btn btn-outline-secondary text-nowrap" disabled={busy || !(value || cnic)}
+          title={value || cnic ? "Ask FBR whether this NTN/CNIC is registered" : "Enter the NTN or CNIC first"}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const r = await api.post("/api/v1/fbr/check-registration", { registration_no: value || cnic, ...(customerId ? { customer_id: customerId } : {}) });
+              if (r.registration_type) { onRegType(r.registration_type); setAnswer(r.registration_type); }
+              else setAnswer("no answer");
+            } catch (e: any) { setAnswer(e.message); } finally { setBusy(false); }
+          }}><i className="ti ti-building-bank me-1" />{busy ? "Checking…" : "Check with FBR"}</button>
+      </div>
+      {(answer || regType) && <div className={`fs-12 mt-1 fw-semibold ${(answer || regType) === "Registered" ? "text-success" : (answer || regType) === "Unregistered" ? "text-warning" : "text-danger"}`}>{answer || regType}</div>}
+    </>
   );
 }

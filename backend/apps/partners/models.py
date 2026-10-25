@@ -134,6 +134,10 @@ class Customer(TenantModel):
     # when FBR last answered: a party's status can change, so the page offers a re-check, never trusts age.
     fbr_registration_type = models.CharField(max_length=30, blank=True, default="")
     fbr_reg_checked_at = models.DateTimeField(null=True, blank=True)
+    # Advance income tax (Section 236G distributors/dealers/wholesalers, 236H retailers): a % of the
+    # invoice total, the party's own rate. It is charged on YOUR printed invoice and ledger — never part
+    # of the FBR DI payload (party guide §2.3).
+    advance_income_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
     def save(self, *args, **kwargs):
         # FBR's gateway refuses ANY payload containing a double quote (guide §11.2) — scrub at the door,

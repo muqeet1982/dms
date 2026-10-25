@@ -13,7 +13,6 @@ export const TENANT_MENU: MenuSection[] = [
       { label: "Sales", icon: "ti-shopping-cart-dollar", children: [
         { label: "Orders inbox", to: "/app/sales/inbox", page: "sales_inbox", badgeKey: "inbox" }, { label: "Sales orders", to: "/app/sales/orders", page: "sales_orders" },
         { label: "Invoices", to: "/app/sales/invoices", page: "invoices" }, { label: "Credit notes / returns", to: "/app/sales/credit-notes", page: "credit_notes" },
-        { label: "Company claims", to: "/app/sales/company-claims", page: "company_claims" },
         { label: "Rep collections", to: "/app/sales/rep-collections", page: "rep_collections" }, { label: "Rep settlements", to: "/app/sales/rep-settlements", page: "rep_settlements" },
       ] },
       { label: "Customers", icon: "ti-users-group", children: [
@@ -55,7 +54,10 @@ export const TENANT_MENU: MenuSection[] = [
         { label: "Cash & bank", to: "/app/accounting/bank", page: "bank_cash" }, { label: "Bank reconciliation", to: "/app/accounting/reconciliation", page: "reconciliation" },
         { label: "General ledger", to: "/app/accounting/general-ledger", page: "reports" }, { label: "Trial balance", to: "/app/accounting/trial-balance", page: "reports" }, { label: "Income statement", to: "/app/accounting/income-statement", page: "reports" }, { label: "Balance sheet", to: "/app/accounting/balance-sheet", page: "reports" },
       ] },
-      { label: "Reports", icon: "ti-chart-bar", to: "/app/reports", page: "reports" },
+      { label: "Reports", icon: "ti-chart-bar", children: [
+        { label: "All reports", to: "/app/reports", page: "reports" },
+        { label: "Company claims", to: "/app/sales/company-claims", page: "company_claims" },
+      ] },
     ],
   },
   {
