@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -327,6 +327,34 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   const sros = useQuery({ queryKey: ["fbr-l", "sroschedule", values.fbr_rate_id], queryFn: () => look("sroschedule", values.fbr_rate_id), enabled: Boolean(values.fbr_rate_id) });
   const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroQ, sroOpen], queryFn: () => look("sroitem", undefined, sroQ.length >= 2 ? sroQ : undefined), enabled: sroOpen || sroQ.length >= 2 });
   const third = (values.fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods";
+  // the cascade answers itself: each dropdown auto-selects what FBR's lists make obvious (owner, 25 Oct 2026)
+  useEffect(() => {
+    const rs = uoms.data?.results || [];
+    if (values.fbr_hs_code && rs.length && (!values.fbr_uom || !rs.some((r: any) => r.description === values.fbr_uom)))
+      setField("fbr_uom", rs[0].description); // FBR's allowed unit(s) for the code — the first is the unit to bill in
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uoms.data, values.fbr_hs_code]);
+  useEffect(() => {
+    const rs = trans.data?.results || [];
+    if (values.fbr_hs_code && !values.fbr_trans_type_id && !values.fbr_sale_type && rs.length) {
+      const std = rs.find((r: any) => /goods at standard rate/i.test(r.description));
+      if (std) { setField("fbr_trans_type_id", std.key); setField("fbr_sale_type", std.description); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trans.data, values.fbr_hs_code]);
+  useEffect(() => {
+    const rs = rates.data?.results || [];
+    if (values.fbr_trans_type_id && !values.fbr_rate_id && rs.length) {
+      const pick = rs.length === 1 ? rs[0] : rs.find((r: any) => String(r.description).trim() === "18%");
+      if (pick) { setField("fbr_rate_id", pick.key); setField("fbr_rate_desc", pick.description); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rates.data, values.fbr_trans_type_id]);
+  useEffect(() => {
+    const rs = sros.data?.results || [];
+    if (values.fbr_rate_id && !values.fbr_sro_schedule && rs.length === 1) setField("fbr_sro_schedule", rs[0].description);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sros.data, values.fbr_rate_id]);
   return (
     <div className="row g-2">
       <div className="col-md-4">

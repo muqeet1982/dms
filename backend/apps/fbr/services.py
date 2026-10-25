@@ -101,7 +101,7 @@ def rates_for(trans_type_id, on_date=None):
     token, _sb = _require_token(fbr)
     rows = _get(f"{GW}/pdi/v2/SaleTypeToRate", token,
                 {"date": _ref_date(on_date), "transTypeId": trans_type_id, "originationSupplier": 1})
-    out = [FBRLookup.objects.create(kind="rate", key=str(r["ratE_ID"]), description=str(r["ratE_DESC"])[:500],
+    out = [FBRLookup.objects.create(kind="rate", key=str(r["ratE_ID"]), description=str(r["ratE_DESC"]).strip(),
                                     parent_key=str(trans_type_id), meta={"rate_value": r.get("ratE_VALUE")})
            for r in rows]
     return out
@@ -115,7 +115,7 @@ def schedules_for(rate_id, on_date=None):
     token, _sb = _require_token(fbr)
     rows = _get(f"{GW}/pdi/v1/SroSchedule", token,
                 {"rate_id": rate_id, "date": _ref_date(on_date), "origination_supplier_csv": 1})
-    return [FBRLookup.objects.create(kind="sroschedule", key=str(r["srO_ID"]), description=str(r["srO_DESC"])[:500],
+    return [FBRLookup.objects.create(kind="sroschedule", key=str(r["srO_ID"]), description=str(r["srO_DESC"]).strip(),
                                      parent_key=str(rate_id), meta={"serNo": r.get("serNo")})
             for r in rows]          # empty is NORMAL: no SRO applies
 
@@ -133,7 +133,7 @@ def uoms_for_hs(hs_code):
     fbr = settings_for()
     token, _sb = _require_token(fbr)
     rows = _get(f"{GW}/pdi/v2/HS_UOM", token, {"hs_code": hs_code, "annexure_id": 3})
-    return [FBRLookup.objects.create(kind="hs_uom", key=str(r["uoM_ID"]), description=str(r["description"])[:500],
+    return [FBRLookup.objects.create(kind="hs_uom", key=str(r["uoM_ID"]), description=str(r["description"]).strip(),
                                      parent_key=str(hs_code))
             for r in rows]
 
