@@ -31,7 +31,7 @@ export const TENANT_MENU: MenuSection[] = [
   {
     title: "INVENTORY", items: [
       { label: "Products", icon: "ti-package", children: [
-        { label: "All products", to: "/app/catalog/products", page: "products" }, { label: "Categories", to: "/app/catalog/categories", page: "categories" }, { label: "Brands", to: "/app/catalog/brands", page: "brands" }, { label: "Units", to: "/app/catalog/uoms", page: "uoms" },
+        { label: "All products", to: "/app/catalog/products", page: "products" }, { label: "Date-wise discounts", to: "/app/catalog/discounts", page: "products" }, { label: "Categories", to: "/app/catalog/categories", page: "categories" }, { label: "Brands", to: "/app/catalog/brands", page: "brands" }, { label: "Units", to: "/app/catalog/uoms", page: "uoms" },
         { label: "Price lists", to: "/app/catalog/price-lists", page: "price_lists" }, { label: "Schemes & discounts", to: "/app/catalog/schemes", page: "schemes" }, { label: "Barcode labels", to: "/app/catalog/labels", page: "labels" },
       ] },
       { label: "Stock", icon: "ti-chart-arrows", children: [

@@ -60,3 +60,45 @@ def test_the_product_form_add_saves_discount_and_offers(api, tenant):
     assert r.status_code == 201, r.content
     assert str(r.data["discount_pct"]).startswith("5") and str(r.data["discount_min_qty"]).startswith("12")
     assert len(r.data["offers"]) == 1 and str(r.data["offers"][0]["discount_pct"]).startswith("9")
+
+
+def test_the_datewise_discounts_page_lists_adds_and_edits_offers(api, tenant):
+    """The separate Date-wise discounts page (25 Oct 2026): every product's offers in one list, with
+    add / edit / delete there — the same rows the product form's offers editor writes."""
+    from apps.core.tenancy import tenant_context
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, _cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        pid = str(v.product_id)
+
+    r = api.post("/api/v1/product-offers", {"product": pid, "discount_pct": "7.5", "min_qty": "10",
+                                            "start_date": "2026-10-01", "end_date": "2026-12-31"}, format="json")
+    assert r.status_code == 201, r.content
+    offer_id = r.data["id"]
+    assert r.data["product_name"], "the list shows the product, not a bare id"
+
+    r = api.get("/api/v1/product-offers")
+    rows = r.data["results"] if isinstance(r.data, dict) else r.data
+    assert any(o["id"] == offer_id for o in rows)
+
+    # the product form reads the same row
+    r = api.get(f"/api/v1/products/{pid}")
+    assert any(o["id"] == str(offer_id) for o in r.data["offers"])
+
+    r = api.patch(f"/api/v1/product-offers/{offer_id}", {"discount_pct": "9"}, format="json")
+    assert r.status_code == 200, r.content
+
+    # bad rows are refused with a reason
+    r = api.post("/api/v1/product-offers", {"product": pid, "discount_pct": "7", "min_qty": "0",
+                                            "start_date": "2026-12-31", "end_date": "2026-10-01"}, format="json")
+    assert r.status_code == 400 and "end" in str(r.data).lower()
+    r = api.post("/api/v1/product-offers", {"product": pid, "discount_pct": "150", "min_qty": "0",
+                                            "start_date": "2026-10-01", "end_date": "2026-12-31"}, format="json")
+    assert r.status_code == 400
+
+    r = api.delete(f"/api/v1/product-offers/{offer_id}")
+    assert r.status_code in (200, 204)
+    r = api.get(f"/api/v1/products/{pid}")
+    assert r.data["offers"] == [], "a deleted offer leaves the product clean"

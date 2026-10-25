@@ -113,13 +113,13 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
   const shownNames = new Set(fields.map((f) => f.name));
   const otherErrors = Object.entries(errors).filter(([k]) => !shownNames.has(k));
   const visible = fields.filter((f) => !f.showIf || f.showIf(values));
-  // group the fields into the blocks their `section` declares; fields without one share a single unnamed block
-  const groups: { key: string; title?: string; hint?: string; icon?: string; collapsible: boolean; fields: FieldDef[] }[] = [];
+  // group the fields into the blocks their `section` declares; a contiguous run of fields without one forms an unnamed block
+  const groups: { key: string; uiKey: string; title?: string; hint?: string; icon?: string; collapsible: boolean; fields: FieldDef[] }[] = [];
   for (const f of visible) {
     const key = f.section || "";
     const last = groups[groups.length - 1];
     if (last && last.key === key) last.fields.push(f);
-    else groups.push({ key, title: f.section, hint: f.sectionHint, icon: f.sectionIcon, collapsible: Boolean(f.sectionCollapsed), fields: [f] });
+    else groups.push({ key, uiKey: `${key}#${groups.length}`, title: f.section, hint: f.sectionHint, icon: f.sectionIcon, collapsible: Boolean(f.sectionCollapsed), fields: [f] });
   }
   const toggle = (key: string) => setClosed((c) => ({ ...c, [key]: !(c[key] ?? true) }));
   const isClosed = (g: { key: string; collapsible: boolean }) => g.collapsible && (closed[g.key] ?? true);
@@ -188,7 +188,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
       )}
       {groups.map((g) =>
         g.title ? (
-          <div className="card border mb-3" key={g.key}>
+          <div className="card border mb-3" key={g.uiKey}>
             <div className={`card-header bg-white d-flex align-items-start gap-2 ${g.collapsible ? "cursor-pointer" : ""}`} onClick={() => g.collapsible && toggle(g.key)}>
               {g.icon && <span className="d-inline-flex align-items-center justify-content-center rounded bg-light flex-shrink-0" style={{ width: 32, height: 32 }}><i className={`ti ${g.icon} text-primary`} /></span>}
               <div className="flex-grow-1">
@@ -200,7 +200,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
             {!isClosed(g) && <div className="card-body pb-0">{block(g)}</div>}
           </div>
         ) : (
-          <Fragment key={g.key}>{block(g)}</Fragment>
+          <Fragment key={g.uiKey}>{block(g)}</Fragment>
         ),
       )}
       {errors.non_field_errors && <div className="alert alert-danger py-2">{errors.non_field_errors}</div>}

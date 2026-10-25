@@ -5,6 +5,7 @@ from . import views
 
 router = OptionalSlashRouter()
 router.register("products", views.ProductViewSet, basename="products")
+router.register("product-offers", views.ProductOfferViewSet, basename="product-offers")
 router.register("variants", views.VariantViewSet, basename="variants")
 router.register("packagings", views.PackagingViewSet, basename="packagings")
 router.register("barcodes", views.BarcodeViewSet, basename="barcodes")

@@ -2,7 +2,28 @@ from rest_framework import serializers
 
 from apps.inventory.models import Warehouse
 
-from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
+from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductOffer, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
+
+
+class ProductOfferSerializer(serializers.ModelSerializer):
+    """One dated discount, addressed on its own — the Date-wise discounts page edits these across all products."""
+
+    product_name = serializers.CharField(source="product.name", read_only=True, default="")
+    product_sku = serializers.CharField(source="product.sku", read_only=True, default="")
+
+    class Meta:
+        model = ProductOffer
+        fields = ["id", "product", "product_name", "product_sku", "discount_pct", "min_qty", "start_date", "end_date", "is_active", "created_at"]
+
+    def validate(self, data):
+        pct = data.get("discount_pct", getattr(self.instance, "discount_pct", None))
+        start = data.get("start_date", getattr(self.instance, "start_date", None))
+        end = data.get("end_date", getattr(self.instance, "end_date", None))
+        if pct is not None and not (0 < pct <= 100):
+            raise serializers.ValidationError({"discount_pct": "The discount must be above 0 and at most 100%"})
+        if start and end and end < start:
+            raise serializers.ValidationError({"end_date": "The offer cannot end before it starts"})
+        return data
 
 
 class BrandSerializer(serializers.ModelSerializer):

@@ -58,8 +58,6 @@ const productFields = (isNew: boolean): FieldDef[] => [
         { name: "opening_expiry_date", label: "Opening batch expiry", type: "date", col: "col-md-3", showIf: (v) => Boolean(v.is_batch_tracked) }] as FieldDef[])
     : []),
   { name: "min_stock", label: "Min stock", type: "number", col: "col-md-3", default: 0 }, { name: "max_stock", label: "Max stock", type: "number", col: "col-md-3", default: 0 }, { name: "reorder_qty", label: "Reorder qty", type: "number", col: "col-md-3", default: 0 }, { name: "shelf_life_days", label: "Shelf life (days)", type: "number", col: "col-md-3" },
-  { name: "is_batch_tracked", label: "Batch (lot) tracked", type: "checkbox", col: "col-md-3", hint: "Stock is held per batch (lot) number, and movements have to say which batch. On a goods receipt a blank batch falls back to the supplier challan number." }, { name: "is_expiry_tracked", label: "Expiry tracked", type: "checkbox", col: "col-md-3", hint: "Receiving this product will insist on the expiry date from the carton, and the near-expiry alerts, the expiry report and first-expiry-first-out picking all read it." }, { name: "description", label: "Description", type: "textarea", col: "col-md-9" },
-
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionHint: "Only for products that go on FBR tax invoices — classification comes from FBR's own lists (sync them under Settings → FBR e-invoicing).", sectionCollapsed: true,
     name: "fbr_hs_code", label: "", type: "custom", col: "col-md-12",
     render: (_v: any, _set: any, values: any, setField: any) => <FBRClassifier values={values} setField={setField} /> },
@@ -71,6 +69,11 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_schedule", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_item", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "mrp_ex_tax", label: "", type: "custom", col: "d-none", render: () => null },
+
+  // the owner wants these last, below the FBR card (25 Oct 2026)
+  { name: "is_expiry_tracked", label: "Expiry tracked", type: "checkbox", col: "col-md-3", hint: "Receiving this product will insist on the expiry date from the carton, and the near-expiry alerts, the expiry report and first-expiry-first-out picking all read it." },
+  { name: "is_batch_tracked", label: "Batch (lot) tracked", type: "checkbox", col: "col-md-3", hint: "Stock is held per batch (lot) number, and movements have to say which batch. On a goods receipt a blank batch falls back to the supplier challan number." },
+  { name: "description", label: "Description", type: "textarea", col: "col-md-6" },
 ];
 
 function OffersEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
@@ -195,6 +198,35 @@ export function BrandsPage() {
 }
 export function UomsPage() {
   return <CrudPage page="uoms" title="Units of measure" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Units" }]} endpoint="/api/v1/uoms" columns={[{ key: "code", header: "Code" }, { key: "name", header: "Name" }]} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} />;
+}
+
+/** Every product's dated discounts in one list — the same offers the product form edits, addressable here too. */
+export function DatedDiscountsPage() {
+  const today = new Date().toISOString().slice(0, 10);
+  const state = (o: any) =>
+    !o.is_active ? { label: "Off", cls: "bg-secondary-light text-secondary" }
+    : o.end_date < today ? { label: "Ended", cls: "bg-secondary-light text-secondary" }
+    : o.start_date > today ? { label: "Upcoming", cls: "bg-info-light text-info" }
+    : { label: "Running", cls: "bg-success-light text-success" };
+  return <CrudPage page="products" title="Date-wise discounts" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Date-wise discounts" }]}
+    intro={<Alert kind="info">While an offer matches (date in its window, line qty at the minimum) it <strong>replaces</strong> the product's standard discount; when several match, the customer gets the best one. These are the same dated offers the product form edits.</Alert>}
+    endpoint="/api/v1/product-offers"
+    columns={[
+      { key: "product_name", header: "Product", render: (o: any) => <><span className="fw-semibold text-dark">{o.product_name}</span><div className="text-muted fs-11 font-monospace">{o.product_sku}</div></> },
+      { key: "discount_pct", header: "Discount %", num: true, render: (o: any) => `${Number(o.discount_pct)}%` },
+      { key: "min_qty", header: "From qty", num: true, render: (o: any) => (Number(o.min_qty) > 0 ? qty(o.min_qty) : "any") },
+      { key: "start_date", header: "From", render: (o: any) => date(o.start_date) },
+      { key: "end_date", header: "To", render: (o: any) => date(o.end_date) },
+      { key: "_state", header: "Status", render: (o: any) => { const s = state(o); return <span className={`badge ${s.cls}`}>{s.label}</span>; } },
+    ]}
+    fields={[
+      { name: "product", label: "Product", type: "entity", endpoint: "/api/v1/products", mapOption: (p: any) => ({ id: p.id, label: p.name, sub: p.sku }), required: true, col: "col-md-12" },
+      { name: "discount_pct", label: "Discount %", type: "number", required: true, col: "col-md-4", suffix: "%", validate: (v: any) => (Number(v) > 100 ? "Cannot be more than 100%" : Number(v) <= 0 ? "Must be above 0" : null) },
+      { name: "min_qty", label: "From qty", type: "number", col: "col-md-4", default: 0, hint: "0 = any quantity" },
+      { name: "is_active", label: "Active", type: "checkbox", default: true, col: "col-md-4" },
+      { name: "start_date", label: "From", type: "date", required: true, col: "col-md-6" },
+      { name: "end_date", label: "To", type: "date", required: true, col: "col-md-6" },
+    ]} />;
 }
 
 export function PriceListsPage() {

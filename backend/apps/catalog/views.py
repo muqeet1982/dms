@@ -10,10 +10,10 @@ from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import TenantModelViewSet
 
-from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
+from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductOffer, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
 from .serializers import (
     BarcodeSerializer, BrandSerializer, CategorySerializer, PackagingSerializer, PriceListItemSerializer, PriceListSerializer, ProductCreateSerializer,
-    ProductSerializer, ProductVariantSerializer, SchemeSerializer, TaxClassSerializer, TaxRateSerializer, TaxTypeSerializer, UnitOfMeasureSerializer,
+    ProductOfferSerializer, ProductSerializer, ProductVariantSerializer, SchemeSerializer, TaxClassSerializer, TaxRateSerializer, TaxTypeSerializer, UnitOfMeasureSerializer,
 )
 from .services import BarcodeParser, LabelService, PricingService, ProductService, TaxService
 
@@ -93,6 +93,30 @@ class TaxClassViewSet(TenantModelViewSet):
         if serializer.validated_data.get("is_default"):
             TaxClass.objects.exclude(pk=serializer.instance.pk).update(is_default=False)
         super().perform_update(serializer)
+
+
+class ProductOfferViewSet(TenantModelViewSet):
+    """Every product's dated discounts in one list — the Date-wise discounts page. Products permissions apply."""
+
+    serializer_class = ProductOfferSerializer
+    perm_map = page_perms("products")
+    search_fields = ["product__name", "product__sku"]
+    filterset_fields = ["product", "is_active"]
+    ordering_fields = ["start_date", "end_date", "discount_pct", "min_qty", "product__name"]
+
+    def get_queryset(self):
+        from django.utils import timezone
+
+        qs = ProductOffer.objects.select_related("product")
+        when = self.request.query_params.get("when")
+        today = timezone.localdate()
+        if when == "running":
+            qs = qs.filter(is_active=True, start_date__lte=today, end_date__gte=today)
+        elif when == "upcoming":
+            qs = qs.filter(start_date__gt=today)
+        elif when == "ended":
+            qs = qs.filter(end_date__lt=today)
+        return qs
 
 
 class ProductViewSet(TenantModelViewSet):
