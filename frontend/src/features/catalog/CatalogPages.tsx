@@ -334,7 +334,8 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   const sros = useQuery({ queryKey: ["fbr-l", "sroschedule", values.fbr_rate_id], queryFn: () => look("sroschedule", values.fbr_rate_id), enabled: Boolean(values.fbr_rate_id) });
   // the chosen schedule narrows the item list (field-flow guide §8); without one the full list is searched
   const sroParent = (sros.data?.results || []).find((r: any) => r.description === values.fbr_sro_schedule)?.key;
-  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ || undefined), enabled: sroOpen || Boolean(sroParent && !values.fbr_sro_item) });
+  // no schedule, no items: the pair is all-or-nothing, so the item list only exists under a chosen schedule
+  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ || undefined), enabled: Boolean(values.fbr_sro_schedule) && (sroOpen || !values.fbr_sro_item) });
   // a handful of goods codes legitimately have no unit list (guide §4) — offer the full 44 units instead
   const noUnitList = Boolean(values.fbr_hs_code) && Boolean(uoms.data) && !(uoms.data?.results || []).length && !uoms.data?.hint && !String(values.fbr_hs_code).startsWith("98");
   const allUoms = useQuery({ queryKey: ["fbr-l", "uom"], queryFn: () => look("uom"), enabled: noUnitList });
@@ -425,17 +426,19 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
       </div>
       <div className="col-md-4">
         <div className="form-label fs-12 mb-1">SRO Schedule No <span className="text-muted">(often none)</span></div>
-        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => { setField("fbr_sro_schedule", e.target.value); setField("fbr_sro_item", ""); setSroQ(""); }}>
+        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => { setField("fbr_sro_schedule", e.target.value); setField("fbr_sro_item", ""); setSroQ(""); setSroOpen(false); }}>
           <option value="">none</option>
           {(sros.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
         </select>
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">SRO Item Serial No</div>
-        {/* the house searchable dropdown (EntitySelect's look and keys), fed by the lookup cache */}
+        {/* the house searchable dropdown (EntitySelect's look and keys), fed by the lookup cache;
+            dead until a schedule is chosen — an item without its schedule is never a valid pair */}
         <div className="entity-select" ref={sroBox}>
           <div className="input-group">
-            <input className="form-control" placeholder={values.fbr_sro_item || "— Select SRO item —"}
+            <input className="form-control" disabled={!values.fbr_sro_schedule}
+              placeholder={!values.fbr_sro_schedule ? "— Select SRO Schedule No first —" : values.fbr_sro_item || "— Select SRO item —"}
               value={sroOpen ? sroQ : values.fbr_sro_item || ""}
               onFocus={() => { setSroOpen(true); setSroQ(""); setSroActive(0); }}
               onChange={(e) => { setSroQ(e.target.value); setSroActive(0); if (!sroOpen) setSroOpen(true); }}
@@ -450,9 +453,9 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
               autoComplete="off" />
             {values.fbr_sro_item && !sroOpen
               ? <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { setField("fbr_sro_item", ""); setSroQ(""); }} title="Clear"><i className="ti ti-x" /></button>
-              : <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { setSroOpen((v) => !v); setSroQ(""); }} title="Browse FBR's SRO item list"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>}
+              : <button type="button" className="btn btn-outline-secondary" tabIndex={-1} disabled={!values.fbr_sro_schedule} onClick={() => { setSroOpen((v) => !v); setSroQ(""); }} title="Browse the schedule's items"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>}
           </div>
-          {sroOpen && (
+          {sroOpen && Boolean(values.fbr_sro_schedule) && (
             <div className="es-menu">
               {(sroItems.data?.results || []).map((r: any, i: number) => (
                 <div key={r.key} className={`es-item ${i === sroActive ? "active" : ""}`}
