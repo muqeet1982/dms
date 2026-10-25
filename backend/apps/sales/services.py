@@ -573,8 +573,10 @@ class InvoiceService:
             gross = q4(paid_qty * ol.unit_price)
             line_disc = q4((ol.discount_amount + ol.scheme_discount) * ratio)
             taxable = gross - line_disc
-            tax_class = TaxService.resolve_class(ol.variant, customer)
-            t = TaxService.compute(taxable, tax_class, inv.date)
+            # tax rides ONLY on the invoice's tax switch (owner, 25 Oct 2026): no switch, no tax — the
+            # tax classes no longer feed sales invoices; set_tax/recompute put the forced tax on later
+            t = {"tax1_type": None, "tax1_rate": Decimal("0"), "tax1_amount": Decimal("0"),
+                 "tax2_type": None, "tax2_rate": Decimal("0"), "tax2_amount": Decimal("0")}
             SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=ol.variant, batch=dl.batch, description=ol.variant.name, qty=paid_qty, free_qty=free_part, unit_price=ol.unit_price, unit_cost=dl.unit_cost or ol.variant.avg_cost, discount_amount=line_disc, product_discount_pct=ol.product_discount_pct, line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], sequence=i)
             subtotal += gross
             disc += line_disc
@@ -672,30 +674,45 @@ class InvoiceService:
         return inv
 
     @staticmethod
+    def forced_line_rate(product, *, override=None, typed_rate=None, tax_type=None, on_date=None):
+        """
+        The tax switch's rate for one line, most specific source first (owner, 24–25 Oct 2026): the %
+        typed on the line, then the product's FBR GST rate — "if tax on then use FBR tax", so the invoice
+        shows the same tax an FBR filing will compute — then the product's own Tax %, the invoice's typed
+        rate, else the tax type's dated rate.
+        An FBR "Exempt"/"0%" product stops the chain at zero on purpose — FBR's own classification said so.
+        """
+        if override is not None:
+            return override
+        if product is not None and product.fbr_rate_desc:
+            from apps.fbr import engine
+
+            return engine.gst_rate_num(product.fbr_rate_desc)
+        if product is not None and product.tax_pct is not None:
+            return product.tax_pct
+        if typed_rate is not None:
+            return typed_rate
+        if tax_type is not None and on_date is not None:
+            return tax_type.rate_on(on_date)
+        return Decimal("0")
+
+    @staticmethod
     def recompute(inv):
         """Re-total an invoice from its lines (used after a discount or tax change)."""
-        from apps.catalog.services import TaxService
-
         forced = inv.force_tax_type
-        # with the switch on, the rate is the PRODUCT'S Tax % (owner, 24 Oct 2026) — a line override beats it,
-        # an invoice-level typed rate (API) catches products with none, else the line simply taxes at zero
-        forced_rate = (inv.force_tax_rate if inv.force_tax_rate is not None else Decimal("0")) if forced else None
         subtotal = discount = t1 = t2 = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
-                # the invoice's own tax switch beats the products' classes; the rate, most specific first:
-                # the % typed on this line, else the product's own Tax %, else the invoice's rate
-                rate = (line.tax_pct_override if line.tax_pct_override is not None
-                        else line.variant.product.tax_pct if line.variant_id and line.variant.product.tax_pct is not None
-                        else forced_rate)
+                rate = InvoiceService.forced_line_rate(
+                    line.variant.product if line.variant_id else None, override=line.tax_pct_override,
+                    typed_rate=inv.force_tax_rate, tax_type=forced, on_date=inv.date)
                 line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(taxable * rate / 100)
-                line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             else:
-                t = TaxService.compute(taxable, TaxService.resolve_class(line.variant, inv.customer), inv.date)
-                line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
-                line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
+                # no switch, no tax (owner, 25 Oct 2026): the tax classes do not feed sales invoices
+                line.tax1_type, line.tax1_rate, line.tax1_amount = None, Decimal("0"), Decimal("0")
+            line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             line.line_total = taxable + line.tax1_amount + line.tax2_amount
             line.save(update_fields=["tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total"])
             subtotal += gross
@@ -703,8 +720,7 @@ class InvoiceService:
             t1 += line.tax1_amount
             t2 += line.tax2_amount
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, discount, t1, t2
-        if forced is not None:
-            inv.tax1_type, inv.tax2_type = forced, None
+        inv.tax1_type, inv.tax2_type = forced, None
         inv.total = subtotal - discount + t1 + t2
         inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "total", "updated_at"])
         return inv
@@ -730,6 +746,16 @@ class InvoiceService:
                 rate = Decimal(str(rate))
                 if rate <= 0 or rate > 100:
                     raise DomainError("The tax % must be between 0 and 100.", code="bad_tax_rate")
+            # a switch that would charge zero on every line is a misconfiguration, not a tax — say so
+            # instead of printing "Tax 0.00" (the silent-zero bug, owner 25 Oct 2026)
+            if rate is None and tt.rate_on(inv.date) == 0 and not any(
+                    l.tax_pct_override is not None
+                    or (l.variant_id and (l.variant.product.tax_pct is not None or l.variant.product.fbr_rate_desc))
+                    for l in inv.lines.select_related("variant__product")):
+                raise DomainError(
+                    f"Tax is on but there is no rate anywhere — give {tt.name} a dated rate under "
+                    "Settings → Taxes, set Tax % (or an FBR rate) on the products, or send a tax % "
+                    "with the switch.", code="no_tax_rate")
             inv.force_tax_type, inv.force_tax_rate = tt, rate
         else:
             inv.force_tax_type, inv.force_tax_rate = None, None
@@ -987,14 +1013,26 @@ class CreditNoteService:
     @transaction.atomic
     def create(*, customer, lines, invoice=None, warehouse=None, date=None, reason="", notes="", applied_to_invoice=True):
         cn = CreditNote.objects.create(number=next_number("credit_note"), customer=customer, invoice=invoice, warehouse=warehouse, date=date or timezone.localdate(), reason=reason, notes=notes, applied_to_invoice=applied_to_invoice and invoice is not None)
+        # the credit reverses what the invoice actually charged, per variant — never the tax classes;
+        # a standalone credit note (no invoice) charges no tax, because tax rides only on an invoice's
+        # tax switch (owner, 25 Oct 2026)
+        charged = ({il.variant_id: (il.tax1_type, il.tax1_rate, il.tax2_type, il.tax2_rate) for il in invoice.lines.all()}
+                   if invoice is not None else {})
         subtotal = t1 = t2 = Decimal("0")
         tax1_type = tax2_type = None
         for l in lines:
             variant = l["variant"]
             unit_price = q4(l["unit_price"])
             taxable = q4(Decimal(l["qty"]) * unit_price)
-            tax_class = TaxService.resolve_class(variant, customer)
-            t = TaxService.compute(taxable, tax_class, cn.date)
+            tt1, r1, tt2, r2 = charged.get(variant.id, (None, None, None, None))
+            if r1 is None and invoice is not None and invoice.force_tax_type_id:
+                # a variant the invoice never carried, credited against a switch invoice: same chain
+                tt1 = invoice.force_tax_type
+                r1 = InvoiceService.forced_line_rate(variant.product, typed_rate=invoice.force_tax_rate,
+                                                     tax_type=tt1, on_date=cn.date)
+            r1, r2 = r1 or Decimal("0"), r2 or Decimal("0")
+            t = {"tax1_type": tt1 if r1 else None, "tax1_rate": r1, "tax1_amount": q4(taxable * r1 / 100),
+                 "tax2_type": tt2 if r2 else None, "tax2_rate": r2, "tax2_amount": q4(taxable * r2 / 100)}
             CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"])
             subtotal += taxable
             t1 += t["tax1_amount"]

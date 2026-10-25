@@ -227,3 +227,82 @@ def test_reopen_is_the_owners_unless_granted_and_paid_refuses(api, tenant, taxed
                                              "allocations": [{"document_type": "sales_invoice", "document_id": inv["id"], "amount": "100"}]}, format="json")
     blocked = api.post(f"/api/v1/invoices/{inv['id']}/reopen", {}, format="json")
     assert blocked.status_code in (400, 422) and "receipt" in str(blocked.data).lower() or blocked.status_code in (400, 422)
+
+
+def test_with_no_product_pct_the_types_dated_rate_catches_the_line(api, tenant, taxed_world):
+    """The silent-zero bug (owner, 25 Oct 2026): switch on, no Tax % on any product — the invoice
+    charged 0 and printed "Tax 0.00". The type's dated rate is the promised fallback."""
+    wh, cust, v, tt = taxed_world
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert on.status_code == 200, on.content
+    assert Decimal(on.data["tax1_total"]) == Decimal("108")  # 600 × the type's dated 18%
+
+
+def test_the_fbr_rate_is_the_switchs_first_source(api, tenant, taxed_world):
+    """"If tax on then use FBR tax" (owner, 25 Oct 2026): an FBR-classified product taxes at its FBR
+    GST rate — beating its own Tax % and the company's dated rate — so the invoice shows the same tax
+    an FBR filing will compute."""
+    from apps.catalog.models import Product
+
+    wh, cust, v, tt = taxed_world
+    with tenant_context(tenant, tenant.owner):
+        Product.objects.filter(pk=v.product_id).update(fbr_rate_desc="25%", tax_pct=Decimal("10"))
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False, "apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("150"), inv["tax1_total"]  # 600 × FBR's 25%, not 10
+
+
+def test_without_the_switch_an_invoice_carries_no_tax_even_with_classes(api, tenant, taxed_world):
+    """"When no tax then do not show any tax" (owner, 25 Oct 2026): the tax classes no longer feed
+    sales invoices — an invoice made without the switch is tax-free, whatever the product's class."""
+    from apps.catalog.models import TaxClass
+
+    wh, cust, v, tt = taxed_world
+    with tenant_context(tenant, tenant.owner):
+        TaxClass.objects.create(name="Standard", tax1=tt, is_default=True)
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == 0 and Decimal(inv["total"]) == Decimal("600"), inv
+    assert all(Decimal(l["tax1_amount"]) == 0 for l in inv["lines"])
+
+
+def test_tax_on_with_no_rate_anywhere_refuses_with_directions(api, tenant):
+    """No dated rate, no product Tax %, no FBR rate, nothing typed: the switch must refuse with
+    directions instead of charging zero (the state the owner's live tenant was in)."""
+    from apps.catalog.models import TaxType
+
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")  # NO dated rate
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert r.status_code in (400, 422), r.content
+    assert "Settings" in str(r.data), r.data
+    fresh = api.get(f"/api/v1/invoices/{inv['id']}")
+    assert fresh.data["force_tax_type"] is None and Decimal(fresh.data["tax1_total"]) == 0
+
+
+def test_a_credit_note_against_a_forced_invoice_reverses_the_charged_rate(api, tenant, taxed_world):
+    """A return against a tax-switch invoice must reverse the tax that was actually charged, not
+    whatever the tax classes would say (they said nothing — that was the mismatch)."""
+    wh, cust, v, tt = taxed_world
+    _product_tax(tenant, v, 18)
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("108")
+
+    cn = api.post("/api/v1/credit-notes", {"customer": str(cust.id), "invoice": inv["id"], "warehouse": str(wh.id),
+                                           "reason": "damaged", "lines": [{"variant": str(v.id), "qty": "1", "unit_price": "150"}]}, format="json")
+    assert cn.status_code == 201, cn.content
+    assert Decimal(cn.data["tax1_total"]) == Decimal("27")  # 1 × 150 × the invoice's 18%
+    assert Decimal(cn.data["total"]) == Decimal("177")

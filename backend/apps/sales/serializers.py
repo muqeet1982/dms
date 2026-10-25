@@ -58,16 +58,17 @@ class OrderLineSerializer(serializers.ModelSerializer):
     # read it next to `packaging_name` could reasonably render "36 box" for 36 pieces. `qty_base` says what it
     # is in its name, and `packaging_qty_in_base` is the pack factor, so a carton figure can be shown too.
     qty_base = serializers.DecimalField(source="qty_ordered", max_digits=18, decimal_places=3, read_only=True)
-    # the product's own Tax % rides along so the invoice create page can preview each line's tax before
-    # the invoice exists (the server recomputes the real figures at creation)
+    # the product's own Tax % and FBR rate ride along so the invoice create page can preview each line's
+    # tax before the invoice exists (the server recomputes the real figures at creation)
     product_tax_pct = serializers.DecimalField(source="variant.product.tax_pct", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_fbr_rate = serializers.CharField(source="variant.product.fbr_rate_desc", read_only=True, default="")
     packaging_qty_in_base = serializers.DecimalField(source="packaging.qty_in_base", max_digits=18, decimal_places=3, read_only=True, default=None)
     tax1_name = serializers.CharField(source="tax1_type.name", read_only=True, default="")
     tax2_name = serializers.CharField(source="tax2_type.name", read_only=True, default="")
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "product_fbr_rate", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         extra_kwargs = {"unit_price": {"required": False}}
 
@@ -120,6 +121,9 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
 class SalesOrderSerializer(SalesOrderListSerializer):
     lines = OrderLineSerializer(many=True)
+    # the company's dated sales-tax rate today: the invoice preview's fallback for lines whose product
+    # has neither its own Tax % nor an FBR rate (mirrors InvoiceService.forced_line_rate)
+    sales_tax_rate_today = serializers.SerializerMethodField()
     gps = serializers.SerializerMethodField()   # where the rep was standing when they took it
     confirmed_by_name = serializers.CharField(source="confirmed_by.full_name", read_only=True, default="")
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True, default="")
@@ -136,8 +140,16 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         days = getattr(obj.customer, "credit_days", 0) or 0
         return f"{days} days credit" if days else "Cash on delivery"
 
+    def get_sales_tax_rate_today(self, obj):
+        from django.utils import timezone
+
+        from apps.catalog.models import TaxType
+
+        tt = TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
+        return str(tt.rate_on(timezone.localdate())) if tt else None
+
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "sales_tax_rate_today", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
         read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
