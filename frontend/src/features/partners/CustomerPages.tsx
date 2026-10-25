@@ -121,9 +121,29 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "address", label: "Shop address", col: "col-md-6" },
     { ...sec("The shop", "ti-building-store"), name: "city", label: "City", type: "custom", col: "col-md-3", render: (v, set) => <CitySelect value={v || ""} onChange={set} /> },
     { ...sec("The shop", "ti-building-store"), name: "province", label: "Province", type: "select", col: "col-md-3", default: "Punjab", options: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Jammu & Kashmir", "Islamabad Capital Territory"].map((p) => ({ value: p, label: p })) },
-    { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "Min shelf life", type: "number", col: "col-md-2 align-self-end", suffix: "days", hint: "refuse stock expiring sooner" },
-    { ...sec("The shop", "ti-building-store"), name: "notes", label: "Notes", type: "textarea", col: "col-md-8" },
-    { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "select", options: [{ value: "active", label: "Active" }, { value: "pending", label: "Pending approval" }, { value: "inactive", label: "Inactive" }], default: "active", col: "col-md-2 align-self-end" },
+    // the textarea stretches to the row's height so its bottom line meets the Min Shelf Life field beside it
+    { ...sec("The shop", "ti-building-store"), name: "notes", label: "Notes", type: "custom", col: "col-md-10 d-flex flex-column",
+      render: (v, set) => <textarea className="form-control flex-grow-1" rows={3} value={v ?? ""} onChange={(e) => set(e.target.value)} /> },
+    // Status with Min Shelf Life stacked right under it, the pair bottom-aligned to the Notes box
+    { ...sec("The shop", "ti-building-store"), name: "status", label: "Status", type: "custom", default: "active", col: "col-md-2 d-flex flex-column",
+      render: (v, set, values, setField) => (
+        <div className="flex-grow-1 d-flex flex-column justify-content-between gap-2">
+          <select className="form-select" value={v || "active"} onChange={(e) => set(e.target.value)}>
+            <option value="active">Active</option>
+            <option value="pending">Pending approval</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <div>
+            <label className="form-label fs-13 fw-medium">Min Shelf Life</label>
+            <div className="input-group">
+              <input type="number" className="form-control" min={0} placeholder="0" title="refuse stock expiring sooner"
+                value={values.min_shelf_life_days ?? ""} onChange={(e) => setField("min_shelf_life_days", e.target.value)} />
+              <span className="input-group-text fs-13">days</span>
+            </div>
+          </div>
+        </div>
+      ) },
+    { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "", type: "number", col: "d-none" },
     { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
@@ -142,7 +162,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & FBR", "ti-receipt"), name: "strn", label: "STRN (sales tax)", col: "col-md-3", mask: "strn", placeholder: "03-01-2345-678-90", maxLength: 17, hint: "your records only — not sent to FBR" },
     { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "Registration Status", type: "select", col: "col-md-3",
       options: [{ value: "", label: "Not set" }, { value: "Registered", label: "Registered" }, { value: "Unregistered", label: "Unregistered" }] },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-4", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],
