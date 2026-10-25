@@ -313,18 +313,63 @@ export function LocationsPage() {
 
 /** FBR classification, chained per the guide: HS code → UoM-for-HS; sale type → rate → SRO schedule.
  *  Reads the local cache (synced under Settings → FBR); free-typing any of these gets a rejection. */
+/** The classifier's searchable dropdown — EntitySelect's look and keys over FBR lookup rows.
+    Filters the loaded options itself; pass serverFiltered + onQ when the backend does the searching. */
+function FBRCombo({ value, options, onPick, onClear, disabled, placeholder, loading, emptyText, onQ, serverFiltered }: {
+  value: string; options: { key: string; description: string }[];
+  onPick: (r: { key: string; description: string }) => void; onClear: () => void;
+  disabled?: boolean; placeholder: string; loading?: boolean; emptyText?: string;
+  onQ?: (q: string) => void; serverFiltered?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const setQuery = (v: string) => { setQ(v); setActive(0); onQ?.(v); };
+  const opts = serverFiltered || !q ? options : options.filter((r) => `${r.key} ${r.description}`.toLowerCase().includes(q.toLowerCase()));
+  const pick = (r: { key: string; description: string }) => { onPick(r); setQuery(""); setOpen(false); };
+  return (
+    <div className="entity-select" ref={box}>
+      <div className="input-group">
+        <input className="form-control" disabled={disabled}
+          placeholder={placeholder}
+          value={open ? q : value || ""}
+          onFocus={() => { setOpen(true); setQuery(""); }}
+          onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
+          onKeyDown={(e) => {
+            if (!open) return;
+            if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, opts.length - 1)); }
+            if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+            if (e.key === "Enter" && opts[active]) { e.preventDefault(); pick(opts[active]); }
+            if (e.key === "Escape") setOpen(false);
+          }}
+          autoComplete="off" />
+        {value && !open
+          ? <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { onClear(); setQuery(""); }} title="Clear"><i className="ti ti-x" /></button>
+          : <button type="button" className="btn btn-outline-secondary" tabIndex={-1} disabled={disabled} onClick={() => { setOpen((v) => !v); setQuery(""); }} title="Browse the list"><i className={`ti ${open ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>}
+      </div>
+      {open && !disabled && (
+        <div className="es-menu">
+          {opts.map((r, i) => (
+            <div key={r.key} className={`es-item ${i === active ? "active" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); pick(r); }}
+              onMouseEnter={() => setActive(i)}>{r.description}</div>))}
+          {!loading && opts.length === 0 && <div className="es-item text-muted">{emptyText || "No matches"}</div>}
+          {loading && opts.length === 0 && <div className="es-item text-muted">Loading…</div>}
+        </div>)}
+    </div>
+  );
+}
+
 function FBRClassifier({ values, setField }: { values: any; setField: (k: string, v: any) => void }) {
   const [hsQ, setHsQ] = useState(values.fbr_hs_code || "");
   const [hsOpen, setHsOpen] = useState(false);
   const [sroQ, setSroQ] = useState("");
-  const [sroOpen, setSroOpen] = useState(false);
-  const [sroActive, setSroActive] = useState(0);
-  const sroBox = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => sroBox.current && !sroBox.current.contains(e.target as Node) && setSroOpen(false);
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
   const look = (kind: string, parent?: string, q?: string) =>
     api.get("/api/v1/fbr/lookups", { kind, ...(parent ? { parent } : {}), ...(q ? { q } : {}) });
   const hs = useQuery({ queryKey: ["fbr-l", "hscode", hsQ, hsOpen], queryFn: () => look("hscode", undefined, hsQ.length >= 2 ? hsQ : undefined), enabled: hsOpen || hsQ.length >= 2 });
@@ -335,10 +380,10 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
   // the chosen schedule narrows the item list (field-flow guide §8); without one the full list is searched
   const sroParent = (sros.data?.results || []).find((r: any) => r.description === values.fbr_sro_schedule)?.key;
   // no schedule, no items: the pair is all-or-nothing, so the item list only exists under a chosen schedule
-  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ, sroOpen], queryFn: () => look("sroitem", sroParent, sroQ || undefined), enabled: Boolean(values.fbr_sro_schedule) && (sroOpen || !values.fbr_sro_item) });
+  const sroItems = useQuery({ queryKey: ["fbr-l", "sroitem", sroParent || "", sroQ], queryFn: () => look("sroitem", sroParent, sroQ || undefined), enabled: Boolean(values.fbr_sro_schedule) });
   // a handful of goods codes legitimately have no unit list (guide §4) — offer the full 44 units instead
   const noUnitList = Boolean(values.fbr_hs_code) && Boolean(uoms.data) && !(uoms.data?.results || []).length && !uoms.data?.hint && !String(values.fbr_hs_code).startsWith("98");
-  const allUoms = useQuery({ queryKey: ["fbr-l", "uom"], queryFn: () => look("uom"), enabled: noUnitList });
+  const allUoms = useQuery({ queryKey: ["fbr-l", "uom"], queryFn: () => look("uom"), enabled: Boolean(values.fbr_hs_code) && Boolean(uoms.data) && !(uoms.data?.results || []).length });
   const third = (values.fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods";
   // the cascade answers itself: each dropdown auto-selects what FBR's lists make obvious (owner, 25 Oct 2026)
   useEffect(() => {
@@ -399,10 +444,12 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
       </div>
       <div className="col-md-2">
         <div className="form-label fs-12 mb-1">FBR UoM</div>
-        <select className="form-select" value={values.fbr_uom || ""} onChange={(e) => setField("fbr_uom", e.target.value)}>
-          <option value="">—</option>
-          {((uoms.data?.results?.length ? uoms.data.results : allUoms.data?.results) || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
-        </select>
+        <FBRCombo value={values.fbr_uom || ""} disabled={!values.fbr_hs_code}
+          placeholder={!values.fbr_hs_code ? "— Select HS Code first —" : values.fbr_uom || "— Select unit —"}
+          options={(uoms.data?.results?.length ? uoms.data.results : allUoms.data?.results) || []}
+          loading={uoms.isFetching || allUoms.isFetching}
+          onPick={(r) => setField("fbr_uom", r.description)}
+          onClear={() => setField("fbr_uom", "")} />
         {Boolean(values.fbr_hs_code) && uoms.data && (uoms.data.results || []).length === 0 && !String(values.fbr_hs_code).startsWith("98") && (
           uoms.data.hint
             ? <div className="form-text text-warning">{uoms.data.hint}</div>
@@ -410,64 +457,40 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">FBR Sale Type</div>
-        <select className="form-select" value={values.fbr_trans_type_id || ""} onChange={(e) => { const r = (trans.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_trans_type_id", e.target.value); setField("fbr_sale_type", r?.description || ""); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}>
-          <option value="">{values.fbr_sale_type || "—"}</option>
-          {(trans.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
-        </select>
+        <FBRCombo value={values.fbr_sale_type || ""} placeholder="— Select sale type —"
+          options={trans.data?.results || []} loading={trans.isFetching}
+          onPick={(r) => { setField("fbr_trans_type_id", r.key); setField("fbr_sale_type", r.description); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
+          onClear={() => { setField("fbr_trans_type_id", ""); setField("fbr_sale_type", ""); setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }} />
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">GST Rate</div>
-        <select className="form-select" value={values.fbr_rate_id || ""} onChange={(e) => { const r = (rates.data?.results || []).find((x: any) => x.key === e.target.value); setField("fbr_rate_id", e.target.value); setField("fbr_rate_desc", r?.description || ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}>
-          <option value="">{values.fbr_rate_desc || "—"}</option>
-          {(rates.data?.results || []).map((r: any) => <option key={r.key} value={r.key}>{r.description}</option>)}
-        </select>
+        <FBRCombo value={values.fbr_rate_desc || ""} disabled={!values.fbr_trans_type_id}
+          placeholder={!values.fbr_trans_type_id ? "— Select Sale Type first —" : values.fbr_rate_desc || "— Select rate —"}
+          options={rates.data?.results || []} loading={rates.isFetching}
+          onPick={(r) => { setField("fbr_rate_id", r.key); setField("fbr_rate_desc", r.description); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
+          onClear={() => { setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }} />
         {Boolean(values.fbr_trans_type_id) && rates.data && (rates.data.results || []).length === 0 && (
           <div className="form-text text-warning">{rates.data.hint || "No rates cached for this sale type yet — save the IRIS token and sync under Settings → FBR."}</div>)}
       </div>
       <div className="col-md-4">
         <div className="form-label fs-12 mb-1">SRO Schedule No <span className="text-muted">(often none)</span></div>
-        <select className="form-select" value={values.fbr_sro_schedule || ""} onChange={(e) => { setField("fbr_sro_schedule", e.target.value); setField("fbr_sro_item", ""); setSroQ(""); setSroOpen(false); }}>
-          <option value="">none</option>
-          {(sros.data?.results || []).map((r: any) => <option key={r.key} value={r.description}>{r.description}</option>)}
-        </select>
+        <FBRCombo value={values.fbr_sro_schedule || ""} disabled={!values.fbr_rate_id}
+          placeholder={!values.fbr_rate_id ? "— Select GST Rate first —" : values.fbr_sro_schedule || "none (most goods need none)"}
+          options={sros.data?.results || []} loading={sros.isFetching}
+          onPick={(r) => { setField("fbr_sro_schedule", r.description); setField("fbr_sro_item", ""); setSroQ(""); }}
+          onClear={() => { setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }} />
       </div>
       <div className="col-md-3">
         <div className="form-label fs-12 mb-1">SRO Item Serial No</div>
-        {/* the house searchable dropdown (EntitySelect's look and keys), fed by the lookup cache;
-            dead until a schedule is chosen — an item without its schedule is never a valid pair */}
-        <div className="entity-select" ref={sroBox}>
-          <div className="input-group">
-            <input className="form-control" disabled={!values.fbr_sro_schedule}
-              placeholder={!values.fbr_sro_schedule ? "— Select SRO Schedule No first —" : values.fbr_sro_item || "— Select SRO item —"}
-              value={sroOpen ? sroQ : values.fbr_sro_item || ""}
-              onFocus={() => { setSroOpen(true); setSroQ(""); setSroActive(0); }}
-              onChange={(e) => { setSroQ(e.target.value); setSroActive(0); if (!sroOpen) setSroOpen(true); }}
-              onKeyDown={(e) => {
-                if (!sroOpen) return;
-                const opts = sroItems.data?.results || [];
-                if (e.key === "ArrowDown") { e.preventDefault(); setSroActive((a) => Math.min(a + 1, opts.length - 1)); }
-                if (e.key === "ArrowUp") { e.preventDefault(); setSroActive((a) => Math.max(a - 1, 0)); }
-                if (e.key === "Enter" && opts[sroActive]) { e.preventDefault(); setField("fbr_sro_item", opts[sroActive].description); setSroQ(""); setSroOpen(false); }
-                if (e.key === "Escape") setSroOpen(false);
-              }}
-              autoComplete="off" />
-            {values.fbr_sro_item && !sroOpen
-              ? <button type="button" className="btn btn-outline-secondary" tabIndex={-1} onClick={() => { setField("fbr_sro_item", ""); setSroQ(""); }} title="Clear"><i className="ti ti-x" /></button>
-              : <button type="button" className="btn btn-outline-secondary" tabIndex={-1} disabled={!values.fbr_sro_schedule} onClick={() => { setSroOpen((v) => !v); setSroQ(""); }} title="Browse the schedule's items"><i className={`ti ${sroOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>}
-          </div>
-          {sroOpen && Boolean(values.fbr_sro_schedule) && (
-            <div className="es-menu">
-              {(sroItems.data?.results || []).map((r: any, i: number) => (
-                <div key={r.key} className={`es-item ${i === sroActive ? "active" : ""}`}
-                  onMouseDown={(e) => { e.preventDefault(); setField("fbr_sro_item", r.description); setSroQ(""); setSroOpen(false); }}
-                  onMouseEnter={() => setSroActive(i)}>
-                  {r.description}
-                </div>))}
-              {sroItems.data && (sroItems.data.results || []).length === 0 && (
-                <div className="es-item text-muted">{sroItems.data.hint || "No matches"}</div>)}
-              {!sroItems.data && sroItems.isFetching && <div className="es-item text-muted">Loading…</div>}
-            </div>)}
-        </div>
+        {/* dead until a schedule is chosen — an item without its schedule is never a valid pair;
+            the backend filters this one (serverFiltered), so typing searches the schedule's own items */}
+        <FBRCombo value={values.fbr_sro_item || ""} disabled={!values.fbr_sro_schedule}
+          placeholder={!values.fbr_sro_schedule ? "— Select SRO Schedule No first —" : values.fbr_sro_item || "— Select SRO item —"}
+          options={sroItems.data?.results || []} loading={sroItems.isFetching}
+          emptyText={sroItems.data?.hint || "No matches"}
+          serverFiltered onQ={setSroQ}
+          onPick={(r) => setField("fbr_sro_item", r.description)}
+          onClear={() => { setField("fbr_sro_item", ""); setSroQ(""); }} />
       </div>
       {third && <div className="col-md-3">
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
