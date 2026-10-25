@@ -297,8 +297,9 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         {hsQ.length >= 2 && (hs.data?.results?.length || 0) > 0 && hsQ !== values.fbr_hs_code && (
           <div className="border rounded mt-1" style={{ maxHeight: 160, overflowY: "auto" }}>
             {hs.data.results.slice(0, 20).map((r: any) => (
-              <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer" title={r.description} onClick={() => { setField("fbr_hs_code", r.key); setField("fbr_uom", ""); setHsQ(r.key); }}>
-                <strong>{r.key}</strong> <span className="text-muted">{(r.description.split(" - ").map((x: string) => x.trim()).filter(Boolean).pop() || r.description).slice(0, 70)}</span>
+              <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer border-bottom" onClick={() => { setField("fbr_hs_code", r.key); setField("fbr_uom", ""); setHsQ(r.key); }}>
+                <strong>{r.key}</strong> — <strong>{r.description.split(" - ").map((x: string) => x.trim()).filter(Boolean).pop()}</strong>
+                <div className="text-muted fs-11">{r.description}</div>
               </div>))}
           </div>)}
         {/* chapter 98 = a service heading: legitimately absent from FBR's goods list yet accepted — offer it directly */}
