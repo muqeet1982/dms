@@ -1081,9 +1081,7 @@ class ExtOrderPdfView(ExtBase):
     content_negotiation_class = _ServerPicksTheType
 
     def get(self, request, pk, kind="order"):
-        from decimal import Decimal
-
-        from apps.core.documents import render_doc
+        from apps.sales.documents import invoice_pdf, order_pdf
         from apps.sales.models import SalesInvoice
 
         self.perm(request, "external.view_own_orders")
@@ -1100,21 +1098,9 @@ class ExtOrderPdfView(ExtBase):
             inv = SalesInvoice.objects.filter(order=o).exclude(status="cancelled").order_by("-created_at").first()
             if inv is None:
                 return Response({"type": "no_invoice", "detail": f"{o.number} has no invoice yet."}, status=404)
-            lines = list(inv.lines.select_related("variant__product", "batch"))
-            from apps.sales.services import InvoiceService
-
-            extra = InvoiceService.present_lines(inv, lines)
-            return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number, title="SALES INVOICE", ref=inv.number)
-        lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
-        for l in lines:
-            l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
-            l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
-        return render_doc(request, "sales/order.html", {
-            "o": o, "lines": lines,
-            "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
-            "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
-            "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
-        }, o.number, title="SALES ORDER", ref=o.number)
+            # the office's own renderer: a tax invoice prints as one (title, columns, FBR number + QR) here too
+            return invoice_pdf(request, inv)
+        return order_pdf(request, o)
 
 
 def _shift_body(shift, tenant=None):

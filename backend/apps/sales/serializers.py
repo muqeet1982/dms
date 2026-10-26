@@ -158,6 +158,9 @@ class SalesOrderSerializer(SalesOrderListSerializer):
 class InvoiceLineSerializer(serializers.ModelSerializer):
     hs_code = serializers.CharField(source="variant.product.fbr_hs_code", read_only=True, default="")
     fbr_rate = serializers.CharField(source="variant.product.fbr_rate_desc", read_only=True, default="")
+    # with fbr_rate, these let the draft editor preview GST live the way engine.compute_line will charge it
+    fbr_sale_type = serializers.CharField(source="variant.product.fbr_sale_type", read_only=True, default="")
+    mrp = serializers.DecimalField(source="variant.product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
     variant_name = serializers.CharField(source="variant.name", read_only=True)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     batch_no = serializers.CharField(source="batch.batch_no", read_only=True, default="")
@@ -166,7 +169,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoiceLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "hs_code", "fbr_rate", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "hs_code", "fbr_rate", "fbr_sale_type", "mrp", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
 
 
 class SalesInvoiceEditSerializer(serializers.ModelSerializer):
@@ -277,8 +280,8 @@ class CreditNoteLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNoteLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "tax1_amount", "tax2_amount", "line_total"]
-        read_only_fields = ["id", "tax1_amount", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "tax1_rate", "tax1_amount", "tax2_amount", "line_total"]
+        read_only_fields = ["id", "tax1_rate", "tax1_amount", "tax2_amount", "line_total"]
         extra_kwargs = {"unit_cost": {"required": False}}
 
 

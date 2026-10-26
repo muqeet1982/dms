@@ -251,24 +251,9 @@ class SalesOrderViewSet(DocumentViewSet):
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
-        o = self.get_object()
-        lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
-        tax_shown = Decimal(str(o.tax1_total or 0)) + Decimal(str(o.tax2_total or 0))
-        # the tax face follows the customer's flag alone (owner 26 Oct 2026: "if customer tax is off then do not
-        # show") — an unflagged order's legacy tax-class tax does not turn it into a tax document
-        tax_on = bool(o.charge_tax)
-        for l in lines:
-            l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
-            l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
-            l.tax_amount = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
-            l.taxable = Decimal(str(l.line_total or 0)) - l.tax_amount
-        return render_doc(request, "sales/order.html", {
-            "o": o, "lines": lines, "tax_on": tax_on, "tax_shown": tax_shown,
-            "taxable_total": Decimal(str(o.subtotal or 0)) - Decimal(str(o.discount or 0)) - Decimal(str(o.scheme_discount or 0)),
-            "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
-            "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
-            "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
-        }, o.number, title="SALES ORDER", ref=o.number)
+        from apps.sales.documents import order_pdf
+
+        return order_pdf(request, self.get_object())
 
 
     def perform_destroy(self, instance):
@@ -379,25 +364,9 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
-        inv = self.get_object()
-        lines = list(inv.lines.select_related("variant__product", "batch").order_by("sequence"))
-        extra = InvoiceService.present_lines(inv, lines)
-        # a filed tax invoice must print FBR's number with a QR encoding it — the legal requirement
-        filing = getattr(inv, "fbr_filing", None)
-        if filing is not None and filing.status == "submitted" and filing.fbr_invoice_number:
-            import base64
-            import io
+        from apps.sales.documents import invoice_pdf
 
-            import segno
-
-            buf = io.BytesIO()
-            segno.make(filing.fbr_invoice_number).save(buf, kind="png", scale=3, border=1)
-            extra["fbr_number"] = filing.fbr_invoice_number
-            extra["fbr_qr"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-            extra["fbr_sandbox"] = filing.sandbox
-        doc_title = "SALES TAX INVOICE" if extra.get("tax_on") else "SALES INVOICE"
-        return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number,
-                          title=doc_title, ref=inv.number)
+        return invoice_pdf(request, self.get_object())
 
     @action(detail=True, methods=["post"])
     def discount(self, request, pk=None):

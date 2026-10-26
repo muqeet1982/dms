@@ -116,7 +116,7 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         # the tax-invoice face (owner's layout, 26 Oct 2026): Item · Qty · Rate · Disc · Taxable · GST · Total,
         # the HS code under the item name, and the owner's sample footer: Sub Total → Net Total → GST →
         # Total Tax → Grand Total → Total Payable
-        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
+        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Line Total<" in html
         assert "108" in html
         for row in ("Sub Total", "Net Total", "Total Tax", "Grand Total", "Total Payable"):
             assert row in html, row
@@ -520,7 +520,7 @@ def test_the_order_pdf_shows_the_tax_invoice_columns(api, tenant, taxed_world):
                                                      "tax_shown": o.tax1_total, "taxable_total": o.subtotal - o.discount - o.scheme_discount,
                                                      "show_progress": False, "tax1_name": "Sales Tax", "tax2_name": None,
                                                      "logo_url": None, "printed_at": "", "doc_title": "SALES ORDER", "doc_ref": o.number})
-        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
+        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Line Total<" in html
         assert "HS 7306.3090" in html
         for row in ("Sub Total", "Net Total", "Total Tax", "Grand Total", "Total Payable"):
             assert row in html, row
@@ -549,13 +549,13 @@ def test_a_tax_off_customer_gets_the_plain_order_face_even_with_class_tax(api, t
         seen.update(ctx)
         return HttpResponse(b"")
 
-    with mock.patch("apps.sales.views.render_doc", side_effect=capture):
+    with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         assert api.get(f"/api/v1/sales-orders/{r.data['id']}/pdf").status_code == 200
     assert seen["tax_on"] is False
 
     flagged = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id),
                                                 "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
-    with mock.patch("apps.sales.views.render_doc", side_effect=capture):
+    with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         api.get(f"/api/v1/sales-orders/{flagged.data['id']}/pdf")
     assert seen["tax_on"] is True
 

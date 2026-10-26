@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, fbrRateLabel, fbrRateParts, money, qty } from "@/lib/format";
+import { date, datetime, fbrLineTax, fbrRateLabel, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -93,7 +93,7 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0 })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, description: l.description, qty: l.qty, unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", fbr_sale_type: l.fbr_sale_type || "", mrp: l.mrp })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -107,7 +107,7 @@ export function InvoiceDetailPage() {
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #1B84FF" }}><div className="card-body py-3 text-center"><div className="fw-bold fs-16"><Link to={`/app/customers/${inv.customer}`}>{inv.customer_name}</Link></div><div className="text-muted fs-12">{inv.customer_code}</div></div></div></div>
       </div>
       <div className="card mb-3"><div className="card-body">
-        <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem></div>
+        <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem>{inv.force_tax_type && <InfoItem label="Tax" col="col-md-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span></InfoItem>}</div>
         {(() => {
           const taxed = Boolean(inv.force_tax_type) || Number(inv.tax1_total) > 0 || Number(inv.tax2_total) > 0;
           if (taxed) {
@@ -118,7 +118,7 @@ export function InvoiceDetailPage() {
             const taxTotal = (Number(inv.tax1_total) || 0) + (Number(inv.tax2_total) || 0);
             const discTotal = inv.lines.reduce((a: number, l: any) => a + (Number(l.discount_amount) || 0), 0);
             const taxableSum = Number(inv.total) - taxTotal;
-            return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Taxable</th><th className="num">GST</th><th className="num">Total</th></tr></thead>
+            return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Taxable</th><th className="num">GST</th><th className="num">Line Total</th></tr></thead>
               <tbody>{inv.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); const disc = Number(l.discount_amount) || 0; return <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}{(l as any).hs_code ? ` · HS ${(l as any).hs_code}` : ""}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{disc > 0.004 ? money(disc) : "—"}</td><td className="num">{money(Number(l.line_total) - taxAmt)}</td><td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.tax_pct_override == null && (l as any).fbr_rate ? fbrRateLabel((l as any).fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>; })}</tbody>
               <tfoot><tr><td colSpan={7} className="text-end">Sub Total</td><td className="num">{money(taxableSum + discTotal)}</td></tr>{discTotal > 0.004 && <tr><td colSpan={7} className="text-end">Discount{Number(inv.discount_pct) > 0 ? ` (${Number(inv.discount_pct)}%)` : ""}</td><td className="num">−{money(discTotal)}</td></tr>}<tr><td colSpan={7} className="text-end">Net Total</td><td className="num">{money(taxableSum)}</td></tr><tr><td colSpan={7} className="text-end">GST{inv.tax1_name ? ` — ${inv.tax1_name}` : ""}</td><td className="num">{money(taxTotal)}</td></tr><tr><td colSpan={7} className="text-end">Total Tax</td><td className="num">{money(taxTotal)}</td></tr>{Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={7} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}<tr><td colSpan={7} className="text-end">Grand Total</td><td className="num">{money(inv.total)}</td></tr><tr className="fw-bold"><td colSpan={7} className="text-end">Total Payable</td><td className="num">{money(inv.total)}</td></tr></tfoot></table>;
           }
@@ -134,7 +134,7 @@ export function InvoiceDetailPage() {
           {pays.data?.payments?.length > 0 && <table className="table table-sm fs-12"><thead className="table-light"><tr><th>Receipt</th><th>Date</th><th>Method</th><th>By</th><th className="num">Amount</th></tr></thead><tbody>{pays.data.payments.map((p: any) => <tr key={p.id}><td><Link to={`/app/accounting/payments/${p.id}`}>{p.number}</Link></td><td>{date(p.date)}</td><td>{p.method}{p.cheque_no ? ` ${p.cheque_no} (${p.cheque_status})` : ""}</td><td>{p.collected_by_name}</td><td className="num">{money(p.allocations.find((a: any) => a.document_id === inv.id)?.amount || p.amount)}</td></tr>)}</tbody></table>}
           {pays.data?.rep_collections?.length > 0 && <><h6 className="fs-13 mt-3">Rep collections</h6><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Collection</th><th>Date</th><th>Rep</th><th>Status</th><th className="num">Amount</th></tr></thead><tbody>{pays.data.rep_collections.map((c: any) => <tr key={c.id}><td>{c.number}</td><td>{date(c.date)}</td><td>{c.rep_name}</td><td><StatusBadge status={c.status} /></td><td className="num">{money(c.allocations.find((a: any) => a.invoice === inv.id)?.amount || c.amount)}</td></tr>)}</tbody></table></>}
         </div>) }]} />
-      <Modal open={Boolean(edit)} title={`Edit ${inv.number}`} onClose={() => setEdit(null)} size="md"
+      <Modal open={Boolean(edit)} title={`Edit ${inv.number}`} onClose={() => setEdit(null)} size={inv.status === "draft" ? (inv.force_tax_type ? "xl" : "lg") : "md"}
         footer={<><button className="btn btn-light" onClick={() => setEdit(null)}>Cancel</button>
           <button className="btn btn-primary" disabled={saving} onClick={async () => {
             setSaving(true);
@@ -166,17 +166,48 @@ export function InvoiceDetailPage() {
             <Field label="Invoice date" col="col-md-6"><DateInput className="form-control" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>
             <div className="col-12">
               <label className="form-label fs-12 fw-semibold">Prices</label>
-              <div className="table-responsive"><table className="table table-sm align-middle mb-1">
-                <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 90 }}>Qty</th><th className="num" style={{ width: 130 }}>Rate</th><th className="num" style={{ width: 130 }}>Discount</th><th className="num" style={{ width: 100 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{inv.force_tax_type && <th className="num" style={{ width: 100 }} title="This line's tax % — blank follows the product's FBR rate">Tax %</th>}</tr></thead>
-                <tbody>{edit.lines.map((l: any, i: number) => (
-                  <tr key={l.id}>
-                    <td className="fs-12">{l.description}</td>
-                    <td className="num fs-12">{qty(l.qty)}</td>
-                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.unit_price} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, unit_price: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>
-                    <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, discount_amount: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td><td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, product_discount_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>{inv.force_tax_type && <td><input type="number" step="0.01" min="0" max="100" className="form-control form-control-sm text-end" placeholder={String(l.tax_rate_now)} title="blank = the product's FBR rate" value={l.tax_pct} onChange={(e) => { const ls = [...edit.lines]; ls[i] = { ...l, tax_pct: e.target.value }; setEdit({ ...edit, lines: ls }); }} /></td>}
-                  </tr>))}</tbody>
-              </table></div>
-              <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. Tax is recalculated from the corrected figures when you save.</div>
+              {(() => {
+                /* live figures, mirroring update_draft: the typed discount, then a changed Prod % moves it by gross ×
+                   the change; Taxable = qty × rate − discount; on a tax invoice GST is the FBR engine's (or the typed
+                   Tax %), Line Total = Taxable + GST. PREVIEW — the server recomputes on Save. */
+                const taxed = Boolean(inv.force_tax_type);
+                const fig = edit.lines.map((l: any) => {
+                  const gross = Math.round(Number(l.qty) * Number(l.unit_price || 0) * 10000) / 10000;
+                  const disc = Math.max(0, Number(l.discount_amount || 0) + gross * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
+                  const taxable = gross - disc;
+                  const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), saleType: l.fbr_sale_type, mrp: l.mrp, overridePct: l.tax_pct }) : null;
+                  return { gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) };
+                });
+                const sum = (f: (x: any) => number) => fig.reduce((a: number, x: any) => a + f(x), 0);
+                const gross = sum((x) => x.gross), disc = sum((x) => x.disc), net = sum((x) => x.taxable), tax = sum((x) => x.gst?.amount || 0);
+                const span = taxed ? 8 : 6;
+                const set = (i: number, patch: any) => { const ls = [...edit.lines]; ls[i] = { ...ls[i], ...patch }; setEdit({ ...edit, lines: ls }); };
+                return <div className="table-responsive"><table className="table table-sm align-middle mb-1">
+                  <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 80 }}>Qty</th><th className="num" style={{ width: 120 }}>Rate</th><th className="num" style={{ width: 120 }}>Discount</th><th className="num" style={{ width: 90 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{taxed && <th className="num" style={{ width: 90 }} title="This line's tax % — blank follows the product's FBR rate">Tax %</th>}{taxed && <th className="num" style={{ width: 110 }}>Taxable</th>}{taxed && <th className="num" style={{ width: 100 }}>GST</th>}<th className="num" style={{ width: 110 }}>{taxed ? "Line Total" : "Amount"}</th></tr></thead>
+                  <tbody>{edit.lines.map((l: any, i: number) => (
+                    <tr key={l.id}>
+                      <td className="fs-12">{l.description}</td>
+                      <td className="num fs-12">{qty(l.qty)}</td>
+                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.unit_price} onChange={(e) => set(i, { unit_price: e.target.value })} /></td>
+                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.discount_amount} onChange={(e) => set(i, { discount_amount: e.target.value })} /></td>
+                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => set(i, { product_discount_pct: e.target.value })} /></td>
+                      {taxed && <td><input type="number" step="0.01" min="0" max="100" className="form-control form-control-sm text-end" placeholder={String(l.tax_rate_now)} title="blank = the product's FBR rate" value={l.tax_pct} onChange={(e) => set(i, { tax_pct: e.target.value })} /></td>}
+                      {taxed && <td className="num fs-12">{money(fig[i].taxable)}</td>}
+                      {taxed && <td className="num fs-12">{fig[i].gst ? <>{money(fig[i].gst.amount)}<div className="text-muted fs-11">{fig[i].gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no tax; classify it on the product's FBR card (HS code → rate)">—</span>}</td>}
+                      <td className="num fs-12 fw-medium">{money(fig[i].total)}</td>
+                    </tr>))}</tbody>
+                  <tfoot>{taxed ? <>
+                    <tr><td colSpan={span} className="text-end fs-12">Sub Total</td><td className="num fs-12">{money(gross)}</td></tr>
+                    {disc > 0.004 && <tr><td colSpan={span} className="text-end fs-12">Discount</td><td className="num fs-12">−{money(disc)}</td></tr>}
+                    <tr><td colSpan={span} className="text-end fs-12">Net Total</td><td className="num fs-12">{money(net)}</td></tr>
+                    <tr><td colSpan={span} className="text-end fs-12">GST</td><td className="num fs-12">{money(tax)}</td></tr>
+                    <tr><td colSpan={span} className="text-end fs-12">Total Tax</td><td className="num fs-12">{money(tax)}</td></tr>
+                    <tr><td colSpan={span} className="text-end fs-12">Grand Total</td><td className="num fs-12">{money(net + tax)}</td></tr>
+                    <tr className="fw-bold"><td colSpan={span} className="text-end fs-12">Total Payable</td><td className="num fs-12">{money(net + tax)}</td></tr>
+                  </> : <tr className="fw-bold"><td colSpan={span} className="text-end fs-12">Total</td><td className="num fs-12">{money(net)}</td></tr>}</tfoot>
+                </table></div>;
+              })()}
+              <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. The figures update as you type; the server recalculates them exactly when you save.</div>
             </div>
           </> : <div className="col-12"><Alert kind="info">The amounts cannot be changed here. This invoice is already in the ledger and owed by the customer, so a wrong figure is corrected with a <strong>credit note</strong>, which the customer also receives.</Alert></div>}
         </div>}
@@ -190,21 +221,26 @@ export function InvoiceDetailPage() {
 
 /** New invoice = invoice an order that has issued/delivered goods not yet invoiced — that is where invoices
  * come from in this flow. The button appears for anyone whose role holds the Invoices "Add" switch. */
-// the tax switch charges each line the full FBR arithmetic (owner 25-26 Oct 2026, INVOICE_TAX_FLOW_GUIDE.md):
-// percentage on the base — MRP × qty for 3rd Schedule goods when higher — plus the fixed rupee part × qty.
-// This mirrors apps/fbr/engine.compute_line for PREVIEW only; the server recomputes the real figures.
-function effLineTax(l: any, base: number): { label: string; amount: number } | null {
-  const rate: string = l.product_fbr_rate || "";
-  if (!rate) return null;
-  const { pct, fixed } = fbrRateParts(rate);
-  const qty = Number(l.qty_delivered) || Number(l.qty_dispatched) || Number(l.qty_ordered) || 0;
-  let taxBase = base;
-  if ((l.product_fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods") {
-    const retail = Number(l.product_mrp || 0) * qty;
-    if (retail > taxBase) taxBase = retail;
-  }
-  const amount = Math.round((taxBase * pct / 100 + qty * fixed) * 100) / 100;
-  return { label: fbrRateLabel(rate), amount };
+/**
+ * One order line as the invoice will bill it — mirrors InvoiceService.from_delivery_note(basis="loaded"): the
+ * ISSUED qty, free goods taken out pro rata, the order line's discount + scheme scaled by the same ratio, and a
+ * changed Discount % re-applied the way set_discount does (gross × (% + the product's own %)). With the tax
+ * switch on, GST is the FBR engine's (fbrLineTax). PREVIEW only — the server computes the real invoice.
+ */
+function billedLine(l: any, applyTax: boolean, newPct: number | null) {
+  const r4 = (n: number) => Math.round(n * 10000) / 10000;
+  const issued = Number(l.qty_dispatched) || Number(l.qty_delivered) || 0;
+  const ordered = (Number(l.qty_ordered) || 0) + (Number(l.free_qty) || 0);
+  const ratio = ordered ? issued / ordered : 0;
+  const free = Math.min((Number(l.free_qty) || 0) * ratio, issued);
+  const paid = issued - free;
+  const gross = r4(paid * (Number(l.unit_price) || 0));
+  const disc = newPct === null
+    ? r4(((Number(l.discount_amount) || 0) + (Number(l.scheme_discount) || 0)) * ratio)
+    : r4(gross * (newPct + (Number(l.product_discount_pct) || 0)) / 100);
+  const taxable = gross - disc;
+  const gst = applyTax ? fbrLineTax({ rate: l.product_fbr_rate, taxable, qty: paid, saleType: l.product_fbr_sale_type, mrp: l.product_mrp }) : null;
+  return { issued, gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) };
 }
 
 export function InvoiceCreatePage() {
@@ -235,12 +271,39 @@ export function InvoiceCreatePage() {
         {order && detail.data && (
           uninvoiced.length
             ? <>
-                <div className="fs-13 mb-2">Billing <strong>{detail.data.customer_name}</strong> for {uninvoiced.length} delivery note(s): {uninvoiced.map((d: any) => d.number).join(", ")}</div>
-                <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Issued / delivered</th><th className="num">Rate</th><th className="num">Discount</th>{applyTax && <th className="num">Tax</th>}<th className="num">Amount</th></tr></thead>
-                  {/* the switch REPLACES the tax classes, so the preview taxes the ex-tax base of each
-                      line — never the line_total, which already carries the classes' tax */}
-                  <tbody>{(detail.data.lines || []).map((l: any, i: number) => { const base = (Number(l.line_total) || 0) - (Number(l.tax1_amount) || 0) - (Number(l.tax2_amount) || 0); const t = effLineTax(l, base); const taxAmt = applyTax && t ? t.amount : 0; return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{Number(l.qty_ordered)}</td><td className="num">{Number(l.qty_delivered) || Number(l.qty_dispatched)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td>{applyTax && <td className="num">{t != null ? <>{money(taxAmt)}<div className="text-muted fs-11">{t.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no tax; classify it on the product's FBR card (HS code → rate)">—</span>}</td>}<td className="num fw-medium">{money(applyTax ? base + taxAmt : Number(l.line_total) || 0)}</td></tr>; })}</tbody>
-                  <tfoot>{(() => { const lines = detail.data.lines || []; const baseSum = lines.reduce((a: number, l: any) => a + (Number(l.line_total) || 0) - (Number(l.tax1_amount) || 0) - (Number(l.tax2_amount) || 0), 0); const taxSum = applyTax ? lines.reduce((a: number, l: any) => { const b = (Number(l.line_total) || 0) - (Number(l.tax1_amount) || 0) - (Number(l.tax2_amount) || 0); return a + (effLineTax(l, b)?.amount || 0); }, 0) : 0; const discSum = lines.reduce((a: number, l: any) => a + (Number(l.discount_amount) || 0) + (Number(l.scheme_discount) || 0), 0); const span = applyTax ? 7 : 6; return <>{applyTax && <><tr><td colSpan={span} className="text-end">Sub Total</td><td className="num">{money(baseSum + discSum)}</td></tr>{discSum > 0.004 && <tr><td colSpan={span} className="text-end">Discount</td><td className="num">−{money(discSum)}</td></tr>}<tr><td colSpan={span} className="text-end">Net Total</td><td className="num">{money(baseSum)}</td></tr><tr><td colSpan={span} className="text-end">GST</td><td className="num">{money(taxSum)}</td></tr><tr><td colSpan={span} className="text-end">Total Tax</td><td className="num">{money(taxSum)}</td></tr><tr><td colSpan={span} className="text-end">Grand Total</td><td className="num">{money(baseSum + taxSum)}</td></tr></>}<tr className="fw-bold"><td colSpan={span} className="text-end">{applyTax ? "Total Payable" : "Order total"}</td><td className="num">{money(applyTax ? baseSum + taxSum : Number(detail.data.total))}</td></tr></>; })()}</tfoot></table>
+                <div className="fs-13 mb-2">Billing <strong>{detail.data.customer_name}</strong> for {uninvoiced.length} delivery note(s): {uninvoiced.map((d: any) => d.number).join(", ")}{applyTax && <span className="badge bg-success-light text-success ms-2"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span>}</div>
+                {(() => {
+                  // the invoice carries the order's % unless it is changed here, and only a change re-prices the discount
+                  const orderPct = detail.data.discount_pct != null ? Number(detail.data.discount_pct) : null;
+                  const newPct = discOverride !== "" && Number(discOverride) !== orderPct ? Number(discOverride) : null;
+                  const rows = (detail.data.lines || []).map((l: any) => ({ l, b: billedLine(l, applyTax, newPct) })).filter((r: any) => r.b.issued > 0);
+                  const sum = (f: (b: any) => number) => rows.reduce((a: number, r: any) => a + f(r.b), 0);
+                  const gross = sum((b) => b.gross), disc = sum((b) => b.disc), net = sum((b) => b.taxable), tax = sum((b) => b.gst?.amount || 0);
+                  const span = applyTax ? 8 : 6;
+                  /* the tax-invoice face, as on the order and the printed invoice (owner, 26 Oct 2026): Disc is the
+                     line's whole discount, Taxable = what the GST is computed on, Total = Taxable + GST */
+                  return <table className="table table-sm fs-12 mb-0">
+                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Issued</th><th className="num">Rate</th><th className="num">Disc</th>{applyTax && <><th className="num">Taxable</th><th className="num">GST</th></>}<th className="num">{applyTax ? "Line Total" : "Amount"}</th></tr></thead>
+                    <tbody>{rows.map(({ l, b }: any, i: number) => <tr key={l.id}>
+                      <td>{i + 1}</td>
+                      <td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{applyTax && l.hs_code ? ` · HS ${l.hs_code}` : ""}</div></td>
+                      <td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(b.issued)}</td><td className="num">{money(l.unit_price)}</td>
+                      <td className="num">{b.disc > 0.004 ? money(b.disc) : "—"}</td>
+                      {applyTax && <><td className="num">{money(b.taxable)}</td><td className="num">{b.gst ? <>{money(b.gst.amount)}<div className="text-muted fs-11">{b.gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no tax; classify it on the product's FBR card (HS code → rate)">—</span>}</td></>}
+                      <td className="num fw-medium">{money(b.total)}</td>
+                    </tr>)}</tbody>
+                    <tfoot>
+                      {applyTax ? <>
+                        <tr><td colSpan={span} className="text-end">Sub Total</td><td className="num">{money(gross)}</td></tr>
+                        {disc > 0.004 && <tr><td colSpan={span} className="text-end">Discount</td><td className="num">−{money(disc)}</td></tr>}
+                        <tr><td colSpan={span} className="text-end">Net Total</td><td className="num">{money(net)}</td></tr>
+                        <tr><td colSpan={span} className="text-end">GST</td><td className="num">{money(tax)}</td></tr>
+                        <tr><td colSpan={span} className="text-end">Total Tax</td><td className="num">{money(tax)}</td></tr>
+                        <tr><td colSpan={span} className="text-end">Grand Total</td><td className="num">{money(net + tax)}</td></tr>
+                        <tr className="fw-bold"><td colSpan={span} className="text-end">Total Payable</td><td className="num">{money(net + tax)}</td></tr>
+                      </> : <tr className="fw-bold"><td colSpan={span} className="text-end">Total</td><td className="num">{money(net)}</td></tr>}
+                    </tfoot></table>;
+                })()}
                 <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above — check it, then issue.</div>
               </>
             : <div className="fs-13 text-warning">Every delivery on this order is already invoiced — it will not be offered again.</div>
@@ -287,9 +350,22 @@ export function CreditNoteDetailPage() {
       <PageHeader title={cn.number} badge={<StatusBadge status={cn.status} />} crumbs={[{ label: "Credit notes", to: "/app/sales/credit-notes" }, { label: cn.number }]} actions={cn.status === "draft" && pageRights("credit_notes").add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: "Credit note posted" })}><i className="ti ti-check me-1" />Post</button>} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${cn.customer}`}>{cn.customer_name}</Link></InfoItem><InfoItem label="Invoice">{cn.invoice_number ? <Link to={`/app/sales/invoices/${cn.invoice}`}>{cn.invoice_number}</Link> : "—"}</InfoItem><InfoItem label="Date">{date(cn.date)}</InfoItem><InfoItem label="Reason">{cn.reason || "—"}</InfoItem></div>
-        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th>Restock</th><th>Condition</th><th>Reason</th><th className="num">Total</th></tr></thead>
-          <tbody>{cn.lines.map((l: any) => <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td>{l.restock ? "yes" : "no"}</td><td>{l.condition}</td><td>{l.reason}</td><td className="num">{money(l.line_total)}</td></tr>)}</tbody>
-          <tfoot><tr className="fw-bold"><td colSpan={6} className="text-end">Total</td><td className="num">{money(cn.total)}</td></tr></tfoot></table>
+        {(() => {
+          /* a credit note against a tax invoice credits its tax back, so it reads like one: Taxable → GST → Line Total */
+          const taxTotal = (Number(cn.tax1_total) || 0) + (Number(cn.tax2_total) || 0);
+          const taxed = taxTotal > 0;
+          const span = taxed ? 8 : 6;
+          return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th>Restock</th><th>Condition</th><th>Reason</th>{taxed && <><th className="num">Taxable</th><th className="num">GST</th></>}<th className="num">{taxed ? "Line Total" : "Total"}</th></tr></thead>
+            <tbody>{cn.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td>{l.restock ? "yes" : "no"}</td><td>{l.condition}</td><td>{l.reason}</td>{taxed && <><td className="num">{money(Number(l.line_total) - t)}</td><td className="num">{t ? <>{money(t)}{Number(l.tax1_rate) > 0 && <div className="text-muted fs-11">{Number(l.tax1_rate)}%</div>}</> : "—"}</td></>}<td className="num">{money(l.line_total)}</td></tr>; })}</tbody>
+            <tfoot>{taxed ? <>
+              <tr><td colSpan={span} className="text-end">Sub Total</td><td className="num">{money(cn.subtotal)}</td></tr>
+              <tr><td colSpan={span} className="text-end">Net Total</td><td className="num">{money(cn.subtotal)}</td></tr>
+              <tr><td colSpan={span} className="text-end">GST</td><td className="num">{money(taxTotal)}</td></tr>
+              <tr><td colSpan={span} className="text-end">Total Tax</td><td className="num">{money(taxTotal)}</td></tr>
+              <tr><td colSpan={span} className="text-end">Grand Total</td><td className="num">{money(cn.total)}</td></tr>
+              <tr className="fw-bold"><td colSpan={span} className="text-end">Total Credit</td><td className="num">{money(cn.total)}</td></tr>
+            </> : <tr className="fw-bold"><td colSpan={span} className="text-end">Total</td><td className="num">{money(cn.total)}</td></tr>}</tfoot></table>;
+        })()}
       </div></div>
       <DocTabs model="CreditNote" id={cn.id} showMovements />
     </>
@@ -317,6 +393,21 @@ export function CreditNoteFormPage() {
     setLines(inv.data.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.description, sku: l.variant_sku, qty: String(Number(l.qty)), unit_price: String(l.unit_price), batch: l.batch, restock: true, condition: "good", reason: "" })));
   }
 
+  // a return against a tax invoice credits the tax the invoice CHARGED, per unit and per variant — mirrors
+  // CreditNoteService.create; an item the invoice never carried takes the FBR rate when the invoice is switched on
+  const invTaxed = Boolean(form.invoice && inv.data && (inv.data.force_tax_type || Number(inv.data.tax1_total) + Number(inv.data.tax2_total) > 0));
+  const perUnit: Record<string, { q: number; t1: number; t2: number }> = {};
+  for (const il of (form.invoice && inv.data?.lines) || []) {
+    const c = perUnit[il.variant] || (perUnit[il.variant] = { q: 0, t1: 0, t2: 0 });
+    c.q += Number(il.qty) || 0; c.t1 += Number(il.tax1_amount) || 0; c.t2 += Number(il.tax2_amount) || 0;
+  }
+  const creditTax = (l: EditLine, q: number, taxable: number) => {
+    const c = l.variant ? perUnit[l.variant] : undefined;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    if (c && c.q) return { label: "as invoiced", amount: r2((c.t1 / c.q) * q) + r2((c.t2 / c.q) * q) };
+    if (inv.data?.force_tax_type) return fbrLineTax({ rate: l.extra?.fbr_rate, taxable, qty: q, saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp });
+    return null;
+  };
   const submit = async (post: boolean) => {
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
     if (!form.customer || !valid.length) return toast.error("Select a customer and at least one line with quantity");
@@ -341,7 +432,7 @@ export function CreditNoteFormPage() {
           <Field label=" " col="col-md-3"><div className="form-check form-check-md mt-2"><input className="form-check-input" type="checkbox" id="applied" checked={form.applied_to_invoice} onChange={(e) => setForm({ ...form, applied_to_invoice: e.target.checked })} /><label htmlFor="applied" className="form-check-label">Apply to the invoice balance</label></div></Field>
         </div>
         {!form.invoice && <div className="alert alert-info py-2 fs-12 mb-2"><i className="ti ti-info-circle me-1" />No invoice selected — this is a <strong>blind return</strong>: add the returned items below. Use it when the goods weren't sold on a traceable invoice. Good stock goes back on hand; broken or expired stock is written off.</div>}
-        <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} />
+        <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} chargeTax={invTaxed} lineTax={creditTax} payableLabel="Total Credit" />
         {lines.length > 0 && <div className="table-responsive mt-2"><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th>Restock?</th><th>Condition</th><th>Line reason</th></tr></thead><tbody>{lines.map((l) => <tr key={l.key}><td>{l.variant_name || "—"}</td><td><input type="checkbox" className="form-check-input" checked={(l.condition || "good") === "good" ? (l.restock ?? true) : false} disabled={(l.condition || "good") !== "good"} title={(l.condition || "good") !== "good" ? "Broken or expired goods are written off, not put back in stock" : ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, restock: e.target.checked } : x)))} /></td><td><select className="form-select form-select-sm" value={l.condition || "good"} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, condition: e.target.value, restock: e.target.value === "good" } : x)))}><option value="good">good</option><option value="damaged">damaged</option><option value="expired">expired</option></select></td><td><input className="form-control form-control-sm" value={l.reason || ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, reason: e.target.value } : x)))} /></td></tr>)}</tbody></table></div>}
       </div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-outline-primary" onClick={() => submit(false)}>Save Draft</button><button className="btn btn-primary" onClick={() => submit(true)}>Issue Credit Note</button></div>

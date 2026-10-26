@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { api } from "@/api/client";
-import { fbrRateLabel, fbrRateParts, money } from "@/lib/format";
+import { fbrLineTax, money } from "@/lib/format";
 import { useScanListener } from "@/lib/scan";
 import { toast } from "@/lib/toast";
 import { EntitySelect } from "../ui/EntitySelect";
@@ -28,7 +28,7 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
-export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct }: {
+export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable" }: {
   lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>; blockOutOfStock?: boolean;
   /** When given, a switch appears to show or hide the discount column — off until a deal actually needs it. */
   onToggleDiscount?: () => void; discountShown?: boolean;
@@ -36,10 +36,14 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   priceLabel?: string;
   /** Optional per-line reason picker (purchase returns: expired, damaged, wrong item…). */
   reasons?: { id: string; name: string }[];
-  /** Tax-invoice customer: a GST column previews each line's FBR tax and the footer foots Taxable value + Sales tax. */
+  /** Tax-invoice customer: each line shows Taxable → GST → Line Total and the footer foots Sub Total → Total Payable. */
   chargeTax?: boolean;
   /** The document's own discount % — applies to lines with no discount of their own, as the server prices them. */
   defaultDiscountPct?: string | number;
+  /** A document whose tax is not the FBR engine's (a credit note mirrors its invoice's per-unit tax) supplies its own. */
+  lineTax?: (l: EditLine, baseQty: number, taxable: number) => { label: string; amount: number } | null;
+  /** The footer's last row — a credit note credits rather than asks for payment. */
+  payableLabel?: string;
 }) {
   const priceHeader = priceLabel || (priceFor === "cost" ? "D.P (unit)" : "Unit price");
   const [scan, setScan] = useState("");
@@ -114,22 +118,13 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   const defPct = Number(defaultDiscountPct || 0);
   const discPct = (l: EditLine) => (Number(l.discount_pct || 0) || defPct) + prodPctFor(l);
   const lineNet = (l: EditLine) => Number(l.qty || 0) * Number(l.unit_price || 0) * (1 - discPct(l) / 100);
-  const round2 = (n: number) => Math.round(n * 100) / 100;
-  /** Live GST preview for a tax-invoice customer — mirrors apps/fbr/engine.compute_line (like the invoice
-   * page's effLineTax): base is the MRP × qty when a 3rd Schedule retail price is higher than the taxable
-   * value, and a prose rate's fixed rupee part is charged per base unit. The server recomputes at save. */
-  const lineGst = (l: EditLine): { label: string; amount: number } | null => {
-    const rate = String(l.extra?.fbr_rate || "");
-    if (!rate) return null;
-    const { pct, fixed } = fbrRateParts(rate);
+  /** Live GST preview for a tax-invoice customer (fbrLineTax mirrors the engine; the server recomputes at
+   * save) — the engine counts in base units, so a carton line's qty is converted first. */
+  const lineGst = (l: EditLine) => {
     const pk = (l.packagings || []).find((x) => x.id === l.packaging);
     const baseQty = Number(l.qty || 0) * (pk ? Number(pk.qty_in_base) || 1 : 1);
-    let base = round2(lineNet(l));
-    if (String(l.extra?.fbr_sale_type || "").trim().toLowerCase() === "3rd schedule goods") {
-      const retail = round2(Number(l.extra?.fbr_mrp || 0) * baseQty);
-      if (retail > base) base = retail;
-    }
-    return { label: fbrRateLabel(rate), amount: round2((base * pct) / 100 + baseQty * fixed) };
+    if (lineTax) return lineTax(l, baseQty, lineNet(l));
+    return fbrLineTax({ rate: String(l.extra?.fbr_rate || ""), taxable: lineNet(l), qty: baseQty, saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp });
   };
   const gstFor = (l: EditLine) => (chargeTax ? lineGst(l)?.amount || 0 : 0);
   const gstShown = Boolean(chargeTax && showPrice);
@@ -137,7 +132,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   const taxTotal = lines.reduce((s, l) => s + gstFor(l), 0);
   const grossTotal = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0), 0);
   // every column before Total, so the footer labels line up under the right cell
-  const preTotalCols = 3 + (showPrice ? 1 : 0) + (showDiscount ? 2 : 0) + (reasons ? 1 : 0) + (showBatch ? 2 : 0) + (gstShown ? 1 : 0);
+  const preTotalCols = 3 + (showPrice ? 1 : 0) + (showDiscount ? 2 : 0) + (reasons ? 1 : 0) + (showBatch ? 2 : 0) + (gstShown ? 2 : 0);
   return (
     <div className="line-editor">
       {!readOnly && (
@@ -157,7 +152,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
       )}
       <div className={lines.length > LINES_SCROLL_FROM ? "table-scroll" : "lines-editor-wrap"}>
         <table className="table table-sm align-middle mb-0">
-          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{gstShown && <th className="num" style={{ width: 110 }}>GST</th>}{showPrice && <th className="num" style={{ width: 130 }}>Total</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
+          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{gstShown && <th className="num" style={{ width: 110 }}>Taxable</th>}{gstShown && <th className="num" style={{ width: 110 }}>GST</th>}{showPrice && <th className="num" style={{ width: 130 }}>{gstShown ? "Line Total" : "Total"}</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
           <tbody>
             {lines.map((l) => (
               <tr key={l.key}>
@@ -169,6 +164,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
                 {reasons && <td><select className="form-select form-select-sm" value={l.extra?.reason_code || ""} onChange={(e) => update(l.key, { extra: { ...(l.extra || {}), reason_code: e.target.value || null } })} disabled={readOnly}><option value="">same as document</option>{reasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></td>}
                 {showBatch && <td><input className="form-control form-control-sm" placeholder={l.extra?.is_batch_tracked ? "required" : "optional"} value={l.batch_no || ""} onChange={(e) => update(l.key, { batch_no: e.target.value })} readOnly={readOnly} /></td>}
                 {showBatch && <td><DateInput className="form-control form-control-sm" value={l.expiry_date || ""} onChange={(e) => update(l.key, { expiry_date: e.target.value })} readOnly={readOnly} /></td>}
+                {gstShown && <td className="num">{l.variant ? money(lineNet(l)) : <span className="text-muted">—</span>}</td>}
                 {gstShown && <td className="num">{(() => { const t = l.variant ? lineGst(l) : null; return t ? <>{money(t.amount)}<div className="text-muted fs-11">{t.label}</div></> : l.variant ? <span className="text-warning" title="No FBR rate — this item will carry no tax; classify it on the product's FBR card (HS code → rate)">—</span> : <span className="text-muted">—</span>; })()}</td>}
                 {showPrice && <td className="num fw-medium">{money(lineNet(l) + gstFor(l))}</td>}
                 {!readOnly && <td><button type="button" className="btn btn-sm btn-outline-danger" onClick={() => remove(l.key)}><i className="ti ti-x" /></button></td>}
@@ -184,12 +180,12 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
               <tr><td colSpan={preTotalCols} className="text-end">GST</td><td className="num">{money(taxTotal)}</td>{!readOnly && <td />}</tr>
               <tr><td colSpan={preTotalCols} className="text-end">Total Tax</td><td className="num">{money(taxTotal)}</td>{!readOnly && <td />}</tr>
               <tr><td colSpan={preTotalCols} className="text-end">Grand Total</td><td className="num">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
-              <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Total Payable</td><td className="num fw-bold">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end fw-semibold">{payableLabel}</td><td className="num fw-bold">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
             </> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>
       </div>
-      <div className="form-text mt-1">Quantities are in the selected packaging; the server converts to base units, applies price lists, schemes and taxes.{gstShown ? " GST is a live preview at each item's FBR rate — the saved order carries the exact figures." : ""}</div>
+      <div className="form-text mt-1">Quantities are in the selected packaging; the server converts to base units, applies price lists, schemes and taxes.{gstShown ? " Taxable, GST and Line Total are a live preview — the saved document carries the exact figures." : ""}</div>
     </div>
   );
 }

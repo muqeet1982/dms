@@ -630,3 +630,32 @@ def test_the_flattened_shop_rows_and_the_shops_own_history(rep_app, api, tenant)
     }, format="json")
     assert added.status_code == 201, added.content
     assert added.data["account"]["id"] == str(c.id) and added.data["account"]["location_count"] == 3
+
+
+def test_a_tax_customers_order_prints_as_a_tax_document_from_the_rep_app_too(rep_app):
+    """The rep's print/share (/ext/v1/orders/{id}/pdf) uses the office's renderer: a tax customer's order carries
+    the FBR tax and prints the tax face (Taxable → GST → Line Total, Sub Total … Total Payable), not the plain one."""
+    from unittest import mock
+
+    from django.http import HttpResponse
+
+    from apps.catalog.models import Product
+    from apps.partners.models import Customer
+
+    t = rep_app["tenant"]
+    with tenant_context(t, t.owner):
+        Customer.objects.filter(pk=rep_app["customer"].pk).update(charge_tax=True)
+        Product.objects.filter(pk=rep_app["variant"].product_id).update(fbr_rate_desc="18%")
+    made = _order(rep_app)
+    assert made.status_code in (200, 201), made.content
+    seen = {}
+
+    def capture(request, template, ctx, *a, **kw):
+        seen.update(ctx, template=template)
+        return HttpResponse(b"")
+
+    with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
+        r = rep_app["phone"].get(f"/ext/v1/orders/{made.data['id']}/pdf")
+    assert r.status_code == 200, r.content
+    assert seen["template"] == "sales/order.html" and seen["tax_on"] is True
+    assert seen["tax_shown"] > 0, "the rep's order carries the customer's FBR tax"

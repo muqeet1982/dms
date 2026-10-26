@@ -73,3 +73,26 @@ export function fbrRateLabel(rate: string): string {
   const { pct, fixed } = fbrRateParts(rate);
   return fixed ? (pct ? `${pct}% + Rs.${fixed}` : `Rs.${fixed}`) : rate;
 }
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * One line's GST for PREVIEW, mirroring apps/fbr/engine.compute_line: the % on the taxable value — on MRP × qty
+ * instead for 3rd Schedule goods when that is higher — plus the fixed rupee part × qty, 2 dp half-up. `qty` is in
+ * base units. A typed `overridePct` is a plain % on the taxable value (InvoiceService.forced_line_tax). Null when
+ * the product has no FBR rate: it carries no tax.
+ */
+export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; saleType?: string; mrp?: any; overridePct?: string | number | null }): { label: string; amount: number } | null {
+  if (o.overridePct !== undefined && o.overridePct !== null && o.overridePct !== "") {
+    const p = Number(o.overridePct) || 0;
+    return { label: `${p}%`, amount: r2((r2(o.taxable) * p) / 100) };
+  }
+  if (!o.rate) return null;
+  const { pct, fixed } = fbrRateParts(o.rate);
+  let base = r2(o.taxable);
+  if ((o.saleType || "").trim().toLowerCase() === "3rd schedule goods") {
+    const retail = r2(Number(o.mrp || 0) * o.qty);
+    if (retail > base) base = retail;
+  }
+  return { label: fbrRateLabel(o.rate), amount: r2((base * pct) / 100 + o.qty * fixed) };
+}

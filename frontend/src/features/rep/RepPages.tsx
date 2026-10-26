@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
-import { date, datetime, money, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, money, qty } from "@/lib/format";
 import { usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, EmptyState, Field, PageHeader, Spinner, StatCard, StatusBadge } from "@/components/ui/Bits";
@@ -205,7 +205,27 @@ export function RepOrderDetailPage() {
       {o.can_edit && o.editable_until && <div className="fs-12 text-muted mb-2"><i className="ti ti-clock me-1" />Corrections allowed until {datetime(o.editable_until)}.</div>}
       {o.rejection_reason && <Alert kind="danger">{o.rejection_reason}</Alert>}{o.hold_reason && <Alert kind="warning">{o.hold_reason}</Alert>}
       <div className="card mb-3"><div className="card-body fs-13"><div><strong>{o.customer_name}</strong> · {date(o.order_date)}{o.requested_delivery_date ? ` · deliver by ${date(o.requested_delivery_date)}` : ""}</div>{o.trip_number && <div className="text-muted">Trip {o.trip_number} · {o.driver_name} · {o.vehicle_reg}</div>}{o.notes && <div className="text-muted">{o.notes}</div>}
-        <table className="table table-sm fs-12 mt-2 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Free</th>{can("external.view_prices") && <th className="num">Price</th>}{can("external.view_prices") && <th className="num">Total</th>}<th className="num">Delivered</th></tr></thead><tbody>{o.lines.map((l: any) => <tr key={l.id}><td>{l.variant_name}<div className="fs-11 text-muted">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.free_qty)}</td>{can("external.view_prices") && <td className="num">{money(l.unit_price)}</td>}{can("external.view_prices") && <td className="num">{money(l.line_total)}</td>}<td className="num">{qty(l.qty_delivered)}</td></tr>)}</tbody>{can("external.view_prices") && <tfoot><tr className="fw-bold"><td colSpan={4} className="text-end">Total (incl. tax)</td><td className="num">{money(o.total)}</td><td /></tr></tfoot>}</table></div></div>
+        {(() => {
+          const prices = can("external.view_prices");
+          // a tax customer's order reads like the office's (owner, 26 Oct 2026): Taxable → GST → Line Total
+          const taxed = prices && Boolean(o.charge_tax);
+          const taxTotal = (Number(o.tax1_total) || 0) + (Number(o.tax2_total) || 0);
+          const span = taxed ? 6 : 4;
+          const row = (label: string, v: any, bold = false) => <tr className={bold ? "fw-bold" : ""}><td colSpan={span} className="text-end">{label}</td><td className="num">{v}</td><td /></tr>;
+          return <table className="table table-sm fs-12 mt-2 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Free</th>{prices && <th className="num">Price</th>}{taxed && <><th className="num">Taxable</th><th className="num">GST</th></>}{prices && <th className="num">{taxed ? "Line Total" : "Total"}</th>}<th className="num">Delivered</th></tr></thead>
+            <tbody>{o.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="fs-11 text-muted">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.free_qty)}</td>{prices && <td className="num">{money(l.unit_price)}</td>}{taxed && <><td className="num">{money(Number(l.line_total) - t)}</td><td className="num">{t ? <>{money(t)}{l.product_fbr_rate && <div className="text-muted fs-11">{fbrRateLabel(l.product_fbr_rate)}</div>}</> : "—"}</td></>}{prices && <td className="num">{money(l.line_total)}</td>}<td className="num">{qty(l.qty_delivered)}</td></tr>; })}</tbody>
+            {prices && <tfoot>{taxed ? <>
+              {row("Sub Total", money(o.subtotal))}
+              {Number(o.discount) > 0 && row("Discount", `−${money(o.discount)}`)}
+              {Number(o.scheme_discount) > 0 && row("Scheme", `−${money(o.scheme_discount)}`)}
+              {row("Net Total", money(Number(o.total) - taxTotal))}
+              {row("GST", money(taxTotal))}
+              {row("Total Tax", money(taxTotal))}
+              {row("Grand Total", money(o.total))}
+              {row("Total Payable", money(o.total), true)}
+            </> : row("Total (incl. tax)", money(o.total), true)}</tfoot>}
+          </table>;
+        })()}</div></div>
       <div className="card"><div className="card-body"><ul className="status-timeline mb-0"><li><div className="fs-13 fw-medium">Submitted</div><div className="fs-12 text-muted">{datetime(o.created_at)}</div></li>{o.confirmed_at && <li><div className="fs-13 fw-medium">Confirmed</div><div className="fs-12 text-muted">{datetime(o.confirmed_at)}</div></li>}{o.dispatched_at && <li><div className="fs-13 fw-medium">Dispatched</div><div className="fs-12 text-muted">{datetime(o.dispatched_at)}</div></li>}{o.delivered_at && <li><div className="fs-13 fw-medium">Delivered</div><div className="fs-12 text-muted">{datetime(o.delivered_at)}</div></li>}{o.invoices?.map((i: any) => <li key={i.id}><div className="fs-13 fw-medium">Invoice {i.number}</div><div className="fs-12 text-muted">{money(i.total)} · {i.status}</div></li>)}</ul></div></div>
       <ConfirmDialog open={cancel} title="Cancel this order?" withReason danger onClose={() => setCancel(false)} onConfirm={async (r) => { try { await api.post(`/ext/v1/orders/${id}/cancel`, { reason: r }); toast.success("Order cancelled"); qc.invalidateQueries({ queryKey: ["rep-order", id] }); } catch (e: any) { toast.error(e.message); } setCancel(false); }} />
     </>
