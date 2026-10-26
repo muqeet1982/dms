@@ -677,3 +677,19 @@ def test_the_sales_tax_register_reports_fbr_invoices_and_their_credit_notes(api,
     assert Decimal(r.data["totals"]["sales_tax"]) == Decimal("81")  # 108 − 27 credited back
     x = api.get("/api/v1/reports/sales_tax_register", {"format": "xlsx"})
     assert x.status_code == 200 and "sheet" in x["Content-Type"], x["Content-Type"]
+
+
+def test_the_variant_search_carries_the_fbr_preview_riders(api, tenant, taxed_world):
+    """The order form previews GST as items are picked, so the variant search payload must carry the
+    product's FBR rate, sale type and MRP — the browser mirrors engine.compute_line with them; the
+    server still recomputes the real figures at save (OrderService.price_line)."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18% along with rupees 60 per kilogram",
+                 fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("200"))
+    r = api.get("/api/v1/variants")
+    assert r.status_code == 200, r.content
+    rows = r.data["results"] if isinstance(r.data, dict) else r.data
+    row = next(x for x in rows if x["id"] == str(v.id))
+    assert row["fbr_rate_desc"] == "18% along with rupees 60 per kilogram"
+    assert row["fbr_sale_type"] == "3rd Schedule Goods"
+    assert Decimal(row["mrp_ex_tax"]) == Decimal("200")

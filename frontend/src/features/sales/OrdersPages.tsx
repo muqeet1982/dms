@@ -195,11 +195,15 @@ export function OrderFormPage() {
   // and it shows itself when an order being edited already carries one.
   const [showDiscount, setShowDiscount] = useState(false);
   const [saving, setSaving] = useState(false);
+  // the tax-invoice choice lives on the CUSTOMER (owner, 26 Oct 2026) and the order inherits it — the form
+  // fetches the flag so GST previews on each line as items are picked; an existing order keeps its own flag
+  const cust = useDoc("/api/v1/customers", form?.customer || undefined);
+  const chargeTax = Boolean(id ? existing.data?.charge_tax : cust.data?.charge_tax);
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
     setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
-    if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
+    if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct, extra: { fbr_rate: l.product_fbr_rate || "", fbr_sale_type: l.product_fbr_sale_type || "", fbr_mrp: l.product_mrp } })));
     return <Spinner />;
   }
   const submit = async (confirm: boolean) => {
@@ -226,7 +230,8 @@ export function OrderFormPage() {
           <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.order_date} onChange={(e) => setForm({ ...form, order_date: e.target.value })} /></Field>
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
-        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock />
+        {chargeTax && <div className="mb-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span><span className="text-muted fs-12 ms-2">this customer is charged sales tax — GST shows on each line as you add items</span></div>}
+        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock chargeTax={chargeTax} defaultDiscountPct={form.discount_pct !== "" && form.discount_pct != null ? form.discount_pct : cust.data?.default_discount_pct || 0} />
         {/* the tax-invoice choice lives on the CUSTOMER (owner, 26 Oct 2026) — the order inherits it */}
         <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
           <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />

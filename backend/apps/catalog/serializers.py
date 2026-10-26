@@ -137,10 +137,16 @@ class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
     unit_size = serializers.CharField(source="product.unit_size", read_only=True)
     packing = serializers.IntegerField(source="product.packing", read_only=True)
     stock_on_hand = serializers.DecimalField(max_digits=18, decimal_places=3, read_only=True, default=None)
+    # the order form previews each line's FBR GST as items are picked (the browser mirrors
+    # engine.compute_line; the server recomputes the real figures at save) — the same riders
+    # the saved line carries on sales.OrderLineSerializer
+    fbr_rate_desc = serializers.CharField(source="product.fbr_rate_desc", read_only=True, default="")
+    fbr_sale_type = serializers.CharField(source="product.fbr_sale_type", read_only=True, default="")
+    mrp_ex_tax = serializers.DecimalField(source="product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
 
     class Meta:
         model = ProductVariant
-        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "product_discount_min_qty", "product_offers", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "packagings", "barcodes", "stock_on_hand"]
+        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "product_discount_min_qty", "product_offers", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "fbr_rate_desc", "fbr_sale_type", "mrp_ex_tax", "packagings", "barcodes", "stock_on_hand"]
         read_only_fields = ["id", "avg_cost"]
         extra_kwargs = {"product": {"required": False}}
 
