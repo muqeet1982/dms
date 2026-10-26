@@ -201,6 +201,16 @@ export function UomsPage() {
 }
 
 /** Every product's dated discounts in one list — the same offers the product form edits, addressable here too. */
+/** One menu entry covers date-wise discounts AND schemes (owner, 26 Oct 2026) — the two pages stay, these tabs join them. */
+function DiscountNav({ active }: { active: "dated" | "schemes" }) {
+  return (
+    <ul className="nav nav-tabs mb-3">
+      <li className="nav-item"><Link className={`nav-link ${active === "dated" ? "active" : ""}`} to="/app/catalog/discounts">Date-Wise Discounts</Link></li>
+      <li className="nav-item"><Link className={`nav-link ${active === "schemes" ? "active" : ""}`} to="/app/catalog/schemes">Schemes & Promotions</Link></li>
+    </ul>
+  );
+}
+
 export function DatedDiscountsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const state = (o: any) =>
@@ -208,8 +218,8 @@ export function DatedDiscountsPage() {
     : o.end_date < today ? { label: "Ended", cls: "bg-secondary-light text-secondary" }
     : o.start_date > today ? { label: "Upcoming", cls: "bg-info-light text-info" }
     : { label: "Running", cls: "bg-success-light text-success" };
-  return <CrudPage page="products" title="Date-wise discounts" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Date-wise discounts" }]}
-    intro={<Alert kind="info">While an offer matches (date in its window, line qty at the minimum) it <strong>replaces</strong> the product's standard discount; when several match, the customer gets the best one. These are the same dated offers the product form edits.</Alert>}
+  return <CrudPage page="products" title="Discounts & schemes" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Discounts & schemes" }]}
+    intro={<><DiscountNav active="dated" /><Alert kind="info">While an offer matches (date in its window, line qty at the minimum) it <strong>replaces</strong> the product's standard discount; when several match, the customer gets the best one. These are the same dated offers the product form edits.</Alert></>}
     endpoint="/api/v1/product-offers"
     columns={[
       { key: "product_name", header: "Product", render: (o: any) => <><span className="fw-semibold text-dark">{o.product_name}</span><div className="text-muted fs-11 font-monospace">{o.product_sku}</div></> },
@@ -262,9 +272,9 @@ export function SchemesPage() {
     const upd = (k: string, v: any) => set({ ...r, [k]: v });
     return <div className="row g-2">{values.type === "free_qty" ? <><div className="col-4"><input type="number" className="form-control" placeholder="Buy qty" value={r.buy_qty || ""} onChange={(e) => upd("buy_qty", e.target.value)} /></div><div className="col-4"><input type="number" className="form-control" placeholder="Free qty" value={r.free_qty || ""} onChange={(e) => upd("free_qty", e.target.value)} /></div></> : <div className="col-4"><input type="number" step="0.01" className="form-control" placeholder={values.type === "percent" ? "% off" : "amount off per unit"} value={r.value || ""} onChange={(e) => upd("value", e.target.value)} /></div>}<div className="col-4"><input type="number" className="form-control" placeholder="Min qty" value={r.min_qty || ""} onChange={(e) => upd("min_qty", e.target.value)} /></div></div>;
   };
-  return <CrudPage page="schemes" title="Schemes & promotions" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Schemes" }]} endpoint="/api/v1/schemes" columns={[{ key: "name", header: "Scheme" }, { key: "type", header: "Type", render: (s: any) => titleCase(s.type) }, { key: "rules", header: "Rule", render: (s: any) => (s.type === "free_qty" ? `Buy ${s.rules.buy_qty} get ${s.rules.free_qty} free` : `${s.rules.value}${s.type === "percent" ? "%" : ""} off${s.rules.min_qty ? ` from ${s.rules.min_qty} units` : ""}`) }, { key: "valid_from", header: "Valid", render: (s: any) => `${s.valid_from || "…"} → ${s.valid_to || "…"}` }, { key: "customer_types", header: "Customer types", render: (s: any) => s.customer_types?.join(", ") || "all" }, { key: "is_active", header: "Active", render: (s: any) => <StatusBadge status={s.is_active ? "active" : "inactive"} /> }]}
+  return <CrudPage page="schemes" title="Discounts & schemes" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Schemes" }]} endpoint="/api/v1/schemes" columns={[{ key: "name", header: "Scheme" }, { key: "type", header: "Type", render: (s: any) => titleCase(s.type) }, { key: "rules", header: "Rule", render: (s: any) => (s.type === "free_qty" ? `Buy ${s.rules.buy_qty} get ${s.rules.free_qty} free` : `${s.rules.value}${s.type === "percent" ? "%" : ""} off${s.rules.min_qty ? ` from ${s.rules.min_qty} units` : ""}`) }, { key: "valid_from", header: "Valid", render: (s: any) => `${s.valid_from || "…"} → ${s.valid_to || "…"}` }, { key: "customer_types", header: "Customer types", render: (s: any) => s.customer_types?.join(", ") || "all" }, { key: "is_active", header: "Active", render: (s: any) => <StatusBadge status={s.is_active ? "active" : "inactive"} /> }]}
     fields={[{ name: "name", label: "Name", required: true, col: "col-md-8" }, { name: "type", label: "Type", type: "select", options: [{ value: "percent", label: "Percent off" }, { value: "amount", label: "Amount off per unit" }, { value: "free_qty", label: "Buy X get Y free" }], required: true, col: "col-md-4", default: "percent" }, { name: "rules", label: "Rule", type: "custom", render: rulesRender, col: "col-md-12", default: {} }, { name: "valid_from", label: "Valid from", type: "date", col: "col-md-3" }, { name: "valid_to", label: "Valid to", type: "date", col: "col-md-3" }, { name: "is_active", label: "Active", type: "checkbox", default: true, col: "col-md-3" }, { name: "customer_types", label: "Customer types (JSON list, empty = all)", type: "json", default: [], col: "col-md-6" }, { name: "brands", label: "Brands (JSON list of ids, empty = all)", type: "json", default: [], col: "col-md-6" }]}
-    intro={<Alert kind="info">Schemes apply automatically when orders are priced. Restrict by brand or customer type, or leave both empty for all products.</Alert>} />;
+    intro={<><DiscountNav active="schemes" /><Alert kind="info">Schemes apply automatically when orders are priced. Restrict by brand or customer type, or leave both empty for all products.</Alert></>} />;
 }
 
 export function LabelsPage() {
@@ -367,12 +377,20 @@ function FBRCombo({ value, options, onPick, onClear, disabled, placeholder, load
 }
 
 function FBRClassifier({ values, setField }: { values: any; setField: (k: string, v: any) => void }) {
-  const [hsQ, setHsQ] = useState(values.fbr_hs_code || "");
-  const [hsOpen, setHsOpen] = useState(false);
+  const [hsQ, setHsQ] = useState("");
   const [sroQ, setSroQ] = useState("");
   const look = (kind: string, parent?: string, q?: string) =>
     api.get("/api/v1/fbr/lookups", { kind, ...(parent ? { parent } : {}), ...(q ? { q } : {}) });
-  const hs = useQuery({ queryKey: ["fbr-l", "hscode", hsQ, hsOpen], queryFn: () => look("hscode", undefined, hsQ.length >= 2 ? hsQ : undefined), enabled: hsOpen || hsQ.length >= 2 });
+  const hs = useQuery({ queryKey: ["fbr-l", "hscode", hsQ], queryFn: () => look("hscode", undefined, hsQ.length >= 2 ? hsQ : undefined) });
+  // chapter 98 = a service heading: legitimately absent from FBR's goods list yet accepted — offer it directly
+  const hsOpts = (() => {
+    const rs = hs.data?.results || [];
+    const out = rs.map((r: any) => ({ key: r.key, description: `${r.key} — ${r.description}` }));
+    const q = hsQ.trim();
+    if (/^98\d\d\.\d{4}$/.test(q) && !rs.some((r: any) => r.key === q))
+      out.push({ key: q, description: `${q} — chapter 98 service heading: not in the goods list, accepted by FBR` });
+    return out;
+  })();
   const uoms = useQuery({ queryKey: ["fbr-l", "hs_uom", values.fbr_hs_code], queryFn: () => look("hs_uom", values.fbr_hs_code), enabled: Boolean(values.fbr_hs_code) });
   const trans = useQuery({ queryKey: ["fbr-l", "transtype"], queryFn: () => look("transtype") });
   const rates = useQuery({ queryKey: ["fbr-l", "rate", values.fbr_trans_type_id], queryFn: () => look("rate", values.fbr_trans_type_id), enabled: Boolean(values.fbr_trans_type_id) });
@@ -422,23 +440,16 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
     <div className="row g-2">
       <div className="col-md-4">
         <div className="form-label fs-12 mb-1">HS Code {values.fbr_hs_code ? <span className="badge bg-light text-dark ms-1">{values.fbr_hs_code}</span> : null}</div>
-        <div className="input-group">
-          <input className="form-control" placeholder="search FBR's list — code or words…" value={hsQ} onChange={(e) => { setHsQ(e.target.value); setHsOpen(true); }} onFocus={() => setHsOpen(true)} />
-          <button type="button" className="btn btn-outline-secondary" onClick={() => setHsOpen((v) => !v)} title="Browse FBR's HS code list"><i className={`ti ${hsOpen ? "ti-chevron-up" : "ti-chevron-down"}`} /></button>
-        </div>
-        {hsOpen && (hs.data?.results?.length || 0) > 0 && (
-          <div className="border rounded mt-1" style={{ maxHeight: 240, overflowY: "auto" }}>
-            {hs.data.results.map((r: any) => (
-              <div key={r.key} className="px-2 py-1 fs-12 cursor-pointer border-bottom" onClick={() => { setField("fbr_hs_code", r.key); setField("fbr_uom", ""); setHsQ(r.key); setHsOpen(false); }}>
-                <strong>{r.key}</strong> — <strong>{r.description.split(" - ").map((x: string) => x.trim()).filter(Boolean).pop()}</strong>
-                <div className="text-muted fs-11">{r.description}</div>
-              </div>))}
-          </div>)}
-        {/* chapter 98 = a service heading: legitimately absent from FBR's goods list yet accepted — offer it directly */}
-        {hsOpen && /^98\d\d\.\d{4}$/.test(hsQ.trim()) && hsQ.trim() !== values.fbr_hs_code && (
-          <div className="border rounded mt-1 px-2 py-1 fs-12 cursor-pointer bg-light" onClick={() => { const c = hsQ.trim(); setField("fbr_hs_code", c); setField("fbr_uom", "Numbers, pieces, units"); setHsQ(c); setHsOpen(false); }}>
-            <strong>{hsQ.trim()}</strong> <span className="text-muted">— chapter 98 service heading: not in the goods list, accepted by FBR (unit set to "Numbers, pieces, units")</span>
-          </div>)}
+        <FBRCombo value={values.fbr_hs_code || ""} serverFiltered onQ={setHsQ} loading={hs.isLoading}
+          options={hsOpts}
+          placeholder="search FBR's list — code or words…"
+          emptyText="No match — sync FBR's reference data under Settings → FBR e-invoicing if the list is empty."
+          onPick={(r) => {
+            const synthetic98 = /^98\d\d\.\d{4}$/.test(r.key) && !(hs.data?.results || []).some((x: any) => x.key === r.key);
+            setField("fbr_hs_code", r.key);
+            setField("fbr_uom", synthetic98 ? "Numbers, pieces, units" : "");
+          }}
+          onClear={() => { setField("fbr_hs_code", ""); setField("fbr_uom", ""); }} />
         {hsQ.length >= 4 && hs.data && (hs.data.results || []).length === 0 && !/^98/.test(hsQ.trim()) && hsQ !== values.fbr_hs_code && (
           <div className="form-text text-warning mt-1">{/\d{4}\.\d{4}/.test(hsQ) ? "Not in FBR's goods list — the code is wrong, or the list has not been synced yet (Settings → FBR e-invoicing)." : "No match — sync FBR's reference data under Settings → FBR e-invoicing if the list is empty."}</div>)}
       </div>
