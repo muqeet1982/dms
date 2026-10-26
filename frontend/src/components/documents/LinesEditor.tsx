@@ -10,8 +10,8 @@ import { LINES_SCROLL_FROM } from "../ui/Bits";
 
 export type EditLine = { key: string; variant: string | null; variant_name?: string; sku?: string; packaging?: string | null; packagings?: { id: string; name: string; qty_in_base: string }[]; qty: string; unit_price?: string; discount_pct?: string; product_discount_pct?: string; batch?: string | null; batch_no?: string; expiry_date?: string; extra?: Record<string, any> };
 
-/** The product's own discount for this quantity: the best live dated offer, else the standard % from its
- * minimum. Mirrors apps/catalog/models.product_discount_for so the cell shows what the server will write. */
+/** The product's own discount for this quantity: the best live dated offer, else its standard Discount % from the
+ * first unit. Mirrors apps/catalog/models.product_discount_for so the cell shows what the server will write. */
 export const prodPctFor = (l: EditLine): number => {
   if (l.product_discount_pct !== undefined && l.product_discount_pct !== null && l.product_discount_pct !== "") return Number(l.product_discount_pct) || 0;
   const rule = (l.extra as any)?.prod_rule;
@@ -20,7 +20,7 @@ export const prodPctFor = (l: EditLine): number => {
   const today = new Date().toISOString().slice(0, 10);
   const live = (rule.offers || []).filter((o: any) => o.start_date <= today && today <= o.end_date && qty >= Number(o.min_qty || 0)).map((o: any) => Number(o.discount_pct) || 0);
   if (live.length) return Math.max(...live);
-  return rule.pct && qty >= (rule.min_qty || 0) ? rule.pct : 0;
+  return rule.pct || 0;
 };
 
 export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: null, qty: "1", unit_price: "", discount_pct: "0", product_discount_pct: "0" });
@@ -67,7 +67,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     if (priceFor !== "cost" && customerId) {
       try { const p = await api.get(`/api/v1/variants/${v.id}/price`, { customer: customerId, packaging: packaging?.id }); price = p.unit_price; } catch { /* ignore */ }
     }
-    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), prod_rule: { pct: Number(v.product_discount_pct || 0), min_qty: Number(v.product_discount_min_qty || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.fbr_rate_desc || "", fbr_sale_type: v.fbr_sale_type || "", fbr_mrp: v.mrp_ex_tax, fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
+    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), prod_rule: { pct: Number(v.product_discount_pct || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.fbr_rate_desc || "", fbr_sale_type: v.fbr_sale_type || "", fbr_mrp: v.mrp_ex_tax, fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
   };
   /**
    * Re-price a line when its packaging changes. A carton is the piece price times the box size; a customer's

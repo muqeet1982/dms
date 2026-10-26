@@ -163,6 +163,9 @@ class ProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(f"{label} must be a percentage between 0 and 100.")
         return value if value is not None else Decimal("0")
 
+    def validate_discount_pct(self, value):
+        return self._pct(value, "Discount")
+
     def validate_fbr_fed_rate(self, value):
         return self._pct(value, "FED rate")
 

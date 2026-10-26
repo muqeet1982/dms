@@ -316,13 +316,13 @@ class ProductOffer(TenantModel):
 
 
 def product_discount_for(product, qty, on_date=None):
-    """The % this line earns: the best matching dated offer, else the standard % once qty reaches its minimum."""
+    """The % this line earns: the best matching dated offer, else the product's standard Discount %. The standard
+    % applies from the first unit — the owner removed "Discount from (qty)" (27 Oct 2026), so a minimum left
+    on an old product must not keep gating it out of sight."""
     from django.utils import timezone
 
     on = on_date or timezone.localdate()
     offered = [o.discount_pct for o in product.offers.all() if o.matches(qty, on)]
     if offered:
         return max(offered)
-    if product.discount_pct and qty >= (product.discount_min_qty or 0):
-        return product.discount_pct
-    return Decimal("0")
+    return product.discount_pct or Decimal("0")

@@ -13,7 +13,9 @@ from apps.core.tenancy import tenant_context
 pytestmark = pytest.mark.django_db
 
 
-def test_the_discount_waits_for_its_minimum_and_a_dated_offer_overrides(tenant):
+def test_the_standard_discount_applies_from_the_first_unit_and_a_dated_offer_overrides(tenant):
+    """Owner, 27 Oct 2026: "Discount from (qty)" is gone — the product's Discount % applies from the first unit,
+    even on an old product that still carries a minimum. Dated offers keep their own minimum."""
     from apps.catalog.models import ProductOffer
     from apps.sales.services import OrderService
 
@@ -29,8 +31,8 @@ def test_the_discount_waits_for_its_minimum_and_a_dated_offer_overrides(tenant):
             o = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal(qty), "unit_price": None}], source="staff", warehouse=wh)
             return o.lines.first().product_discount_pct
 
-        assert line_pct("2") == Decimal("0"), "below the minimum the standard % stays away"
-        assert line_pct("5") == Decimal("5.000"), "at the minimum it applies"
+        assert line_pct("2") == Decimal("5.000"), "a leftover minimum no longer gates the standard %"
+        assert line_pct("5") == Decimal("5.000")
 
         today = timezone.localdate()
         ProductOffer.objects.create(product=p, discount_pct=Decimal("8"), min_qty=Decimal("10"),
@@ -40,7 +42,7 @@ def test_the_discount_waits_for_its_minimum_and_a_dated_offer_overrides(tenant):
 
         assert line_pct("10") == Decimal("8.000"), "the live offer replaces the standard"
         assert line_pct("5") == Decimal("5.000"), "under the offer's minimum the standard still rules"
-        assert line_pct("2") == Decimal("0"), "an expired offer is dead, whatever its minimum"
+        assert line_pct("2") == Decimal("5.000"), "an expired offer is dead, whatever its minimum — the standard rules"
 
 
 def test_the_product_form_add_saves_discount_and_offers(api, tenant):

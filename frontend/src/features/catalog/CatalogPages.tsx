@@ -45,9 +45,6 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "supplier", label: "Supplier (manufacturer)", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }), col: "col-md-3" }, { name: "base_uom", label: "Base unit", type: "entity", endpoint: "/api/v1/uoms", mapOption: (u) => ({ id: u.id, label: `${u.code} — ${u.name}` }), required: true, col: "col-md-3" },
   { name: "unit_size", label: "Unit / size", col: "col-md-3", placeholder: "60ml, 1L, 500g, pcs" }, { name: "packing", label: "Units per box", type: "number", col: "col-md-3", default: 1, hint: "How many units in one box / carton" }, { name: "box_upc", label: "Box UPC (barcode on the box)", col: "col-md-3", hint: "One scan = one box", inputMode: "numeric", autoComplete: "off", showIf: (v) => Number(v.packing) > 1 }, { name: "location", label: "Location (rack / shelf / bin)", type: "custom", col: "col-md-3", render: (v, set) => <LocationField value={v || null} onChange={set} /> },
   { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: "T.P — trade price", type: "money", col: "col-md-3", default: 0 }, { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
- { name: "tax_pct", label: "Tax %", type: "number", col: "col-md-3", suffix: "%", hint: "shows on each invoice line for this product when the invoice charges tax" },
-  { name: "discount_pct", label: "Product discount %", type: "number", col: "col-md-3", default: 0, suffix: "%", hint: "applies on this product's sales lines once the minimum quantity is reached; separate from the customer's co-funded discount", validate: (v: any) => (Number(v) > 100 ? "Cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
-  { name: "discount_min_qty", label: "Discount from (qty)", type: "number", col: "col-md-2", default: 0, hint: "0 = always" },
   { name: "offers_write", label: "Dated offers (override the standard discount while they match)", type: "custom", col: "col-md-12", default: [],
     render: (v: any, set: any) => <OffersEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
   ...(isNew
@@ -69,7 +66,7 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_schedule", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_item", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "mrp_ex_tax", label: "", type: "custom", col: "d-none", render: () => null },
-  ...(["fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate"].map((name) => (
+  ...(["discount_pct", "fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate"].map((name) => (
     { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name, label: "", type: "custom", col: "d-none", default: 0, render: () => null }
   )) as FieldDef[]),
 
@@ -510,17 +507,20 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
         <input type="number" step="0.01" className="form-control" value={values.mrp_ex_tax ?? ""} onChange={(e) => setField("mrp_ex_tax", e.target.value === "" ? null : Number(e.target.value))} />
       </div>}
-      {/* the four taxes beside GST (owner, 26 Oct 2026; INVOICE_TAX_FLOW_GUIDE §4): each a % of the line's taxable
-          value, charged only on a tax invoice. FED / Extra / Further are added to the bill; WHT is withheld by
-          the buyer, so it comes off what they pay. Blank = 0. */}
+      {/* the payload's money fields beside GST (owner, 26-27 Oct 2026; INVOICE_TAX_FLOW_GUIDE §4). Discount % is the
+          product's own discount on every sale (filed as the line's `discount`; it replaced the old Product discount %
+          and Discount from (qty) fields). FED / Extra / Further / WHT are each a % of the line's taxable value,
+          charged only on a tax invoice: the first three are added to the bill, WHT is withheld by the buyer and comes
+          off what they pay. Blank = 0. */}
       <div className="col-12"><hr className="my-2" /></div>
       {([
+        ["discount_pct", "Discount %", "this product's own discount on every sale of it — filed with FBR as the line's discount"],
         ["fbr_fed_rate", "FED rate %", "Federal Excise Duty — added to the bill"],
         ["fbr_extra_tax_rate", "Extra tax %", "added to the bill"],
         ["fbr_further_tax_rate", "Further tax %", "added to the bill (e.g. 3% to unregistered buyers)"],
         ["fbr_wht_rate", "WHT %", "sales tax withheld at source by the buyer — deducted from what they pay"],
       ] as const).map(([name, label, hint]) => (
-        <Field key={name} label={label} col="col-md-3" hint={hint}>
+        <Field key={name} label={label} col="col-md" hint={hint}>
           <input type="number" step="0.01" min="0" max="100" className="form-control" placeholder="0"
             value={values[name] === null || values[name] === undefined || Number(values[name]) === 0 ? "" : values[name]}
             onChange={(e) => setField(name, e.target.value === "" ? 0 : e.target.value)} />
