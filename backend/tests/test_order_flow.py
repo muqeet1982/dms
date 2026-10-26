@@ -316,3 +316,29 @@ def test_cancel_after_confirmation_is_the_owners_and_the_stock_comes_back(api, t
                                            "lines": [{"variant": str(v.id), "qty": "1"}]}, format="json")
     ok = clerk.post(f"/api/v1/sales-orders/{r2.data['id']}/cancel", {"reason": "typo"}, format="json")
     assert ok.status_code == 200, ok.content
+
+
+def test_a_confirmed_order_is_not_short_against_its_own_reservation(api, tenant):
+    """TDN-SO-00051 (26 Oct 2026): a confirmed order held 6 of the 11 on hand, and its own view then
+    said "62020 short 1" — the availability check subtracted the order's own hold. A line's
+    qty_allocated is stock it already has, never a shortfall."""
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)  # 100 on hand
+
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "60"}]}, format="json")
+    assert r.status_code == 201 and r.data["status"] == "confirmed", r.content
+    assert str(r.data["lines"][0]["qty_allocated"]).startswith("60"), "the hold this test is about"
+
+    # free stock is 40, the order wants 60 — but 60 of its own are reserved, so it is covered
+    a = api.get(f"/api/v1/sales-orders/{r.data['id']}/availability")
+    assert a.status_code == 200, a.content
+    assert a.data["ok"] is True, a.data
+    assert Decimal(a.data["rows"][0]["short"]) == 0, "its own reserved units are not a shortfall"
+
+    # another order still sees only the 40 unreserved units
+    r2 = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                           "lines": [{"variant": str(v.id), "qty": "45"}]}, format="json")
+    assert r2.status_code == 201 and r2.data["status"] == "on_hold_stock", r2.content
+    assert "short 5" in r2.data["hold_reason"]

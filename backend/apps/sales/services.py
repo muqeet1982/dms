@@ -229,7 +229,9 @@ class OrderService:
         """Per-line availability in the order's warehouse."""
         rows, ok = [], True
         for line in order.lines.select_related("variant"):
-            avail = StockService.available(line.variant, order.warehouse)
+            # stock this order already reserved for itself (qty_allocated) is not a shortfall —
+            # without adding it back, a confirmed order reads short against its own hold
+            avail = StockService.available(line.variant, order.warehouse) + line.qty_allocated
             short = max(line.qty_ordered + line.free_qty - avail, Decimal("0"))
             if short > 0:
                 ok = False
