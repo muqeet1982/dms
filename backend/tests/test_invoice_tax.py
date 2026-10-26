@@ -589,3 +589,37 @@ def test_the_customer_flag_makes_every_order_a_tax_invoice(api, tenant, taxed_wo
     r2 = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                            "charge_tax": False, "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
     assert r2.status_code == 201 and r2.data["charge_tax"] is False, r2.content
+
+
+def test_the_sales_tax_register_reports_fbr_invoices_and_their_credit_notes(api, tenant, taxed_world):
+    """Owner (26 Oct 2026): a report for the tax change — every FBR-taxed invoice and the credit notes
+    reversing them, untaxed invoices excluded, net totals ready for the sales-tax return."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    oid = _issued_order(api, wh, cust, v)  # 4 × 150
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    # an untaxed invoice stays OUT of the register
+    oid2 = _issued_order(api, wh, cust, v)
+    api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"apply_tax": False}, format="json")
+    with tenant_context(tenant, tenant.owner):
+        from apps.inventory.models import Warehouse
+        from apps.sales.models import SalesInvoice
+        from apps.sales.services import CreditNoteService
+
+        row = SalesInvoice.objects.get(id=inv["id"])
+        cn = CreditNoteService.create(customer=cust, invoice=row, warehouse=Warehouse.objects.get(pk=wh.id),
+                                      lines=[{"variant": v, "qty": Decimal("1"), "unit_price": Decimal("150")}])
+        CreditNoteService.post(cn)
+
+    r = api.get("/api/v1/reports/sales_tax_register")
+    assert r.status_code == 200, r.content
+    docs = [(x["doc"], x["number"]) for x in r.data["rows"]]
+    assert ("Invoice", inv["number"]) in docs and any(d == "Credit note" for d, _ in docs)
+    assert len(r.data["rows"]) == 2, docs  # the untaxed invoice is not in the register
+    invoice_row = next(x for x in r.data["rows"] if x["doc"] == "Invoice")
+    assert Decimal(invoice_row["taxable_value"]) == Decimal("600") and Decimal(invoice_row["sales_tax"]) == Decimal("108")
+    assert invoice_row["fbr_status"] == "not filed"
+    assert Decimal(r.data["totals"]["sales_tax"]) == Decimal("81")  # 108 − 27 credited back
+    x = api.get("/api/v1/reports/sales_tax_register", {"format": "xlsx"})
+    assert x.status_code == 200 and "sheet" in x["Content-Type"], x["Content-Type"]

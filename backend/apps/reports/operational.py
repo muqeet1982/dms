@@ -656,3 +656,34 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
                           "return_qty": "danger", "closing_qty": "bold", "closing_value": "bold"},
         "rows": rows, "totals": totals,
     }
+
+
+def sales_tax_register(date_from=None, date_to=None, **_):
+    """The sales-tax return's working paper (owner, 26 Oct 2026): every FBR-taxed invoice and every
+    posted credit note that reverses one, with the buyer's registration and the FBR filing state.
+    Credit notes carry negative figures so the totals are the period's net output tax."""
+    from apps.sales.models import CreditNote, SalesInvoice
+
+    rows = []
+    inv_qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue"]),
+                     "date", date_from, date_to)
+    inv_qs = inv_qs.filter(Q(force_tax_type__isnull=False) | Q(tax1_total__gt=0)).select_related("customer")
+    for i in inv_qs:
+        f = getattr(i, "fbr_filing", None)
+        rows.append({"date": i.date, "doc": "Invoice", "number": i.number, "customer": i.customer.name,
+                     "ntn_cnic": (i.customer.ntn or i.customer.cnic or "").strip(),
+                     "registration": i.customer.fbr_registration_type or "",
+                     "taxable_value": str(i.subtotal - i.discount), "sales_tax": str(i.tax1_total), "total": str(i.total),
+                     "fbr_status": (f.status if f is not None else "") or "not filed",
+                     "fbr_number": (f.fbr_invoice_number if f is not None else "") or ""})
+    cn_qs = _window(CreditNote.objects.filter(status="posted", tax1_total__gt=0), "date", date_from, date_to)
+    for c in cn_qs.select_related("customer", "invoice"):
+        rows.append({"date": c.date, "doc": "Credit note", "number": c.number, "customer": c.customer.name,
+                     "ntn_cnic": (c.customer.ntn or c.customer.cnic or "").strip(),
+                     "registration": c.customer.fbr_registration_type or "",
+                     "taxable_value": str(-c.subtotal), "sales_tax": str(-c.tax1_total), "total": str(-c.total),
+                     "fbr_status": f"against {c.invoice.number}" if c.invoice_id else "standalone", "fbr_number": ""})
+    rows.sort(key=lambda r: (str(r["date"]), r["number"]))
+    totals = {k: str(sum((Decimal(r[k]) for r in rows), Z)) for k in ("taxable_value", "sales_tax", "total")}
+    return {"columns": ["date", "doc", "number", "customer", "ntn_cnic", "registration", "taxable_value",
+                        "sales_tax", "total", "fbr_status", "fbr_number"], "rows": rows, "totals": totals}
