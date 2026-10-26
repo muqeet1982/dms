@@ -1,6 +1,6 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { DiscountPctSelect } from "@/features/sales/OrdersPages";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -72,6 +72,18 @@ export function InvoiceDetailPage() {
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
+          {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): reopen → FBR tax → review → re-post */}
+          {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && inv.fbr?.status !== "submitted" && (
+            <button className={inv.force_tax_type ? "btn btn-outline-warning" : "btn btn-outline-success"} disabled={!!busy || saving}
+              title={inv.force_tax_type ? "Reopens this invoice, removes the tax, and leaves it for you to review and re-post" : "Reopens this invoice, charges each item at its FBR rate, and leaves it for you to review and re-post"}
+              onClick={async () => {
+                setSaving(true);
+                try {
+                  await api.post(`/api/v1/invoices/${id}/reopen`, {}, true);
+                  await api.post(`/api/v1/invoices/${id}/tax`, { apply: !inv.force_tax_type }, true);
+                  toast.success(inv.force_tax_type ? "Tax removed — review, then press Post to ledger" : "Tax on — review the figures, then press Post to ledger");
+                } catch (e: any) { toast.error(e.message); } finally { setSaving(false); qc.invalidateQueries(); }
+              }}><i className="ti ti-percentage me-1" />{inv.force_tax_type ? "Tax off" : "Tax on"}</button>)}
           {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && page.can("fbr_file") && inv.fbr?.status !== "submitted" && <>
             <button className="btn btn-outline-info" disabled={!!busy} onClick={() => run("fbr-validate", {}, { success: "FBR accepted the dry run — ready to submit" })}><i className="ti ti-building-bank me-1" />Validate with FBR</button>
             {inv.fbr?.status === "validated" && <button className="btn btn-info" disabled={!!busy} onClick={() => run("fbr-submit", {}, { success: "Filed — FBR number issued" })}><i className="ti ti-send me-1" />Submit to FBR</button>}
@@ -201,6 +213,8 @@ export function InvoiceCreatePage() {
   const [taxPct, setTaxPct] = useState("");
   const [discOverride, setDiscOverride] = useState<string>("");
   const detail = useDoc("/api/v1/sales-orders", order || undefined);
+  // the order may have asked for a tax invoice when it was taken — seed the switch from it (still changeable here)
+  useEffect(() => { if (detail.data) setApplyTax(Boolean(detail.data.charge_tax)); }, [detail.data?.id]);
   const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoiced);
   // the % the invoice will carry: the order's own (seeded from the customer) unless changed right here
   const effDisc = discOverride !== "" ? discOverride : detail.data?.discount_pct != null ? String(Number(detail.data.discount_pct)) : "";

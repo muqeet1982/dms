@@ -127,7 +127,7 @@ class OrderService:
     # ---------------------------------------------------------------- create
     @staticmethod
     @transaction.atomic
-    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None, location=None, payment_mode=None):
+    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None, location=None, payment_mode=None, charge_tax=False):
         tenant = get_current_tenant()
         PlanLimitService.check(tenant, "max_orders_month")
         if rep is None:
@@ -150,7 +150,7 @@ class OrderService:
         if payment_mode and payment_mode not in ("cash", "credit"):
             raise DomainError("payment_mode must be cash or credit.", code="bad_payment_mode")
         payment_mode = payment_mode or ("cash" if not (customer.credit_days or 0) else "credit")
-        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, location=location, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, payment_mode=payment_mode, status="draft" if source == "staff" and not auto_confirm else "submitted")
+        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, location=location, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, payment_mode=payment_mode, charge_tax=bool(charge_tax), status="draft" if source == "staff" and not auto_confirm else "submitted")
         OrderService.write_lines(order, lines, allow_override)
         if not order.lines.exists():
             raise DomainError("Order has no valid lines.")
@@ -545,7 +545,7 @@ class OrderService:
 class InvoiceService:
     @staticmethod
     @transaction.atomic
-    def from_delivery_note(dn, basis="delivered", *, post=True):
+    def from_delivery_note(dn, basis="delivered", *, post=True, charge_tax=None, tax_type=None):
         """
         One invoice per delivery note (§6.3 point 8). `basis="loaded"` invoices what the warehouse issued —
         that is the invoice-before-dispatch flow; shortfalls on delivery are settled with a credit note.
@@ -553,6 +553,11 @@ class InvoiceService:
         `post=False` leaves it a **draft**, which is the only state in which its figures can still be corrected
         (`update_draft`). Posting is the default because that is how the office has always worked here: the
         invoice goes out with the vehicle, and one that needs checking first is the exception, not the rule.
+
+        `charge_tax`: None follows the ORDER's own switch (a tax invoice asked for when the order was taken,
+        owner 26 Oct 2026) — and a refusal there must not block an automatic billing at delivery confirmation,
+        so it is recorded as a notification instead. True/False is a person deciding right now, so a refusal
+        (unclassified products, 3rd Schedule without MRP) is raised back at them.
         """
         if hasattr(dn, "invoice") and dn.invoice is not None:
             return dn.invoice
@@ -593,6 +598,20 @@ class InvoiceService:
         # it drives the manufacturer claim on posting
         inv.discount_pct = OrderService.effective_discount_pct(dn.order) if dn.order_id else Decimal(str(customer.default_discount_pct or 0))
         inv.save()
+        want_tax = charge_tax if charge_tax is not None else bool(order and order.charge_tax)
+        if want_tax:
+            try:
+                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type)
+            except DomainError:
+                if charge_tax is not None:
+                    raise
+                from apps.core.notifications import notify_permission
+
+                notify_permission("sales.change_invoice", "invoice.tax_skipped",
+                                  f"Invoice {inv.number} was billed WITHOUT the tax the order asked for",
+                                  "A product has no FBR rate (or a 3rd Schedule item has no MRP). Classify it on the "
+                                  "product's FBR card, then reopen the invoice and turn tax on.",
+                                  {"invoice_id": str(inv.id)})
         if post:
             InvoiceService.post(inv)
         return inv

@@ -101,7 +101,7 @@ class SalesOrderViewSet(DocumentViewSet):
             raise DomainError("Customer is not assigned to you.", status_code=403)
         serializer.instance = OrderService.create(
             customer=d["customer"], lines=self._lines(d["lines"]), source=source, rep=rep, supplier=d.get("supplier"), warehouse=d.get("warehouse"), order_date=d.get("order_date"), requested_delivery_date=d.get("requested_delivery_date"),
-            notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), price_list=d.get("price_list"), allow_override=can_override, apply_customer_discount=d.get("apply_customer_discount", True), discount_pct=d.get("discount_pct"), auto_confirm=bool(self.request.data.get("confirm")) and m.has_perm("sales.confirm_sales_order"),
+            notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), price_list=d.get("price_list"), allow_override=can_override, apply_customer_discount=d.get("apply_customer_discount", True), discount_pct=d.get("discount_pct"), charge_tax=d.get("charge_tax", False), auto_confirm=bool(self.request.data.get("confirm")) and m.has_perm("sales.confirm_sales_order"),
         )
 
     def perform_update(self, serializer):
@@ -232,19 +232,19 @@ class SalesOrderViewSet(DocumentViewSet):
         # `post: false` leaves them draft, which is the only state in which the figures can still be corrected
         should_post = request.data.get("post", True) not in (False, "false", "0", 0)
         pct = request.data.get("discount_pct")
-        invoices = [InvoiceService.from_delivery_note(n, basis="loaded", post=False) for n in notes]
         apply_tax = request.data.get("apply_tax")
+        # the create page's switch wins when present (even unticked); absent, the ORDER's own switch decides
+        charge = None if apply_tax is None else apply_tax in (True, "true", "1", 1)
         tax_type = None
-        if apply_tax in (True, "true", "1", 1) and request.data.get("tax_type"):
+        if charge and request.data.get("tax_type"):
             from apps.catalog.models import TaxType
 
             tax_type = TaxType.objects.filter(pk=request.data["tax_type"]).first()
+        invoices = [InvoiceService.from_delivery_note(n, basis="loaded", post=False, charge_tax=charge, tax_type=tax_type) for n in notes]
         for inv in invoices:
             # the % was shown on the create page, seeded from the order — apply a change before posting
             if pct is not None and Decimal(str(pct)) != inv.discount_pct:
                 InvoiceService.set_discount(inv, action="apply" if Decimal(str(pct)) > 0 else "remove", percent=pct)
-            if apply_tax in (True, "true", "1", 1):
-                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type, actor=request.user)
             if should_post:
                 InvoiceService.post(inv)
         return Response(SalesInvoiceSerializer(invoices, many=True).data, status=status.HTTP_201_CREATED)

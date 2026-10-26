@@ -426,3 +426,60 @@ def test_a_credit_note_mirrors_the_per_unit_tax_not_the_rate(api, tenant, taxed_
                                       lines=[{"variant": v, "qty": Decimal("1"), "unit_price": Decimal("150")}])
         assert cn.tax1_total == Decimal("87"), cn.tax1_total  # (600×18% + 240) / 4 units × 1
         assert cn.total == Decimal("237")
+
+
+# ── the tax choice travels with the ORDER (owner, 26 Oct 2026: "option to create tax invoice") ──────
+
+
+def test_an_order_marked_tax_invoice_bills_with_tax_at_delivery(api, tenant, taxed_world):
+    """His real flow never touches the New-invoice page: the delivery confirmation bills automatically.
+    The order's own switch must reach that invoice."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert r.status_code == 201 and r.data["charge_tax"] is True, r.content
+    done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
+    assert done.status_code == 200, done.content
+    inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
+    assert inv["status"] == "posted" and inv["force_tax_type"], inv
+    assert Decimal(inv["tax1_total"]) == Decimal("108")  # 4 × 150 × 18%
+    assert Decimal(inv["total"]) == Decimal("708")
+
+
+def test_a_flagged_order_with_unclassified_products_still_bills_and_notifies(api, tenant, taxed_world):
+    """An automatic billing must never block the delivery: no FBR rate → the invoice goes out untaxed
+    and the office is told to classify and reopen."""
+    wh, cust, v, tt = taxed_world  # product carries NO fbr_rate_desc
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
+    assert done.status_code == 200, done.content
+    inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
+    assert inv["status"] == "posted" and not inv["force_tax_type"] and Decimal(inv["tax1_total"]) == 0
+    with tenant_context(tenant, tenant.owner):
+        from apps.core.models import Notification
+
+        n = Notification.objects.filter(type="invoice.tax_skipped").first()
+        assert n is not None and "WITHOUT the tax" in n.title
+
+
+def test_the_create_page_switch_beats_the_orders_flag(api, tenant, taxed_world):
+    """apply_tax sent explicitly — even false — wins over the order's switch; absent, the order decides."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    # order flagged, person unticks the box on the create page → no tax
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import SalesOrder
+    oid = _issued_order(api, wh, cust, v)
+    SalesOrder.all_objects.filter(pk=oid).update(charge_tax=True)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": False, "post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert not inv["force_tax_type"] and Decimal(inv["tax1_total"]) == 0
+
+    # nothing sent → the order's flag decides
+    oid2 = _issued_order(api, wh, cust, v)
+    SalesOrder.all_objects.filter(pk=oid2).update(charge_tax=True)
+    made2 = api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"post": False}, format="json")
+    inv2 = made2.data[0] if isinstance(made2.data, list) else made2.data
+    assert inv2["force_tax_type"] and Decimal(inv2["tax1_total"]) == Decimal("108")
