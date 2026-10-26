@@ -1010,6 +1010,17 @@ class InvoiceService:
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])
         InvoiceService._raise_company_claims(inv)
+        # cash collected on delivery while this invoice was still a draft sits on the customer's account,
+        # tagged with the delivery note — it settles the invoice now that the invoice is on the books
+        if inv.delivery_note_id:
+            from apps.accounting.models import Payment
+            from apps.accounting.services import PaymentService
+
+            for pay in Payment.objects.filter(delivery_note_id=inv.delivery_note_id, direction="in", status="posted", unallocated__gt=0).order_by("date"):
+                inv.refresh_from_db(fields=["paid_amount", "status", "total"])
+                if inv.balance <= 0:
+                    break
+                PaymentService.allocate(pay, [{"document_type": "sales_invoice", "document_id": str(inv.pk), "amount": min(pay.unallocated, inv.balance)}])
         if inv.order_id:
             order = inv.order
             if order.status == "delivered" and not order.delivery_notes.exclude(invoice__isnull=False).filter(status__in=["delivered", "partially_delivered"]).exists():

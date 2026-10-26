@@ -98,6 +98,7 @@ export function InvoiceDetailPage() {
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
+      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.edit ? <>, press <strong>Edit</strong> to change prices or discounts</> : null}{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
       {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
         <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
       </Alert>}
@@ -307,7 +308,7 @@ export function InvoiceCreatePage() {
                           fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} /> : <PlainFooterRows span={span} sub={gross} discount={disc} payable={net} />}
                     </tfoot></table>;
                 })()}
-                <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above — check it, then issue.</div>
+                <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above. Saving keeps it as a <strong>draft</strong> — you can still see and edit every price, discount and the tax there, and nothing reaches the books until you press <strong>Post to ledger</strong>.</div>
               </>
             : <div className="fs-13 text-warning">Every delivery on this order is already invoiced — it will not be offered again.</div>
         )}
@@ -319,12 +320,14 @@ export function InvoiceCreatePage() {
           try {
             // apply_tax is sent BOTH ways: absent means "follow the order's own flag", so unticking the
             // seeded switch must say false out loud or a flagged order gets taxed anyway (audit, 26 Oct 2026)
-            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), apply_tax: applyTax }, true);
+            // saved as a DRAFT (owner, 27 Oct 2026: "i want to see or edit before create invoice") — it opens for
+            // review and editing, and goes to the ledger only when Post to ledger is pressed there
+            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), apply_tax: applyTax, post: false }, true);
             const made = Array.isArray(r) ? r : [r];
-            toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
+            toast.success(made.length > 1 ? `${made.length} draft invoices saved — review, then post` : `${made[0]?.number || "Invoice"} saved as draft — review, then post`);
             nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
           } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
-        }}><i className="ti ti-file-invoice me-1" />Issue Invoice</button>
+        }}><i className="ti ti-device-floppy me-1" />Save invoice</button>
       </div>
     </>
   );

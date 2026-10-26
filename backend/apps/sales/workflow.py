@@ -47,16 +47,18 @@ def order_workflow(order):
         steps.append(_step(
             "load_form", "Load form", "current" if confirmed and not cancelled else "todo",
             detail="Tell the warehouse what to take out for this order.",
-            action={"label": "Create load form", "post": f"/api/v1/sales-orders/{order.pk}/load-form", "perm": "delivery.add_load_form"} if confirmed and not cancelled else None,
+            # created SAVED, not sent (owner, 27 Oct 2026) — the button opens it for review, correction and Send
+            action={"label": "Create load form", "post": f"/api/v1/sales-orders/{order.pk}/load-form", "then": "/app/delivery/pick-lists/{id}",
+                    "perm": "delivery.add_load_form"} if confirmed and not cancelled else None,
         ))
     else:
         sent = live_form.status != "open"
         steps.append(_step(
             "load_form", "Load form", "done" if sent else "current",
             at=live_form.sent_at or live_form.created_at, by=_person(live_form.sent_by),
-            detail=f"{live_form.warehouse.name} · {live_form.get_status_display()}",
+            detail=f"{live_form.warehouse.name} · {live_form.get_status_display()}" + ("" if sent else " — saved, not sent: review it, then send"),
             docs=[{"label": live_form.number, "to": f"/app/delivery/pick-lists/{live_form.pk}"}],
-            action=None if sent else {"label": "Send to warehouse", "post": f"/api/v1/pick-lists/{live_form.pk}/send", "perm": "delivery.change_load_form"},
+            action=None if sent else {"label": "Review & send", "to": f"/app/delivery/pick-lists/{live_form.pk}", "perm": "delivery.change_load_form"},
         ))
 
     # 3 · Warehouse issue (stock leaves)
@@ -79,8 +81,11 @@ def order_workflow(order):
 
     # 4 · Invoice
     invoiceable = next((n for n in issued if not getattr(n, "invoice", None)), None)
+    # a draft is saved but not on the books (owner, 27 Oct 2026: see or edit before the invoice is created)
+    draft = next((i for i in invoices if i.status == "draft"), None)
+    live_invoices = [i for i in invoices if i.status != "cancelled"]
     steps.append(_step(
-        "invoice", "Invoice", "done" if invoices else ("current" if issue_done else "todo"),
+        "invoice", "Invoice", "current" if draft else ("done" if live_invoices else ("current" if issue_done else "todo")),
         at=invoices[0].created_at if invoices else None,
         detail=" · ".join(f"{i.number} {i.get_status_display()}" for i in invoices) or "Raised against what the warehouse issued.",
         docs=[{"label": i.number, "to": f"/app/sales/invoices/{i.pk}"} for i in invoices],
@@ -88,8 +93,9 @@ def order_workflow(order):
             # the button goes to the create page, not straight to posting (owner, 24 Oct 2026): the invoice
             # is SEEN first — lines, discount, the tax switch — and created from there, changeable by
             # whoever holds the rights
-            {"label": "Create invoice", "to": f"/app/sales/invoices/new?order={order.pk}", "perm": "sales.add_invoice"}
-            if invoiceable is not None and not invoices else None
+            {"label": "Review & post", "to": f"/app/sales/invoices/{draft.pk}", "perm": "sales.add_invoice"} if draft is not None
+            else {"label": "Create invoice", "to": f"/app/sales/invoices/new?order={order.pk}", "perm": "sales.add_invoice"}
+            if invoiceable is not None and not live_invoices else None
         ),
     ))
 

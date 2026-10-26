@@ -450,7 +450,8 @@ def test_an_order_marked_tax_invoice_bills_with_tax_at_delivery(api, tenant, tax
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
-    assert inv["status"] == "posted" and inv["force_tax_type"], inv
+    # billed as a DRAFT for review (owner, 27 Oct 2026: see or edit before the invoice is created)
+    assert inv["status"] == "draft" and inv["force_tax_type"], inv
     assert Decimal(inv["tax1_total"]) == Decimal("108")  # 4 × 150 × 18%
     assert Decimal(inv["total"]) == Decimal("708")
 
@@ -464,7 +465,7 @@ def test_a_flagged_order_with_unclassified_products_still_bills_and_notifies(api
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
-    assert inv["status"] == "posted" and not inv["force_tax_type"] and Decimal(inv["tax1_total"]) == 0
+    assert inv["status"] == "draft" and not inv["force_tax_type"] and Decimal(inv["tax1_total"]) == 0
     with tenant_context(tenant, tenant.owner):
         from apps.core.models import Notification
 

@@ -15,7 +15,7 @@ def test_order_to_invoice_via_trip(tenant):
     from apps.delivery.services import DeliveryService, TripService
     from apps.inventory.services import StockService
     from apps.sales.models import SalesInvoice
-    from apps.sales.services import OrderService
+    from apps.sales.services import InvoiceService, OrderService
 
     wh, sup, v, cust = seed_basic(tenant)
     with tenant_context(tenant, tenant.owner):
@@ -35,8 +35,12 @@ def test_order_to_invoice_via_trip(tenant):
         assert (on_hand, reserved) == (Decimal("90"), Decimal("0"))
         dn = trip.delivery_notes.first()
         DeliveryService.deliver(dn, receiver_name="R", cash_collected=Decimal("500"))
-        order.refresh_from_db()
         inv = SalesInvoice.objects.get(order=order)
+        # delivered with no invoice → a DRAFT to review (owner, 27 Oct 2026); the COD cash waits on account
+        assert inv.status == "draft" and inv.paid_amount == 0
+        InvoiceService.post(inv)
+        order.refresh_from_db()
+        inv.refresh_from_db()
         assert order.status == "invoiced" and inv.total == Decimal("1500") and inv.paid_amount == Decimal("500")
         assert inv.journal is not None and inv.journal.status == "posted"
         # AR = 1000 outstanding, COGS = 10 × 100
@@ -63,8 +67,12 @@ def test_mark_delivered_without_trip_and_rep_collection(tenant):
         order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("4"), "unit_price": None}], source="rep_app", rep=rep, supplier=sup, warehouse=wh)
         OrderService.confirm(order)
         OrderService.mark_delivered(order, receiver_name="Owner")
-        order.refresh_from_db()
         inv = SalesInvoice.objects.get(order=order)
+        assert inv.status == "draft", "billed as a draft for review"
+        from apps.sales.services import InvoiceService
+
+        InvoiceService.post(inv)
+        order.refresh_from_db()
         assert order.status == "invoiced" and inv.total == Decimal("600")
         col = RepCollectionService.record(rep=rep, customer=cust, amount=Decimal("600"))
         inv.refresh_from_db()
@@ -103,7 +111,11 @@ def test_mark_delivered_via_api_moves_order_to_invoiced(api, tenant):
     assert r.status_code == 201 and r.data["status"] == "confirmed", r.content
     r2 = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {"receiver_name": "Owner", "cash_collected": "0"}, format="json")
     assert r2.status_code == 200, r2.content
-    assert r2.data["status"] == "invoiced" and r2.data["invoices"][0]["total"] == "750.0000"
+    assert r2.data["status"] == "delivered" and r2.data["invoices"][0]["total"] == "750.0000"
+    assert r2.data["invoices"][0]["status"] == "draft", "the invoice waits for review"
+    posted = api.post(f"/api/v1/invoices/{r2.data['invoices'][0]['id']}/post", {}, format="json")
+    assert posted.status_code == 200, posted.content
+    assert api.get(f"/api/v1/sales-orders/{r.data['id']}").data["status"] == "invoiced"
 
 
 def test_a_draft_order_can_be_deleted_but_a_processed_one_cannot(api, tenant):

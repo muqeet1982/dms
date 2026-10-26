@@ -167,7 +167,7 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
       fd.append("remarks", form.remarks); if (form.delivered_at) fd.append("delivered_at", new Date(form.delivered_at).toISOString());
       if (sig) fd.append("signature", sig); if (photo) fd.append("photo", photo);
       await api.upload(`/api/v1/delivery-notes/${note.id}/deliver`, fd);
-      toast.success(form.failed ? "Stop marked failed" : "Delivered — invoice created");
+      toast.success(form.failed ? "Stop marked failed" : "Delivered — an invoice not raised yet is saved as a draft to review and post");
       onDone();
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -249,11 +249,27 @@ export function PickListDetailPage() {
   const [scan, setScan] = useState("");
   const [dispatch, setDispatch] = useState(false);
   const [issuing, setIssuing] = useState(false);
+  // a saved, unsent load form is the office's to correct (owner, 27 Oct 2026): quantities and notes are edited
+  // here and saved; only Send hands it to the warehouse
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   if (q.isLoading) return <Spinner />;
   const p = q.data;
   if (!p) return null;
   const issued = ["issued", "partially_issued"].includes(p.status);
   const packed = issued || p.status === "picked";
+  const draft = p.status === "open";
+  const dirty = Object.keys(edits).length > 0 || (notes !== null && notes !== (p.notes || ""));
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.post(`/api/v1/pick-lists/${p.id}/lines`, { lines: Object.entries(edits).map(([line_id, v]) => ({ line_id, qty_to_pick: v === "" ? "0" : v })), ...(notes !== null ? { notes } : {}) }, true);
+      toast.success("Load form saved");
+      setEdits({}); setNotes(null);
+      q.refetch();
+    } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
+  };
   const doScan = async () => { if (!scan.trim()) return; try { await run("scans", { scans: [{ code: scan.trim(), qty: 1 }] }, { silent: true }); } catch { /* shown */ } setScan(""); };
   return (
     <>
@@ -261,8 +277,9 @@ export function PickListDetailPage() {
       <IssueModal open={issuing} onClose={() => setIssuing(false)} picklist={p} onIssued={() => { setIssuing(false); q.refetch(); }} />
       <PageHeader title={p.number} badge={<StatusBadge status={p.status} label={p.status_label} />} crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: p.number }]}
         actions={<>
-          {p.status === "open" && <button className="btn btn-primary" disabled={!!busy} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
-          {!issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
+          {draft && <button className="btn btn-outline-primary" disabled={saving || !dirty} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save"}</button>}
+          {draft && <button className="btn btn-primary" disabled={!!busy || saving || dirty} title={dirty ? "Save your changes first" : ""} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
+          {!draft && !issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
           {packed && !p.trips?.length && <button className="btn btn-primary" onClick={() => setDispatch(true)}><i className="ti ti-truck-delivery me-1" />Create dispatch</button>}
           <button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/pick-lists/${p.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/pick-lists/${p.id}/pdf`, `${p.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -275,10 +292,25 @@ export function PickListDetailPage() {
         </div>
         {p.delivery_note_numbers?.length > 0 && <div className="fs-12 mt-2">Delivery notes: {p.delivery_note_numbers.map((d: any) => <Link key={d.id} to={`/app/delivery/notes/${d.id}`} className="me-2">{d.number}</Link>)}</div>}
       </div></div>
-      {!issued && <div className="card mb-3 scanner-mode"><div className="card-body"><label className="form-label">Scan items (each scan adds 1 base unit or one packaging)</label><input className="form-control" autoFocus placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /></div></div>}
+      {draft && <Alert kind="info"><strong>Saved — not sent to the warehouse yet.</strong> Check the quantities below and change any that are wrong (0 takes a line off), press <strong>Save</strong>, then <strong>Send to warehouse</strong>.</Alert>}
+      {draft && <div className="card mb-3"><div className="card-body py-2"><label className="form-label fs-12 mb-1">Notes for the warehouse</label><textarea className="form-control form-control-sm" rows={2} value={notes ?? (p.notes || "")} onChange={(e) => setNotes(e.target.value)} placeholder="optional" /></div></div>}
+      {!issued && !draft && <div className="card mb-3 scanner-mode"><div className="card-body"><label className="form-label">Scan items (each scan adds 1 base unit or one packaging)</label><input className="form-control" autoFocus placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /></div></div>}
       {p.orders?.length === 1 && <WorkflowStepper orderId={p.orders[0]} compact />}
       <div className="card"><div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Item</th><th>Batch</th><th>Order</th><th className="num">Requested</th><th className="num">Issued</th><th /></tr></thead>
-        <tbody>{p.lines.map((l: any) => <tr key={l.id} className={Number(l.qty_picked) >= Number(l.qty_to_pick) ? "table-success" : ""}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td>{l.order_number}</td><td className="num">{qty(l.qty_to_pick)}</td><td className="num">{qty(l.qty_picked)}</td><td className="text-end">{!issued && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td></tr>)}</tbody></table></div></div>
+        <tbody>{p.lines.map((l: any) => {
+          const v = edits[l.id];
+          const removed = draft && v !== undefined && Number(v || 0) === 0;
+          return <tr key={l.id} className={removed ? "table-danger" : !draft && Number(l.qty_picked) >= Number(l.qty_to_pick) ? "table-success" : ""}>
+            <td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{removed ? " · will be taken off" : ""}</div></td><td>{l.batch_no}</td><td>{l.order_number}</td>
+            <td className="num">{draft
+              ? <input type="number" step="any" min="0" className="form-control form-control-sm text-end ms-auto" style={{ width: 110 }} value={v ?? String(Number(l.qty_to_pick))} onChange={(e) => setEdits({ ...edits, [l.id]: e.target.value })} />
+              : qty(l.qty_to_pick)}</td>
+            <td className="num">{qty(l.qty_picked)}</td>
+            <td className="text-end">{draft
+              ? <button className="btn btn-sm btn-outline-danger" title="Take this line off" onClick={() => setEdits({ ...edits, [l.id]: "0" })}><i className="ti ti-x" /></button>
+              : !issued && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td>
+          </tr>;
+        })}</tbody></table></div></div>
     </>
   );
 }

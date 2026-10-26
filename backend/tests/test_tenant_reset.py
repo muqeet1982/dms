@@ -53,6 +53,9 @@ def trade(tenant):
         OrderService.confirm(order)
         OrderService.mark_delivered(order, receiver_name="Shop owner")
         invoice = SalesInvoice.objects.get(order=order)
+        from apps.sales.services import InvoiceService
+
+        InvoiceService.post(invoice)  # delivery bills a draft; the office reviews and posts it (27 Oct 2026)
         PaymentService.record(direction="in", partner_type="customer", partner_id=str(cust.id), amount=Decimal("500"), method="cash")
         RepCollectionService.record(rep=rep, customer=cust, amount=Decimal("250"))
         fence = GeoFence.objects.create(name="Lahore North", type="circle", centre_lat=Decimal("31.5"), centre_lng=Decimal("74.3"), radius_m=500)
@@ -355,6 +358,9 @@ def test_a_reset_leaves_a_company_able_to_trade_again(admin_api, tenant):
         order = OrderService.create(customer=ready["customer"], lines=[{"variant": ready["variant"], "qty": Decimal("5"), "unit_price": None}], source="staff", warehouse=ready["warehouse"])
         OrderService.confirm(order)
         OrderService.mark_delivered(order, receiver_name="Shop owner")
+        from apps.sales.services import InvoiceService
+
+        InvoiceService.post(SalesInvoice.objects.get(order=order))
         order.refresh_from_db()
         invoice = SalesInvoice.objects.get(order=order)
         assert order.status == "invoiced" and invoice.journal is not None and invoice.journal.status == "posted"

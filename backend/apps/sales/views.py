@@ -201,7 +201,9 @@ class SalesOrderViewSet(DocumentViewSet):
 
     @action(detail=True, methods=["post"], url_path="load-form")
     def load_form(self, request, pk=None):
-        """Raise the load form for this order and (unless told otherwise) hand it straight to the warehouse."""
+        """Raise the load form for this order — SAVED, not sent (owner, 27 Oct 2026: "i need to create load form and
+        save it not auto created"): it opens for review and correction, and goes to the warehouse only when someone
+        presses Send. `send: true` still hands it over in the same call, for callers that ask for it."""
         from apps.delivery.serializers import PickListSerializer
         from apps.delivery.services import PickListService
 
@@ -214,7 +216,7 @@ class SalesOrderViewSet(DocumentViewSet):
         if existing is not None:
             raise DomainError(f"Load form {existing.number} already covers this order.", code="duplicate", errors={"picklist": [str(existing.pk)]})
         pl = PickListService.create(warehouse=order.warehouse, orders=[order], notes=request.data.get("notes", ""))
-        if request.data.get("send", True):
+        if request.data.get("send", False) in (True, "true", "1", 1):
             PickListService.send(pl)
         return Response(PickListSerializer(pl, context={"request": request}).data, status=status.HTTP_201_CREATED)
 

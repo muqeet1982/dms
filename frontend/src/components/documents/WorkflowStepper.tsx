@@ -12,7 +12,7 @@ type Step = {
   at: string | null; by: string; detail: string;
   docs: { label: string; to: string }[];
   /** `alt` is a quieter second way to do the same step — "raise it as a draft" beside "create invoice". */
-  action: { label: string; post?: string; to?: string; perm?: string; alt?: { label: string; post: string; body?: any } } | null;
+  action: { label: string; post?: string; to?: string; then?: string; perm?: string; alt?: { label: string; post: string; body?: any } } | null;
 };
 
 const ICONS: Record<string, string> = {
@@ -49,9 +49,11 @@ export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", ti
   const [open, setOpen] = useState(!compact);
   const q = useQuery<{ steps: Step[] }>({ queryKey: ["workflow", endpoint, orderId], queryFn: () => api.get(`${endpoint}/${orderId}/workflow`) });
   const act = useMutation({
-    mutationFn: (v: { path: string; body?: any }) => api.post(v.path, v.body || {}, true),
-    onSuccess: (_d, v) => {
+    mutationFn: (v: { path: string; body?: any; then?: string }) => api.post(v.path, v.body || {}, true),
+    onSuccess: (d: any, v) => {
       toast.success("Done");
+      // a step that CREATES a document opens it for review instead of finishing it (owner, 27 Oct 2026)
+      if (v.then && d?.id) nav(v.then.replace("{id}", d.id));
       qc.invalidateQueries({ queryKey: ["workflow", endpoint, orderId] });
       qc.invalidateQueries({ queryKey: ["doc"] });
       qc.invalidateQueries({ queryKey: ["list"] });
@@ -99,7 +101,7 @@ export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", ti
                       <button
                         className={`btn btn-sm w-100 mt-2 ${s.state === "current" ? "btn-primary" : "btn-outline-primary"}`}
                         disabled={act.isPending}
-                        onClick={() => (s.action!.post ? act.mutate({ path: s.action!.post! }) : nav(s.action!.to!))}
+                        onClick={() => (s.action!.post ? act.mutate({ path: s.action!.post!, then: s.action!.then }) : nav(s.action!.to!))}
                       >
                         {s.action.label}
                       </button>

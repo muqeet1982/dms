@@ -139,6 +139,7 @@ class PickListViewSet(DocumentViewSet):
         "picks": "delivery.change_load_form",
         "scans": "delivery.change_load_form",
         "send": "delivery.change_load_form",
+        "lines": "delivery.change_load_form",
         "issue": extra_perm("load_forms", "issue"),
         "complete": "delivery.change_load_form",
         "create_dispatch": "delivery.add_trip",
@@ -162,6 +163,12 @@ class PickListViewSet(DocumentViewSet):
     @action(detail=True, methods=["post"])
     def scans(self, request, pk=None):
         return Response(PickListSerializer(PickListService.scans(self.get_object(), request.data.get("scans", [])), context={"request": request}).data)
+
+    @action(detail=True, methods=["post"])
+    def lines(self, request, pk=None):
+        """Save corrections to a load form that has not gone to the warehouse yet: {lines: [{line_id, qty_to_pick}], notes?}."""
+        pl = PickListService.update_lines(self.get_object(), request.data.get("lines") or [], request.data.get("notes"))
+        return Response(PickListSerializer(pl, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     def send(self, request, pk=None):

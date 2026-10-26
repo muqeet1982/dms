@@ -41,6 +41,48 @@ class PickListService:
 
     @staticmethod
     @transaction.atomic
+    def update_lines(pl, lines, notes=None):
+        """
+        Correct a load form BEFORE it goes to the warehouse (owner, 27 Oct 2026: "i need to create load form and
+        save it" — created, seen, edited, saved, and only then sent). lines: [{line_id, qty_to_pick}]; 0 takes the
+        line off. A line can ask for at most what its order line still has pending, counting the form's other
+        lines for the same order line (two batches of one item).
+        """
+        if pl.status != "open":
+            raise DomainError("This load form has already gone to the warehouse — it can no longer be edited.", code="not_open")
+        by_id = {str(l.pk): l for l in pl.lines.select_related("order_line", "variant")}
+        for row in lines or []:
+            line = by_id.get(str(row.get("line_id")))
+            if line is None:
+                raise DomainError("That line is not on this load form.")
+            qty = Decimal(str(row.get("qty_to_pick", line.qty_to_pick) or 0))
+            if qty < 0:
+                raise DomainError(f"{line.variant.name}: the quantity cannot be negative.")
+            line.qty_to_pick = qty
+        for line in by_id.values():
+            ol = line.order_line
+            if ol is None:
+                continue
+            pending = ol.qty_ordered + ol.free_qty - ol.qty_dispatched
+            asked = sum((x.qty_to_pick for x in by_id.values() if x.order_line_id == ol.pk), Decimal("0"))
+            if asked > pending:
+                raise DomainError(f"{line.variant.name}: {asked:g} asked but the order has only {pending:g} pending.")
+        kept = [l for l in by_id.values() if l.qty_to_pick > 0]
+        if not kept:
+            raise DomainError("A load form needs at least one line — cancel the order's load form instead of emptying it.")
+        for line in by_id.values():
+            if line.qty_to_pick > 0:
+                line.save(update_fields=["qty_to_pick"])
+            else:
+                line.delete()
+        if notes is not None:
+            pl.notes = notes
+        pl.save(update_fields=["notes", "updated_at"])
+        AuditService.log("load_form.edited", pl, after={"lines": [{"item": l.variant.name, "qty": str(l.qty_to_pick)} for l in kept]})
+        return pl
+
+    @staticmethod
+    @transaction.atomic
     def record_picks(pl, picks):
         """picks: [{line_id, qty_picked, batch?, scanned?}]"""
         if pl.status == "picked":
@@ -305,11 +347,25 @@ class DeliveryService:
         OrderService.refresh_delivery_status(dn.order)
         invoice = None
         if total_delivered > 0:
-            invoice = InvoiceService.from_delivery_note(dn)
+            had_invoice = getattr(dn, "invoice", None) is not None
+            # goods delivered with no invoice yet are billed as a DRAFT for review, never posted behind anyone's
+            # back (owner, 27 Oct 2026: "i want to see or edit before create invoice … same for other steps")
+            invoice = InvoiceService.from_delivery_note(dn, post=False)
+            if not had_invoice:
+                from apps.core.notifications import notify_permission
+
+                notify_permission("sales.change_invoice", "invoice.draft_at_delivery",
+                                  f"Invoice {invoice.number} drafted at delivery — review and post",
+                                  f"{dn.customer.name} · {dn.number} was delivered without an invoice. Check the draft, then Post to ledger.",
+                                  {"invoice_id": str(invoice.id)})
         if dn.cash_collected > 0 and invoice is not None:
             from apps.accounting.services import PaymentService
 
-            PaymentService.record(direction="in", partner_type="customer", partner_id=str(dn.customer_id), partner_name=dn.customer.name, amount=dn.cash_collected, method="cash", allocations=[{"document_type": "sales_invoice", "document_id": str(invoice.pk), "amount": min(dn.cash_collected, invoice.total)}], reference=f"COD {dn.number}", trip=dn.trip, delivery_note=dn)
+            # cash against a POSTED invoice settles it now; against a draft it waits on the customer's account and
+            # is applied the moment the invoice is posted (InvoiceService.post) — a draft is not on the books
+            allocs = ([{"document_type": "sales_invoice", "document_id": str(invoice.pk), "amount": min(dn.cash_collected, invoice.balance)}]
+                      if invoice.status != "draft" and invoice.balance > 0 else [])
+            PaymentService.record(direction="in", partner_type="customer", partner_id=str(dn.customer_id), partner_name=dn.customer.name, amount=dn.cash_collected, method="cash", allocations=allocs, reference=f"COD {dn.number}", trip=dn.trip, delivery_note=dn)
             if dn.trip_id:
                 dn.trip.cash_collected = (dn.trip.cash_collected or 0) + dn.cash_collected
                 dn.trip.save(update_fields=["cash_collected"])

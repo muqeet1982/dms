@@ -68,12 +68,15 @@ def test_full_chain(api, tenant, order_with_stock):
     assert steps["order"]["state"] == "done" and steps["load_form"]["state"] == "current"
     assert steps["load_form"]["action"]["post"].endswith("/load-form")
 
-    # 2 · load form, straight to the warehouse
+    # 2 · load form: SAVED for review (owner, 27 Oct 2026), then sent to the warehouse
     r = api.post(f"/api/v1/sales-orders/{order.pk}/load-form", {}, format="json")
     assert r.status_code == 201, r.content
     pl = r.data
-    assert pl["status"] == "sent" and pl["order_numbers"] == [order.number] and pl["sent_at"]
+    assert pl["status"] == "open" and pl["order_numbers"] == [order.number] and not pl["sent_at"]
     assert api.post(f"/api/v1/sales-orders/{order.pk}/load-form", {}, format="json").status_code == 422  # only one open form
+    assert _steps(api, order.pk)["load_form"]["state"] == "current"
+    sent = api.post(f"/api/v1/pick-lists/{pl['id']}/send", {}, format="json")
+    assert sent.status_code == 200 and sent.data["status"] == "sent" and sent.data["sent_at"]
 
     steps = _steps(api, order.pk)
     assert steps["load_form"]["state"] == "done" and steps["issue"]["state"] == "current"
@@ -88,11 +91,13 @@ def test_full_chain(api, tenant, order_with_stock):
     order.refresh_from_db()
     assert order.status == "issued"
 
-    # 4 · invoice for what was issued
-    r = api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {}, format="json")
+    # 4 · invoice for what was issued: saved as a draft, reviewed, then posted
+    r = api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": False}, format="json")
     assert r.status_code == 201, r.content
     invoice = r.data[0]
-    assert Decimal(invoice["total"]) > 0 and invoice["status"] in ("posted", "partially_paid")
+    assert Decimal(invoice["total"]) > 0 and invoice["status"] == "draft"
+    assert _steps(api, order.pk)["invoice"]["state"] == "current"
+    assert api.post(f"/api/v1/invoices/{invoice['id']}/post", {}, format="json").status_code == 200
     steps = _steps(api, order.pk)
     assert steps["issue"]["state"] == "done" and steps["invoice"]["state"] == "done"
     assert steps["dispatch"]["state"] == "current"
@@ -145,8 +150,13 @@ def test_workflow_reads_the_old_flow_too(api, order_with_stock):
     r = api.post(f"/api/v1/sales-orders/{order.pk}/mark-delivered", {"receiver_name": "Walk-in"}, format="json")
     assert r.status_code == 200, r.content
     steps = _steps(api, order.pk)
-    assert steps["delivered"]["state"] == "done" and steps["invoice"]["state"] == "done"
+    # delivered with no invoice: the invoice step waits on its draft until someone posts it
+    assert steps["delivered"]["state"] == "done" and steps["invoice"]["state"] == "current"
+    assert steps["invoice"]["action"]["label"] == "Review & post"
     assert steps["load_form"]["state"] in ("skipped", "todo", "current")
+    draft = steps["invoice"]["action"]["to"].rsplit("/", 1)[-1]
+    assert api.post(f"/api/v1/invoices/{draft}/post", {}, format="json").status_code == 200
+    assert _steps(api, order.pk)["invoice"]["state"] == "done"
 
 
 def test_an_invoiced_order_can_still_be_dispatched(api, tenant, order_with_stock):

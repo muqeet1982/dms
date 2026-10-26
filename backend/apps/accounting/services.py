@@ -732,6 +732,10 @@ class PaymentService:
             if amt > remaining:
                 raise DomainError("Allocation exceeds unallocated amount.")
             doc = PaymentService._load(a["document_type"], a["document_id"])
+            # a draft (or cancelled) document is not on the books: settling it would mark it paid without it ever
+            # having been posted — the receipt stays on account until the document is posted
+            if getattr(doc, "status", "") in ("draft", "cancelled"):
+                raise DomainError(f"{doc.number} is {doc.status} — post it before receiving money against it.", code="not_posted")
             if amt > doc.total - doc.paid_amount + Decimal("0.01"):
                 raise DomainError(f"Allocation exceeds balance of {doc.number}.")
             PaymentAllocation.objects.create(payment=payment, document_type=a["document_type"], document_id=str(doc.pk), document_number=doc.number, amount=amt)
