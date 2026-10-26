@@ -113,9 +113,11 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         extra = InvoiceService.present_lines(inv, lines)
         html = render_to_string("sales/invoice.html", {"inv": inv, "lines": lines, "tenant": tenant,
                                                        "logo_url": None, "printed_at": "", "doc_title": "SALES INVOICE", "doc_ref": inv.number, **extra})
-        assert ">Tax<" in html and "Sales Tax" in html and "108" in html
-        # the FBR face of a tax invoice: HS column with the product's code, buyer's FBR identity
-        assert ">HS Code<" in html and "7306.3090" in html
+        # the tax-invoice face (owner's layout, 26 Oct 2026): Item · Qty · Rate · Disc · Taxable · GST · Total,
+        # the HS code under the item name, and the totals footed as Taxable value + Sales tax = Total
+        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
+        assert "Sales Tax" in html and "108" in html
+        assert "HS 7306.3090" in html and "Taxable value" in html and "Sales tax" in html
         assert "FBR: Unregistered" in html
 
 

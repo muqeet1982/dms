@@ -831,31 +831,40 @@ class InvoiceService:
     @staticmethod
     def present_lines(inv, lines):
         """
-        How the printed invoice reads (owner's rule, 21 Oct 2026): a line's Discount column carries only the
-        product's OWN discount; the customer-level % appears once, after the subtotal — never inside the
-        item lines. Display amounts add the customer part back, so the column sums to the subtotal that the
-        discount row is then taken from, and the page still checks with a pencil.
+        How the printed invoice reads. A plain invoice (owner's rule, 21 Oct 2026): a line's Discount column
+        carries only the product's OWN discount; the customer-level % appears once, after the subtotal —
+        never inside the item lines. A TAX invoice (owner's layout, 26 Oct 2026 — Item · Qty · Rate · Disc ·
+        Taxable · GST · Total): the Disc cell carries the line's WHOLE discount, because Taxable =
+        Qty × Rate − Disc is the figure the GST was computed on and filed with FBR; the page must foot the
+        way the filing reads.
         """
-        customer_part = Decimal("0")
+        customer_part = gross_total = taxable_total = Decimal("0")
         tax_shown = (inv.tax1_total or Decimal("0")) + (inv.tax2_total or Decimal("0"))
         # the column shows whenever the switch is on — zeros included, so a product missing its Tax % is
         # visible rather than silently untaxed
         tax_on = bool(inv.force_tax_type_id) or tax_shown > 0
         for l in lines:
-            prod = q4(q4(l.qty * l.unit_price) * (l.product_discount_pct or 0) / 100)
+            gross = q4(l.qty * l.unit_price)
+            prod = q4(gross * (l.product_discount_pct or 0) / 100)
             prod = min(prod, l.discount_amount or Decimal("0"))
             cust = (l.discount_amount or Decimal("0")) - prod
             l.prod_discount = prod
+            l.taxable = gross - (l.discount_amount or Decimal("0"))
             l.tax_amount = (l.tax1_amount or Decimal("0")) + (l.tax2_amount or Decimal("0"))
             # with tax on the page, the Amount column is pre-tax so Subtotal − Discount + Tax = Total still
             # checks with a pencil; without tax it stays tax-inclusive as before
             l.display_amount = (l.line_total or Decimal("0")) + cust - (l.tax_amount if tax_on else Decimal("0"))
             customer_part += cust
+            gross_total += gross
+            taxable_total += l.taxable
         tax_label = ""
         if tax_on and inv.tax1_type_id:
-            rate = next((l.tax1_rate for l in lines if l.tax1_rate), None)
+            # one shared % may be quoted beside the name; mixed FBR rates show per line instead
+            rates = {l.tax1_rate for l in lines if l.tax1_rate}
+            rate = rates.pop() if len(rates) == 1 else None
             tax_label = f"{inv.tax1_type.name}{f' ({rate.normalize()}%)' if rate else ''}"
         return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_on": tax_on, "tax_label": tax_label,
+                "gross_total": q4(gross_total), "taxable_total": q4(taxable_total),
                 "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown)}
 
     @staticmethod

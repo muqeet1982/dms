@@ -42,12 +42,40 @@ words under it.
 {% endblock %}
 
 {% block lines %}
+{% if tax_on %}
+{% comment %}
+The tax-invoice face (owner's layout, 26 Oct 2026). Disc is the line's WHOLE discount, Taxable = Qty × Rate − Disc
+is the value the GST was computed on and filed with FBR, Total = Taxable + GST. A 3rd Schedule line's GST can read
+higher than Taxable × rate — the law taxes those on the printed retail price; that is the filing, not a misprint.
+The HS code rides under the item name, where the classification belongs.
+{% endcomment %}
+<table class="lines">
+  <thead><tr>
+    <th style="width:6mm">#</th><th>Item</th>
+    <th class="r" style="width:10mm">Qty</th>
+    <th class="r" style="width:15mm">Rate</th><th class="r" style="width:13mm">Disc</th>
+    <th class="r" style="width:17mm">Taxable</th><th class="r" style="width:17mm">GST</th>
+    <th class="r" style="width:19mm">Total</th>
+  </tr></thead>
+  <tbody>
+  {% for l in lines %}<tr>
+    <td>{{ forloop.counter }}</td>
+    <td>{{ l.description }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.variant.product.unit_size %} · {{ l.variant.product.unit_size }}{% endif %}{% if l.variant.product.fbr_hs_code %} · HS {{ l.variant.product.fbr_hs_code }}{% endif %}</span></td>
+    <td class="r">{{ l.qty|qty }}</td>
+    <td class="r">{{ l.unit_price|num }}</td>
+    <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
+    <td class="r">{{ l.taxable|num }}</td>
+    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.fbr_rate_desc|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span></td>
+    <td class="r b">{{ l.line_total|num }}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}
 <table class="lines">
   <thead><tr>
     <th style="width:6mm">#</th><th>Item</th>
     <th class="r" style="width:12mm">Qty</th>
     <th class="r" style="width:17mm">Rate</th><th class="r" style="width:16mm">Discount</th>
-    {% if tax_on %}<th style="width:19mm">HS Code</th><th class="r" style="width:16mm">Tax</th>{% endif %}
     <th class="r" style="width:21mm">Amount</th>
   </tr></thead>
   <tbody>
@@ -57,11 +85,11 @@ words under it.
     <td class="r">{{ l.qty|qty }}</td>
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.prod_discount %}{{ l.prod_discount|num }}{% else %}—{% endif %}</td>
-    {% if tax_on %}<td>{{ l.variant.product.fbr_hs_code|default:"—" }}</td><td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.fbr_rate_desc|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.display_amount|default:l.line_total|num }}</td>
   </tr>{% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endblock %}
 
 {% block words %}{% if inv.total %}<div class="words"><strong>Amount in words:</strong> {{ inv.total|in_words }}</div>{% endif %}
@@ -82,13 +110,20 @@ words under it.
 
 {% block totals %}
 {% comment %}
-No tax lines: each Amount in the table already carries its own tax, so the column adds up to the Total and the
-page can be checked with a pencil. A subtotal before tax would not reconcile with anything shown.
+Tax invoice: Gross − Discount = Taxable value, Taxable value + Sales tax = Total — the same three figures the
+sales tax register reports. Plain invoice: each Amount already carries its own tax, so the column adds up to
+the Total and the page can be checked with a pencil.
 {% endcomment %}
 <table class="totals">
-  {% if customer_discount or tax_on %}<tr><td class="l">Subtotal</td><td class="r">{{ display_subtotal|num }}</td></tr>{% endif %}
-  {% if customer_discount %}<tr><td class="l">Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">&minus;{{ customer_discount|num }}</td></tr>{% endif %}
-  {% if tax_on %}<tr><td class="l">Tax{% if tax_label %} — {{ tax_label }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>{% endif %}
+  {% if tax_on %}
+  {% if inv.discount %}<tr><td class="l">Gross amount</td><td class="r">{{ gross_total|num }}</td></tr>
+  <tr><td class="l">Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">&minus;{{ inv.discount|num }}</td></tr>{% endif %}
+  <tr><td class="l">Taxable value</td><td class="r">{{ taxable_total|num }}</td></tr>
+  <tr><td class="l">Sales tax{% if tax_label %} — {{ tax_label }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  {% else %}
+  {% if customer_discount %}<tr><td class="l">Subtotal</td><td class="r">{{ display_subtotal|num }}</td></tr>
+  <tr><td class="l">Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">&minus;{{ customer_discount|num }}</td></tr>{% endif %}
+  {% endif %}
   <tr class="sum"><td>Total</td><td class="r">{{ inv.total|num }}</td></tr>
   {% if inv.paid_amount %}<tr><td class="l">Paid</td><td class="r">{{ inv.paid_amount|num }}</td></tr>{% endif %}
   <tr class="due"><td>Balance due</td><td class="r">{{ inv.balance|num }}</td></tr>
