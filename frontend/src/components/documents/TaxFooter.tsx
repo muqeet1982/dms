@@ -30,3 +30,23 @@ export function TaxFooterRows({ span, trail = 0, sub, discount = 0, discountLabe
     {row(payableLabel, money(grand - wht), true)}
   </>;
 }
+
+/**
+ * A document WITHOUT tax (owner, 27 Oct 2026: "when no tax then show discount on total … show subtotal, total
+ * discount and grand total and payable"): each line is Qty × Rate, and every discount — the product's own, the
+ * customer's % and schemes — is taken once, on the total. `hideZeroDiscount` is for documents that never carry
+ * one (a credit note).
+ */
+export function PlainFooterRows({ span, trail = 0, sub, discount = 0, payable, payableLabel = "Total Payable", hideZeroDiscount = false, className = "" }: {
+  span: number; trail?: number; sub: number; discount?: number; payable: number; payableLabel?: string; hideZeroDiscount?: boolean; className?: string;
+}) {
+  const row = (label: string, v: string, bold = false) => (
+    <tr className={bold ? "fw-bold" : ""}><td colSpan={span} className={`text-end ${className}`}>{label}</td><td className={`num ${className}`}>{v}</td>{Array.from({ length: trail }, (_, i) => <td key={i} />)}</tr>
+  );
+  return <>
+    {row("Sub Total", money(sub))}
+    {!(hideZeroDiscount && discount <= 0.004) && row("Total Discount", discount > 0.004 ? `−${money(discount)}` : money(0))}
+    {row("Grand Total", money(sub - discount))}
+    {row(payableLabel, money(payable), true)}
+  </>;
+}

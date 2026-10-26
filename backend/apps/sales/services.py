@@ -5,7 +5,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.catalog.services import PricingService, TaxService
+from apps.catalog.services import PricingService
 from apps.core.audit import AuditService
 from apps.core.events import emit
 from apps.core.exceptions import DomainError
@@ -71,10 +71,11 @@ class OrderService:
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             others = InvoiceService.set_other_taxes(line, t)
         else:
-            tax_class = TaxService.resolve_class(line.variant, customer)
-            t = TaxService.compute(taxable, tax_class, order.order_date)
-            line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
-            line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
+            # tax off = no tax at all (owner, 25-27 Oct 2026), exactly like the invoice that will bill it: the
+            # legacy tax classes priced unflagged orders with a tax the invoice never charged and the page never
+            # showed, so the order's payable and its invoice disagreed
+            line.tax1_type, line.tax1_rate, line.tax1_amount = None, Decimal("0"), Decimal("0")
+            line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             others = InvoiceService.set_other_taxes(line)
         # FED/Extra/Further ride in the line; WHT is withheld by the buyer and comes off the order total
         line.line_total = taxable + line.tax1_amount + line.tax2_amount + others
@@ -918,9 +919,10 @@ class InvoiceService:
     @staticmethod
     def present_lines(inv, lines):
         """
-        How the printed invoice reads. A plain invoice (owner's rule, 21 Oct 2026): a line's Discount column
-        carries only the product's OWN discount; the customer-level % appears once, after the subtotal —
-        never inside the item lines. A TAX invoice (owner's layout, 26 Oct 2026 — Item · Qty · Rate · Disc ·
+        How the printed invoice reads. A plain invoice (owner, 27 Oct 2026 — superseding the 21 Oct per-line
+        product discount): "when no tax then show discount on total" — each line is Qty × Rate (`gross`), and
+        the footer reads Sub Total → Total Discount (every discount, product's own and customer's alike) →
+        Grand Total → Total Payable. A TAX invoice (owner's layout, 26 Oct 2026 — Item · Qty · Rate · Disc ·
         Taxable · GST · Total): the Disc cell carries the line's WHOLE discount, because Taxable =
         Qty × Rate − Disc is the figure the GST was computed on and filed with FBR; the page must foot the
         way the filing reads.
@@ -932,6 +934,7 @@ class InvoiceService:
         tax_on = bool(inv.force_tax_type_id) or tax_shown > 0
         for l in lines:
             gross = q4(l.qty * l.unit_price)
+            l.gross = gross
             prod = q4(gross * (l.product_discount_pct or 0) / 100)
             prod = min(prod, l.discount_amount or Decimal("0"))
             cust = (l.discount_amount or Decimal("0")) - prod

@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { date, datetime, fbrLineTax, fbrRateLabel, LineTax, money, otherTaxLabel, qty } from "@/lib/format";
-import { TaxFooterRows } from "@/components/documents/TaxFooter";
+import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -130,11 +130,16 @@ export function InvoiceDetailPage() {
                 {Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={span} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}
               </tfoot></table>;
           }
-          /* the owner's rule (21 Oct 2026): a line's Disc cell carries only the product's OWN discount; the
-             customer-level % appears once, after the subtotal — amounts add the customer part back so the column sums */
-          return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Amount</th></tr></thead>
-            <tbody>{inv.lines.map((l: any, i: number) => { const prodD = Math.min(Number(l.qty) * Number(l.unit_price) * (Number(l.product_discount_pct) || 0) / 100, Number(l.discount_amount) || 0); const custD = (Number(l.discount_amount) || 0) - prodD; return <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{prodD > 0 ? <>{money(prodD)}<div className="text-muted fs-11">prod {Number(l.product_discount_pct)}%</div></> : "—"}</td><td className="num fw-medium">{money(Number(l.line_total) + custD)}</td></tr>; })}</tbody>
-            <tfoot>{(() => { const custTotal = inv.lines.reduce((a: number, l: any) => a + ((Number(l.discount_amount) || 0) - Math.min(Number(l.qty) * Number(l.unit_price) * (Number(l.product_discount_pct) || 0) / 100, Number(l.discount_amount) || 0)), 0); return <>{custTotal > 0.004 && <><tr><td colSpan={5} className="text-end">Subtotal</td><td className="num">{money(Number(inv.total) + custTotal)}</td></tr><tr><td colSpan={5} className="text-end">Discount{Number(inv.discount_pct) > 0 ? ` (${Number(inv.discount_pct)}%)` : ""}</td><td className="num">−{money(custTotal)}</td></tr></>}{Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={5} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}<tr className="fw-bold"><td colSpan={5} className="text-end">Total</td><td className="num">{money(inv.total)}</td></tr></>; })()}</tfoot></table>;
+          /* no tax (owner, 27 Oct 2026: "when no tax then show discount on total"): each line is Qty × Price, and
+             every discount — the product's own and the customer's % alike — is taken once, on the total */
+          const grossOf = (l: any) => Number(l.qty) * Number(l.unit_price);
+          const sub = inv.lines.reduce((a: number, l: any) => a + grossOf(l), 0);
+          return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Amount</th></tr></thead>
+            <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num fw-medium">{money(grossOf(l))}</td></tr>)}</tbody>
+            <tfoot>
+              <PlainFooterRows span={4} sub={sub} discount={Number(inv.discount)} payable={Number(inv.total)} />
+              {Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={4} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}
+            </tfoot></table>;
         })()}
       </div></div>
       <DocTabs model="SalesInvoice" id={inv.id} showMovements extra={[{ key: "payments", label: "Payments", render: () => (
@@ -189,7 +194,7 @@ export function InvoiceDetailPage() {
                 const sum = (f: (x: any) => number) => fig.reduce((a: number, x: any) => a + f(x), 0);
                 const gross = sum((x) => x.gross), disc = sum((x) => x.disc), net = sum((x) => x.taxable), tax = sum((x) => x.gst?.amount || 0);
                 const showOther = taxed && sum((x) => x.gst?.other || 0) > 0;
-                const span = (taxed ? 8 : 6) + (showOther ? 1 : 0);
+                const span = taxed ? 8 + (showOther ? 1 : 0) : 5;
                 const set = (i: number, patch: any) => { const ls = [...edit.lines]; ls[i] = { ...ls[i], ...patch }; setEdit({ ...edit, lines: ls }); };
                 return <div className="table-responsive"><table className="table table-sm align-middle mb-1">
                   <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 80 }}>Qty</th><th className="num" style={{ width: 120 }}>Rate</th><th className="num" style={{ width: 120 }}>Discount</th><th className="num" style={{ width: 90 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{taxed && <th className="num" style={{ width: 90 }} title="This line's tax % — blank follows the product's FBR rate">Tax %</th>}{taxed && <th className="num" style={{ width: 110 }}>Taxable</th>}{taxed && <th className="num" style={{ width: 100 }}>GST</th>}{showOther && <th className="num" style={{ width: 100 }} title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num" style={{ width: 110 }}>{taxed ? "Line Total" : "Amount"}</th></tr></thead>
@@ -204,10 +209,10 @@ export function InvoiceDetailPage() {
                       {taxed && <td className="num fs-12">{money(fig[i].taxable)}</td>}
                       {taxed && <td className="num fs-12">{fig[i].gst?.label ? <>{money(fig[i].gst.amount)}<div className="text-muted fs-11">{fig[i].gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no GST; classify it on the product's FBR card (HS code → rate)">—</span>}</td>}
                       {showOther && <td className="num fs-12">{fig[i].gst?.other ? <>{money(fig[i].gst.other)}<div className="text-muted fs-11">{otherTaxLabel(l.others || {})}</div></> : "—"}</td>}
-                      <td className="num fs-12 fw-medium">{money(fig[i].total)}</td>
+                      <td className="num fs-12 fw-medium">{money(taxed ? fig[i].total : fig[i].gross)}</td>
                     </tr>))}</tbody>
                   <tfoot>{taxed ? <TaxFooterRows span={span} className="fs-12" sub={gross} discount={disc} net={net} gst={tax}
-                      fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} /> : <tr className="fw-bold"><td colSpan={span} className="text-end fs-12">Total</td><td className="num fs-12">{money(net)}</td></tr>}</tfoot>
+                      fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} /> : <PlainFooterRows span={span} className="fs-12" sub={gross} discount={disc} payable={net} />}</tfoot>
                 </table></div>;
               })()}
               <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. The figures update as you type; the server recalculates them exactly when you save.</div>
@@ -284,23 +289,22 @@ export function InvoiceCreatePage() {
                   const sum = (f: (b: any) => number) => rows.reduce((a: number, r: any) => a + f(r.b), 0);
                   const gross = sum((b) => b.gross), disc = sum((b) => b.disc), net = sum((b) => b.taxable), tax = sum((b) => b.gst?.amount || 0);
                   const showOther = applyTax && sum((b) => b.gst?.other || 0) > 0;
-                  const span = (applyTax ? 8 : 6) + (showOther ? 1 : 0);
+                  const span = applyTax ? 8 + (showOther ? 1 : 0) : 5;
                   /* the tax-invoice face, as on the order and the printed invoice (owner, 26 Oct 2026): Disc is the
                      line's whole discount, Taxable = what the GST is computed on, Total = Taxable + GST */
                   return <table className="table table-sm fs-12 mb-0">
-                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Issued</th><th className="num">Rate</th><th className="num">Disc</th>{applyTax && <><th className="num">Taxable</th><th className="num">GST</th></>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{applyTax ? "Line Total" : "Amount"}</th></tr></thead>
+                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Ordered</th><th className="num">Issued</th><th className="num">Rate</th>{applyTax && <><th className="num">Disc</th><th className="num">Taxable</th><th className="num">GST</th></>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{applyTax ? "Line Total" : "Amount"}</th></tr></thead>
                     <tbody>{rows.map(({ l, b }: any, i: number) => <tr key={l.id}>
                       <td>{i + 1}</td>
                       <td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{applyTax && l.hs_code ? ` · HS ${l.hs_code}` : ""}</div></td>
                       <td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(b.issued)}</td><td className="num">{money(l.unit_price)}</td>
-                      <td className="num">{b.disc > 0.004 ? money(b.disc) : "—"}</td>
-                      {applyTax && <><td className="num">{money(b.taxable)}</td><td className="num">{b.gst?.label ? <>{money(b.gst.amount)}<div className="text-muted fs-11">{b.gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no GST; classify it on the product's FBR card (HS code → rate)">—</span>}</td></>}
+                      {applyTax && <><td className="num">{b.disc > 0.004 ? money(b.disc) : "—"}</td><td className="num">{money(b.taxable)}</td><td className="num">{b.gst?.label ? <>{money(b.gst.amount)}<div className="text-muted fs-11">{b.gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no GST; classify it on the product's FBR card (HS code → rate)">—</span>}</td></>}
                       {showOther && <td className="num">{b.gst?.other ? <>{money(b.gst.other)}<div className="text-muted fs-11">{otherTaxLabel(b.others)}</div></> : "—"}</td>}
-                      <td className="num fw-medium">{money(b.total)}</td>
+                      <td className="num fw-medium">{money(applyTax ? b.total : b.gross)}</td>
                     </tr>)}</tbody>
                     <tfoot>
                       {applyTax ? <TaxFooterRows span={span} sub={gross} discount={disc} net={net} gst={tax}
-                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} /> : <tr className="fw-bold"><td colSpan={span} className="text-end">Total</td><td className="num">{money(net)}</td></tr>}
+                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} /> : <PlainFooterRows span={span} sub={gross} discount={disc} payable={net} />}
                     </tfoot></table>;
                 })()}
                 <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above — check it, then issue.</div>
@@ -359,7 +363,7 @@ export function CreditNoteDetailPage() {
           return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th>Restock</th><th>Condition</th><th>Reason</th>{taxed && <><th className="num">Taxable</th><th className="num">GST</th></>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{taxed ? "Line Total" : "Total"}</th></tr></thead>
             <tbody>{cn.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td>{l.restock ? "yes" : "no"}</td><td>{l.condition}</td><td>{l.reason}</td>{taxed && <><td className="num">{money(Number(l.line_total) - t - otherOf(l))}</td><td className="num">{t ? <>{money(t)}{Number(l.tax1_rate) > 0 && <div className="text-muted fs-11">{Number(l.tax1_rate)}%</div>}</> : "—"}</td></>}{showOther && <td className="num">{otherOf(l) ? money(otherOf(l)) : "—"}</td>}<td className="num">{money(l.line_total)}</td></tr>; })}</tbody>
             <tfoot>{taxed ? <TaxFooterRows span={span} sub={Number(cn.subtotal)} net={Number(cn.subtotal)} gst={taxTotal} fed={Number(cn.fed_total)} extra={Number(cn.extra_tax_total)}
-                further={Number(cn.further_tax_total)} wht={Number(cn.wht_total)} payableLabel="Total Credit" /> : <tr className="fw-bold"><td colSpan={span} className="text-end">Total</td><td className="num">{money(cn.total)}</td></tr>}</tfoot></table>;
+                further={Number(cn.further_tax_total)} wht={Number(cn.wht_total)} payableLabel="Total Credit" /> : <PlainFooterRows span={span} sub={Number(cn.subtotal)} payable={Number(cn.total)} payableLabel="Total Credit" hideZeroDiscount />}</tfoot></table>;
         })()}
       </div></div>
       <DocTabs model="CreditNote" id={cn.id} showMovements />
@@ -434,7 +438,7 @@ export function CreditNoteFormPage() {
           <Field label=" " col="col-md-3"><div className="form-check form-check-md mt-2"><input className="form-check-input" type="checkbox" id="applied" checked={form.applied_to_invoice} onChange={(e) => setForm({ ...form, applied_to_invoice: e.target.checked })} /><label htmlFor="applied" className="form-check-label">Apply to the invoice balance</label></div></Field>
         </div>
         {!form.invoice && <div className="alert alert-info py-2 fs-12 mb-2"><i className="ti ti-info-circle me-1" />No invoice selected — this is a <strong>blind return</strong>: add the returned items below. Use it when the goods weren't sold on a traceable invoice. Good stock goes back on hand; broken or expired stock is written off.</div>}
-        <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} chargeTax={invTaxed} lineTax={creditTax} payableLabel="Total Credit" />
+        <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} chargeTax={invTaxed} lineTax={creditTax} payableLabel="Total Credit" discountless />
         {lines.length > 0 && <div className="table-responsive mt-2"><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th>Restock?</th><th>Condition</th><th>Line reason</th></tr></thead><tbody>{lines.map((l) => <tr key={l.key}><td>{l.variant_name || "—"}</td><td><input type="checkbox" className="form-check-input" checked={(l.condition || "good") === "good" ? (l.restock ?? true) : false} disabled={(l.condition || "good") !== "good"} title={(l.condition || "good") !== "good" ? "Broken or expired goods are written off, not put back in stock" : ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, restock: e.target.checked } : x)))} /></td><td><select className="form-select form-select-sm" value={l.condition || "good"} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, condition: e.target.value, restock: e.target.value === "good" } : x)))}><option value="good">good</option><option value="damaged">damaged</option><option value="expired">expired</option></select></td><td><input className="form-control form-control-sm" value={l.reason || ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, reason: e.target.value } : x)))} /></td></tr>)}</tbody></table></div>}
       </div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-outline-primary" onClick={() => submit(false)}>Save Draft</button><button className="btn btn-primary" onClick={() => submit(true)}>Issue Credit Note</button></div>

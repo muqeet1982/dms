@@ -2,7 +2,7 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { api } from "@/api/client";
 import { fbrLineTax, LineTax, money, otherTaxLabel } from "@/lib/format";
-import { TaxFooterRows } from "./TaxFooter";
+import { PlainFooterRows, TaxFooterRows } from "./TaxFooter";
 import { useScanListener } from "@/lib/scan";
 import { toast } from "@/lib/toast";
 import { EntitySelect } from "../ui/EntitySelect";
@@ -29,7 +29,7 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
-export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable" }: {
+export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false }: {
   lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>; blockOutOfStock?: boolean;
   /** When given, a switch appears to show or hide the discount column — off until a deal actually needs it. */
   onToggleDiscount?: () => void; discountShown?: boolean;
@@ -45,6 +45,8 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   lineTax?: (l: EditLine, baseQty: number, taxable: number) => LineTax | null;
   /** The footer's last row — a credit note credits rather than asks for payment. */
   payableLabel?: string;
+  /** A document that never carries a discount (a credit note): its footer leaves out a Total Discount of 0. */
+  discountless?: boolean;
 }) {
   const priceHeader = priceLabel || (priceFor === "cost" ? "D.P (unit)" : "Unit price");
   const [scan, setScan] = useState("");
@@ -135,6 +137,10 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   const grossTotal = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0), 0);
   // an Other Tax column (FED + Extra + Further) only once some line carries one
   const otherShown = gstShown && sumTax("other") > 0;
+  // a SALES document without tax shows each line as Qty × Rate and takes every discount on the total (owner,
+  // 27 Oct 2026); purchase documents keep their net line totals
+  const plainSale = showPrice && !gstShown && priceFor !== "cost";
+  const grossOf = (l: EditLine) => Number(l.qty || 0) * Number(l.unit_price || 0);
   // every column before Total, so the footer labels line up under the right cell
   const preTotalCols = 3 + (showPrice ? 1 : 0) + (showDiscount ? 2 : 0) + (reasons ? 1 : 0) + (showBatch ? 2 : 0) + (gstShown ? 2 : 0) + (otherShown ? 1 : 0);
   return (
@@ -156,7 +162,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
       )}
       <div className={lines.length > LINES_SCROLL_FROM ? "table-scroll" : "lines-editor-wrap"}>
         <table className="table table-sm align-middle mb-0">
-          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{gstShown && <th className="num" style={{ width: 110 }}>Taxable</th>}{gstShown && <th className="num" style={{ width: 110 }}>GST</th>}{otherShown && <th className="num" style={{ width: 110 }} title="FED + Extra Tax + Further Tax">Other Tax</th>}{showPrice && <th className="num" style={{ width: 130 }}>{gstShown ? "Line Total" : "Total"}</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
+          <thead className="table-light"><tr><th style={{ minWidth: 260 }}>Item</th><th style={{ width: 130 }}>Packaging</th><th style={{ width: 110 }} className="num">Qty</th>{showPrice && <th style={{ width: 130 }} className="num">{priceHeader}</th>}{showDiscount && <th style={{ width: 90 }} className="num">Disc %</th>}{showDiscount && <th style={{ width: 90 }} className="num" title="The product's own standing discount — set on the product, changeable here">Prod %</th>}{reasons && <th style={{ width: 170 }}>Reason</th>}{showBatch && <th style={{ width: 150 }}>Batch</th>}{showBatch && <th style={{ width: 150 }}>Expiry</th>}{gstShown && <th className="num" style={{ width: 110 }}>Taxable</th>}{gstShown && <th className="num" style={{ width: 110 }}>GST</th>}{otherShown && <th className="num" style={{ width: 110 }} title="FED + Extra Tax + Further Tax">Other Tax</th>}{showPrice && <th className="num" style={{ width: 130 }}>{gstShown ? "Line Total" : plainSale ? "Amount" : "Total"}</th>}{!readOnly && <th style={{ width: 40 }} />}</tr></thead>
           <tbody>
             {lines.map((l) => (
               <tr key={l.key}>
@@ -171,7 +177,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
                 {gstShown && <td className="num">{l.variant ? money(lineNet(l)) : <span className="text-muted">—</span>}</td>}
                 {gstShown && <td className="num">{(() => { const t = taxOf(l); return t && t.label ? <>{money(t.amount)}<div className="text-muted fs-11">{t.label}</div></> : l.variant ? <span className="text-warning" title="No FBR rate — this item will carry no GST; classify it on the product's FBR card (HS code → rate)">—</span> : <span className="text-muted">—</span>; })()}</td>}
                 {otherShown && <td className="num">{(() => { const t = taxOf(l); return t && t.other ? <>{money(t.other)}<div className="text-muted fs-11">{otherTaxLabel(l.extra?.fbr_others || {})}</div></> : <span className="text-muted">—</span>; })()}</td>}
-                {showPrice && <td className="num fw-medium">{money(lineNet(l) + (taxOf(l)?.amount || 0) + (taxOf(l)?.other || 0))}</td>}
+                {showPrice && <td className="num fw-medium">{money(plainSale ? grossOf(l) : lineNet(l) + (taxOf(l)?.amount || 0) + (taxOf(l)?.other || 0))}</td>}
                 {!readOnly && <td><button type="button" className="btn btn-sm btn-outline-danger" onClick={() => remove(l.key)}><i className="ti ti-x" /></button></td>}
               </tr>
             ))}
@@ -179,7 +185,8 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           </tbody>
           {showPrice && lines.length > 0 && <tfoot>
             {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} net={total} gst={taxTotal}
-                fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} payableLabel={payableLabel} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
+                fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} payableLabel={payableLabel} />
+              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} payable={total} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>
       </div>

@@ -150,3 +150,42 @@ def test_the_product_form_saves_the_rates_and_refuses_nonsense(api, tenant, worl
     assert D(r.data["fbr_fed_rate"]) == D("2.5") and D(r.data["fbr_wht_rate"]) == D("1")
     bad = api.patch(f"/api/v1/products/{pid}", {"fbr_further_tax_rate": "150"}, format="json")
     assert bad.status_code == 400 and "Further tax" in str(bad.content)
+
+
+def test_a_document_without_tax_takes_the_discount_on_the_total(api, tenant, world):
+    """Owner, 27 Oct 2026: "when no tax then show discount on total … show subtotal, total discount and grand
+    total and payable". Lines read Qty × Rate; every discount is taken once, in the footer."""
+    wh, cust, v, tt = world
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "charge_tax": False,
+                                          "discount_pct": "5", "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert D(r.data["subtotal"]) == D("600") and D(r.data["discount"]) == D("30") and D(r.data["total"]) == D("570")
+    seen = {}
+
+    def capture(request, template, ctx, *a, **kw):
+        from django.http import HttpResponse
+        from django.template.loader import render_to_string
+
+        seen["html"] = render_to_string(template, {**ctx, "tenant": tenant, "logo_url": None, "printed_at": "", "doc_title": "", "doc_ref": ""})
+        return HttpResponse(b"")
+
+    def footer(html):
+        import re
+
+        body = re.search(r'<table class="totals">(.*?)</table>', html, re.S).group(1)
+        from html import unescape
+
+        return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", body))).strip()
+
+    with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
+        api.get(f"/api/v1/sales-orders/{r.data['id']}/pdf")
+    assert footer(seen["html"]) == "Sub Total 600.00 Total Discount −30.00 Grand Total 570.00 Total Payable 570.00", footer(seen["html"])
+    assert ">Discount<" not in seen["html"] and ">Amount<" in seen["html"], "the discount is on the total, not in the lines"
+
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]}, format="json")
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"apply_tax": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
+        api.get(f"/api/v1/invoices/{inv['id']}/pdf")
+    assert footer(seen["html"]).startswith("Sub Total 600.00 Total Discount −30.00 Grand Total 570.00 Total Payable 570.00"), footer(seen["html"])

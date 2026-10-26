@@ -76,11 +76,12 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
   </tbody>
 </table>
 {% else %}
+{% comment %}No tax (owner, 27 Oct 2026): the discount is shown on the total, so each line is simply Qty × Rate.{% endcomment %}
 <table class="lines">
   <thead><tr>
     <th style="width:6mm">#</th><th>Item</th><th style="width:18mm">Pack</th>
     <th class="r" style="width:15mm">Ordered</th>    {% if show_progress %}<th class="r" style="width:16mm">Delivered</th><th class="r" style="width:14mm">Pending</th>{% endif %}
-    <th class="r" style="width:19mm">Rate</th><th class="r" style="width:17mm">Discount</th>
+    <th class="r" style="width:19mm">Rate</th>
     <th class="r" style="width:23mm">Amount</th>
   </tr></thead>
   <tbody>
@@ -94,8 +95,7 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
       <td class="r">{% if l.pending %}<strong>{{ l.pending|qty }}</strong>{% else %}—{% endif %}</td>
     {% endif %}
     <td class="r">{{ l.unit_price|num }}</td>
-    <td class="r">{% if l.discount_amount or l.scheme_discount %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
-    <td class="r b">{{ l.line_total|num }}</td>
+    <td class="r b">{{ l.gross|num }}</td>
   </tr>{% endfor %}
   </tbody>
 </table>
@@ -131,10 +131,11 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
   {% if wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">−{{ wht_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% else %}
-  <tr><td class="l">Subtotal</td><td class="r">{{ o.subtotal|num }}</td></tr>
-  {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
-  {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
-  <tr class="sum"><td>Order total</td><td class="r">{{ o.total|num }}</td></tr>
+  {% comment %}No tax (owner, 27 Oct 2026): Sub Total − Total Discount (customer, product and scheme alike) = Grand Total = Total Payable.{% endcomment %}
+  <tr><td class="l">Sub Total</td><td class="r">{{ o.subtotal|num }}</td></tr>
+  <tr><td class="l">Total Discount</td><td class="r">{% if total_discount %}−{{ total_discount|num }}{% else %}0.00{% endif %}</td></tr>
+  <tr><td class="l">Grand Total</td><td class="r">{{ taxable_total|num }}</td></tr>
+  <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% endif %}
 </table>
 {% endblock %}

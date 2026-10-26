@@ -528,8 +528,9 @@ def test_the_order_pdf_shows_the_tax_invoice_columns(api, tenant, taxed_world):
 
 
 def test_a_tax_off_customer_gets_the_plain_order_face_even_with_class_tax(api, tenant, taxed_world):
-    """Owner, 26 Oct 2026: the tax footer is for tax invoices — "if customer tax is off then do not show".
-    An unflagged order still priced by a legacy tax class (tax1_total > 0) must NOT switch to the tax face."""
+    """Owner, 26-27 Oct 2026: the tax footer is for tax invoices — "if customer tax is off then do not show" —
+    and tax off means no tax at all. A default tax class no longer taxes an unflagged order (its invoice never
+    charged it, so the two disagreed), and the order prints the plain face."""
     from unittest import mock
 
     from apps.catalog.models import TaxClass
@@ -540,7 +541,7 @@ def test_a_tax_off_customer_gets_the_plain_order_face_even_with_class_tax(api, t
         TaxClass.objects.create(name="Std", tax1=tt, is_default=True)
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id),
                                           "charge_tax": False, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
-    assert Decimal(r.data["tax1_total"]) > 0, "precondition: the tax class priced the unflagged order"
+    assert Decimal(r.data["tax1_total"]) == 0 and Decimal(r.data["total"]) == Decimal("600"), "tax off = no tax, classes or not"
     seen = {}
 
     def capture(request, template, ctx, *a, **kw):

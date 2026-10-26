@@ -16,12 +16,14 @@ def order_pdf(request, o):
         l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
         l.tax_amount = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
         l.taxable = Decimal(str(l.line_total or 0)) - l.tax_amount - l.other_tax
+        l.gross = Decimal(str(l.qty_ordered or 0)) * Decimal(str(l.unit_price or 0))
     return render_doc(request, "sales/order.html", {
         "o": o, "lines": lines, **other,
         # the tax face follows the customer's flag alone (owner 26 Oct 2026: "if customer tax is off then do not
         # show") — an unflagged order's legacy tax-class tax does not turn it into a tax document
         "tax_on": bool(o.charge_tax), "tax_shown": tax_shown,
         "taxable_total": Decimal(str(o.subtotal or 0)) - Decimal(str(o.discount or 0)) - Decimal(str(o.scheme_discount or 0)),
+        "total_discount": Decimal(str(o.discount or 0)) + Decimal(str(o.scheme_discount or 0)),
         "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
         "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
         "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
