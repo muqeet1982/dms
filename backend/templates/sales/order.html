@@ -110,22 +110,26 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
 
 {% block totals %}
 {% comment %}
-Tax order: Subtotal − Discount − Scheme = Taxable value, + Sales tax = Order total — the same footing as the
-tax invoice that will bill it, so the cash to collect on delivery is the taxed figure.
+Tax order, the owner's sample footer (26 Oct 2026): Sub Total − Discount − Scheme = Net Total, + GST
+(= Total Tax, one sales tax) = Grand Total = Total Payable — the same footing as the tax invoice that
+will bill it, so the cash to collect on delivery is the taxed figure.
 {% endcomment %}
 <table class="totals">
   {% if tax_on %}
-  {% if o.discount or o.scheme_discount %}<tr><td class="l">Gross amount</td><td class="r">{{ o.subtotal|num }}</td></tr>{% endif %}
+  <tr><td class="l">Sub Total</td><td class="r">{{ o.subtotal|num }}</td></tr>
   {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
-  <tr><td class="l">Taxable value</td><td class="r">{{ taxable_total|num }}</td></tr>
-  <tr><td class="l">Sales tax{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
+  <tr><td class="l">GST{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  <tr><td class="l">Total Tax</td><td class="r">{{ tax_shown|num }}</td></tr>
+  <tr><td class="l">Grand Total</td><td class="r">{{ o.total|num }}</td></tr>
+  <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% else %}
   <tr><td class="l">Subtotal</td><td class="r">{{ o.subtotal|num }}</td></tr>
   {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
-  {% endif %}
   <tr class="sum"><td>Order total</td><td class="r">{{ o.total|num }}</td></tr>
+  {% endif %}
 </table>
 {% endblock %}
 

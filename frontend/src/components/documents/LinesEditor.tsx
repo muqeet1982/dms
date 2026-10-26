@@ -135,6 +135,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
   const gstShown = Boolean(chargeTax && showPrice);
   const total = lines.reduce((s, l) => s + lineNet(l), 0);
   const taxTotal = lines.reduce((s, l) => s + gstFor(l), 0);
+  const grossTotal = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0), 0);
   // every column before Total, so the footer labels line up under the right cell
   const preTotalCols = 3 + (showPrice ? 1 : 0) + (showDiscount ? 2 : 0) + (reasons ? 1 : 0) + (showBatch ? 2 : 0) + (gstShown ? 1 : 0);
   return (
@@ -177,9 +178,13 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           </tbody>
           {showPrice && lines.length > 0 && <tfoot>
             {gstShown ? <>
-              <tr><td colSpan={preTotalCols} className="text-end">Taxable value</td><td className="num">{money(total)}</td>{!readOnly && <td />}</tr>
-              <tr><td colSpan={preTotalCols} className="text-end">Sales tax</td><td className="num">{money(taxTotal)}</td>{!readOnly && <td />}</tr>
-              <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Total</td><td className="num fw-bold">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end">Sub Total</td><td className="num">{money(grossTotal)}</td>{!readOnly && <td />}</tr>
+              {grossTotal - total > 0.004 && <tr><td colSpan={preTotalCols} className="text-end">Discount</td><td className="num">−{money(grossTotal - total)}</td>{!readOnly && <td />}</tr>}
+              <tr><td colSpan={preTotalCols} className="text-end">Net Total</td><td className="num">{money(total)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end">GST</td><td className="num">{money(taxTotal)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end">Total Tax</td><td className="num">{money(taxTotal)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end">Grand Total</td><td className="num">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
+              <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Total Payable</td><td className="num fw-bold">{money(total + taxTotal)}</td>{!readOnly && <td />}</tr>
             </> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>

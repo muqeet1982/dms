@@ -254,7 +254,9 @@ class SalesOrderViewSet(DocumentViewSet):
         o = self.get_object()
         lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
         tax_shown = Decimal(str(o.tax1_total or 0)) + Decimal(str(o.tax2_total or 0))
-        tax_on = bool(o.charge_tax) or tax_shown > 0
+        # the tax face follows the customer's flag alone (owner 26 Oct 2026: "if customer tax is off then do not
+        # show") — an unflagged order's legacy tax-class tax does not turn it into a tax document
+        tax_on = bool(o.charge_tax)
         for l in lines:
             l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
             l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))

@@ -114,10 +114,13 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         html = render_to_string("sales/invoice.html", {"inv": inv, "lines": lines, "tenant": tenant,
                                                        "logo_url": None, "printed_at": "", "doc_title": "SALES INVOICE", "doc_ref": inv.number, **extra})
         # the tax-invoice face (owner's layout, 26 Oct 2026): Item · Qty · Rate · Disc · Taxable · GST · Total,
-        # the HS code under the item name, and the totals footed as Taxable value + Sales tax = Total
+        # the HS code under the item name, and the owner's sample footer: Sub Total → Net Total → GST →
+        # Total Tax → Grand Total → Total Payable
         assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
-        assert "Sales Tax" in html and "108" in html
-        assert "HS 7306.3090" in html and "Taxable value" in html and "Sales tax" in html
+        assert "108" in html
+        for row in ("Sub Total", "Net Total", "Total Tax", "Grand Total", "Total Payable"):
+            assert row in html, row
+        assert "HS 7306.3090" in html
         assert "FBR: Unregistered" in html
 
 
@@ -495,7 +498,8 @@ def test_a_flagged_order_carries_the_fbr_tax_itself(api, tenant, taxed_world):
 
 def test_the_order_pdf_shows_the_tax_invoice_columns(api, tenant, taxed_world):
     """The order confirmation reads like the invoice that will bill it: Disc · Taxable · GST · Total,
-    HS under the item, and Taxable value + Sales tax footing to the order total."""
+    HS under the item, and the sample footer (Sub Total → Net Total → GST → Total Tax → Grand Total →
+    Total Payable) footing to the order total."""
     wh, cust, v, tt = taxed_world
     _product_fbr(tenant, v, "18%", fbr_hs_code="7306.3090")
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
@@ -517,8 +521,43 @@ def test_the_order_pdf_shows_the_tax_invoice_columns(api, tenant, taxed_world):
                                                      "show_progress": False, "tax1_name": "Sales Tax", "tax2_name": None,
                                                      "logo_url": None, "printed_at": "", "doc_title": "SALES ORDER", "doc_ref": o.number})
         assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
-        assert "HS 7306.3090" in html and "Taxable value" in html and "Sales tax" in html
+        assert "HS 7306.3090" in html
+        for row in ("Sub Total", "Net Total", "Total Tax", "Grand Total", "Total Payable"):
+            assert row in html, row
         assert "708" in html and "108" in html
+
+
+def test_a_tax_off_customer_gets_the_plain_order_face_even_with_class_tax(api, tenant, taxed_world):
+    """Owner, 26 Oct 2026: the tax footer is for tax invoices — "if customer tax is off then do not show".
+    An unflagged order still priced by a legacy tax class (tax1_total > 0) must NOT switch to the tax face."""
+    from unittest import mock
+
+    from apps.catalog.models import TaxClass
+
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    with tenant_context(tenant, tenant.owner):
+        TaxClass.objects.create(name="Std", tax1=tt, is_default=True)
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id),
+                                          "charge_tax": False, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert Decimal(r.data["tax1_total"]) > 0, "precondition: the tax class priced the unflagged order"
+    seen = {}
+
+    def capture(request, template, ctx, *a, **kw):
+        from django.http import HttpResponse
+
+        seen.update(ctx)
+        return HttpResponse(b"")
+
+    with mock.patch("apps.sales.views.render_doc", side_effect=capture):
+        assert api.get(f"/api/v1/sales-orders/{r.data['id']}/pdf").status_code == 200
+    assert seen["tax_on"] is False
+
+    flagged = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id),
+                                                "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    with mock.patch("apps.sales.views.render_doc", side_effect=capture):
+        api.get(f"/api/v1/sales-orders/{flagged.data['id']}/pdf")
+    assert seen["tax_on"] is True
 
 
 def test_the_create_page_switch_beats_the_orders_flag(api, tenant, taxed_world):
