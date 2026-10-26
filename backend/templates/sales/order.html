@@ -53,6 +53,7 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
     <th class="r" style="width:11mm">Qty</th>    {% if show_progress %}<th class="r" style="width:12mm">Delivered</th><th class="r" style="width:11mm">Pending</th>{% endif %}
     <th class="r" style="width:14mm">Rate</th><th class="r" style="width:12mm">Disc</th>
     <th class="r" style="width:16mm">Taxable</th><th class="r" style="width:15mm">GST</th>
+    {% if show_other %}<th class="r" style="width:15mm">Other Tax</th>{% endif %}
     <th class="r" style="width:18mm">Line Total</th>
   </tr></thead>
   <tbody>
@@ -69,6 +70,7 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
     <td class="r">{% if l.discount_amount or l.scheme_discount %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
     <td class="r">{{ l.taxable|num }}</td>
     <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{{ l.variant.product.fbr_rate_desc|fbr_rate }}</span></td>
+    {% if show_other %}<td class="r">{% if l.other_tax %}{{ l.other_tax|num }}<span class="sku">{{ l.other_label }}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.line_total|num }}</td>
   </tr>{% endfor %}
   </tbody>
@@ -110,9 +112,9 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
 
 {% block totals %}
 {% comment %}
-Tax order, the owner's sample footer (26 Oct 2026): Sub Total − Discount − Scheme = Net Total, + GST
-(= Total Tax, one sales tax) = Grand Total = Total Payable — the same footing as the tax invoice that
-will bill it, so the cash to collect on delivery is the taxed figure.
+Tax order, the owner's sample footer (26 Oct 2026): Sub Total − Discount − Scheme = Net Total; GST, FED,
+Extra Tax and Further Tax add up to Total Tax; + Net Total = Grand Total; less the WHT the buyer withholds =
+Total Payable — the same footing as the tax invoice that will bill it, so the cash to collect is right.
 {% endcomment %}
 <table class="totals">
   {% if tax_on %}
@@ -121,8 +123,12 @@ will bill it, so the cash to collect on delivery is the taxed figure.
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
   <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
   <tr><td class="l">GST{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
-  <tr><td class="l">Total Tax</td><td class="r">{{ tax_shown|num }}</td></tr>
-  <tr><td class="l">Grand Total</td><td class="r">{{ o.total|num }}</td></tr>
+  {% if fed_total %}<tr><td class="l">FED</td><td class="r">{{ fed_total|num }}</td></tr>{% endif %}
+  {% if extra_total %}<tr><td class="l">Extra Tax</td><td class="r">{{ extra_total|num }}</td></tr>{% endif %}
+  {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}
+  <tr><td class="l">Total Tax</td><td class="r">{{ total_tax|num }}</td></tr>
+  <tr><td class="l">Grand Total</td><td class="r">{{ grand_total|num }}</td></tr>
+  {% if wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">−{{ wht_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% else %}
   <tr><td class="l">Subtotal</td><td class="r">{{ o.subtotal|num }}</td></tr>

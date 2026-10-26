@@ -39,6 +39,23 @@ def account_for(role, document_type="*"):
     return rule.account
 
 
+def account_or(role, fallback_role, document_type="*"):
+    """account_for(role), or the fallback role's account while the tenant has no rule for `role` yet."""
+    if PostingRule.objects.filter(role=role, document_type__in=(document_type, "*")).exists():
+        return account_for(role, document_type)
+    return account_for(fallback_role, document_type)
+
+
+# the FBR taxes beside GST (owner 26 Oct 2026): (document field, role, fallback role, label). FED/Extra/Further
+# are owed to FBR like GST; WHT is the part of it the BUYER withholds and deposits — the seller's claim against
+# that deposit, so it is debited where the customer would otherwise have been.
+OTHER_SALES_TAXES = [
+    ("fed_total", "fed_out", "tax2_out", "FED"),
+    ("extra_tax_total", "extra_tax_out", "tax2_out", "Extra tax"),
+    ("further_tax_total", "further_tax_out", "tax2_out", "Further tax"),
+]
+
+
 def period_for(on_date):
     tenant = get_current_tenant()
     fy = ensure_fiscal_year(tenant, on_date)
@@ -179,6 +196,14 @@ class PostingService:
             if amt:
                 acct = (tt.output_account if tt and tt.output_account_id else None) or account_for(f"tax{idx + 1}_out", "sales_invoice")
                 lines.append(Line(acct, credit=amt, description=f"Output tax {tt.name if tt else idx + 1}", tax_type=tt))
+        for field, role, fallback, label in OTHER_SALES_TAXES:
+            amt = getattr(inv, field, 0) or 0
+            if amt:
+                lines.append(Line(account_or(role, fallback, "sales_invoice"), credit=amt, description=f"{label} {inv.number}"))
+        # the customer owes inv.total, which is already net of the sales tax they withhold at source
+        if getattr(inv, "wht_total", 0):
+            lines.append(Line(account_or("st_withheld", "withholding_receivable", "sales_invoice"), debit=inv.wht_total,
+                              description=f"Sales tax withheld at source by {inv.customer.name} — {inv.number}"))
         je = PostingService.post(lines, date_=inv.date, memo=f"Sales invoice {inv.number} – {inv.customer.name}", source=inv)
         # COGS at the movement's average cost
         cogs_total = sum((q4((l.qty + l.free_qty) * l.unit_cost) for l in inv.lines.all()), Decimal("0"))
@@ -195,6 +220,13 @@ class PostingService:
             if amt:
                 acct = (tt.output_account if tt and tt.output_account_id else None) or account_for(f"tax{idx + 1}_out", "credit_note")
                 lines.append(Line(acct, debit=amt, description=f"Output tax reversal {tt.name if tt else idx + 1}", tax_type=tt))
+        for field, role, fallback, label in OTHER_SALES_TAXES:
+            amt = getattr(cn, field, 0) or 0
+            if amt:
+                lines.append(Line(account_or(role, fallback, "credit_note"), debit=amt, description=f"{label} reversal {cn.number}"))
+        if getattr(cn, "wht_total", 0):
+            lines.append(Line(account_or("st_withheld", "withholding_receivable", "credit_note"), credit=cn.wht_total,
+                              description=f"Sales tax withheld at source reversed — {cn.number}"))
         lines.append(Line(ar, credit=cn.total, description=f"Credit note {cn.number}", partner_type="customer", partner_id=cn.customer_id))
         je = PostingService.post(lines, date_=cn.date, memo=f"Credit note {cn.number} – {cn.customer.name}", source=cn)
         # COGS reversal: good stock the user restocked goes back into Inventory; broken goods are expensed to

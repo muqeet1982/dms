@@ -197,7 +197,9 @@ def build_payload(inv, filing, *, use_sandbox):
         money = engine.compute_line(
             quantity=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
             rate_str=p.fbr_rate_desc, sale_type=p.fbr_sale_type, mrp=mrp,
-            further_rate=0, withheld_rate=0,
+            # the same rates InvoiceService.line_taxes charged, so the filing equals the stored invoice
+            fed_rate=p.fbr_fed_rate, extra_rate=p.fbr_extra_tax_rate,
+            further_rate=p.fbr_further_tax_rate, withheld_rate=p.fbr_wht_rate,
         )
         items.append({
             "hsCode": p.fbr_hs_code,

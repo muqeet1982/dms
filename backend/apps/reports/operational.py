@@ -86,7 +86,7 @@ def sales_by_period(date_from=None, date_to=None, granularity="day", **_):
 
     qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue"]), "date", date_from, date_to)
     trunc = TruncMonth("date") if granularity == "month" else TruncDay("date")
-    rows = [{"period": r["p"].isoformat() if hasattr(r["p"], "isoformat") else str(r["p"]), "invoices": r["n"], "sales": str(r["s"] or 0), "tax": str((r["t1"] or 0) + (r["t2"] or 0))} for r in qs.annotate(p=trunc).values("p").annotate(n=Count("id"), s=Sum("subtotal") - Sum("discount"), t1=Sum("tax1_total"), t2=Sum("tax2_total")).order_by("p")]
+    rows = [{"period": r["p"].isoformat() if hasattr(r["p"], "isoformat") else str(r["p"]), "invoices": r["n"], "sales": str(r["s"] or 0), "tax": str(sum((r[k] or 0) for k in ("t1", "t2", "fed", "extra", "further")))} for r in qs.annotate(p=trunc).values("p").annotate(n=Count("id"), s=Sum("subtotal") - Sum("discount"), t1=Sum("tax1_total"), t2=Sum("tax2_total"), fed=Sum("fed_total"), extra=Sum("extra_tax_total"), further=Sum("further_tax_total")).order_by("p")]
     return {"columns": ["period", "invoices", "sales", "tax"], "rows": rows, "totals": {"sales": str(sum((Decimal(r["sales"]) for r in rows), Z))}}
 
 
@@ -673,17 +673,27 @@ def sales_tax_register(date_from=None, date_to=None, **_):
         rows.append({"date": i.date, "doc": "Invoice", "number": i.number, "customer": i.customer.name,
                      "ntn_cnic": (i.customer.ntn or i.customer.cnic or "").strip(),
                      "registration": i.customer.fbr_registration_type or "",
-                     "taxable_value": str(i.subtotal - i.discount), "sales_tax": str(i.tax1_total), "total": str(i.total),
+                     "taxable_value": str(i.subtotal - i.discount), "sales_tax": str(i.tax1_total),
+                     "fed": str(i.fed_total), "extra_tax": str(i.extra_tax_total), "further_tax": str(i.further_tax_total),
+                     "wht": str(i.wht_total), "total": str(i.total),
                      "fbr_status": (f.status if f is not None else "") or "not filed",
                      "fbr_number": (f.fbr_invoice_number if f is not None else "") or ""})
-    cn_qs = _window(CreditNote.objects.filter(status="posted", tax1_total__gt=0), "date", date_from, date_to)
+    cn_qs = _window(CreditNote.objects.filter(Q(tax1_total__gt=0) | Q(fed_total__gt=0) | Q(extra_tax_total__gt=0)
+                                              | Q(further_tax_total__gt=0) | Q(wht_total__gt=0), status="posted"),
+                    "date", date_from, date_to)
     for c in cn_qs.select_related("customer", "invoice"):
         rows.append({"date": c.date, "doc": "Credit note", "number": c.number, "customer": c.customer.name,
                      "ntn_cnic": (c.customer.ntn or c.customer.cnic or "").strip(),
                      "registration": c.customer.fbr_registration_type or "",
-                     "taxable_value": str(-c.subtotal), "sales_tax": str(-c.tax1_total), "total": str(-c.total),
+                     "taxable_value": str(-c.subtotal), "sales_tax": str(-c.tax1_total),
+                     "fed": str(-c.fed_total), "extra_tax": str(-c.extra_tax_total), "further_tax": str(-c.further_tax_total),
+                     "wht": str(-c.wht_total), "total": str(-c.total),
                      "fbr_status": f"against {c.invoice.number}" if c.invoice_id else "standalone", "fbr_number": ""})
     rows.sort(key=lambda r: (str(r["date"]), r["number"]))
-    totals = {k: str(sum((Decimal(r[k]) for r in rows), Z)) for k in ("taxable_value", "sales_tax", "total")}
+    money = ("taxable_value", "sales_tax", "fed", "extra_tax", "further_tax", "wht", "total")
+    totals = {k: str(sum((Decimal(r[k]) for r in rows), Z)) for k in money}
+    # FED / Extra / Further / WHT columns appear once any document in the period carries them (owner 26 Oct
+    # 2026) — total is net of WHT, the amount the buyers owe
+    others = [k for k in ("fed", "extra_tax", "further_tax", "wht") if any(Decimal(r[k]) for r in rows)]
     return {"columns": ["date", "doc", "number", "customer", "ntn_cnic", "registration", "taxable_value",
-                        "sales_tax", "total", "fbr_status", "fbr_number"], "rows": rows, "totals": totals}
+                        "sales_tax", *others, "total", "fbr_status", "fbr_number"], "rows": rows, "totals": totals}

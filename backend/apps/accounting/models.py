@@ -331,6 +331,10 @@ class PostingRule(TenantModel):
         ("samples", "Samples & promotion"), ("withholding_payable", "Withholding tax payable"), ("withholding_receivable", "Withholding tax receivable"), ("advance_customer", "Advances from customers"), ("advance_supplier", "Advances to suppliers"),
         ("opening_equity", "Opening balance equity"), ("retained_earnings", "Retained earnings"), ("current_year_profit", "Current year profit"), ("bank_charges", "Bank charges"), ("other_income", "Misc income"), ("bad_debts", "Bad debts"),
         ("manufacturer_incentive", "Manufacturer incentive / scheme income"),
+        # the FBR taxes beside GST (owner 26 Oct 2026). Unconfigured, they fall back to Output Tax 2 (Further /
+        # Other Tax) and Withholding Tax Receivable — see PostingService.post_sales_invoice
+        ("fed_out", "FED payable"), ("extra_tax_out", "Extra tax payable"), ("further_tax_out", "Further tax payable"),
+        ("st_withheld", "Sales tax withheld by customers"),
     ]
     role = models.CharField(max_length=30, choices=ROLES)
     document_type = models.CharField(max_length=30, default="*")

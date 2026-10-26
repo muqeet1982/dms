@@ -76,23 +76,38 @@ export function fbrRateLabel(rate: string): string {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** The product's FED / Extra / Further / WHT rates (its FBR card), as any API row carries them. */
+export type OtherRates = { fed?: any; extra?: any; further?: any; wht?: any };
+export type LineTax = { label: string; amount: number; fed: number; extra: number; further: number; wht: number; other: number };
+
 /**
- * One line's GST for PREVIEW, mirroring apps/fbr/engine.compute_line: the % on the taxable value — on MRP × qty
- * instead for 3rd Schedule goods when that is higher — plus the fixed rupee part × qty, 2 dp half-up. `qty` is in
- * base units. A typed `overridePct` is a plain % on the taxable value (InvoiceService.forced_line_tax). Null when
- * the product has no FBR rate: it carries no tax.
+ * One line's taxes for PREVIEW, mirroring InvoiceService.line_taxes / apps/fbr/engine.compute_line. GST: the % on
+ * the taxable value — on MRP × qty instead for 3rd Schedule goods when that is higher — plus the fixed rupee part ×
+ * qty; a typed `overridePct` is a plain % on the taxable value. FED / Extra / Further / WHT: each its rate on the
+ * TAXABLE value, never on taxable + GST (guide §4). `other` = FED + Extra + Further, the part inside Line Total;
+ * WHT is withheld by the buyer and comes off the document's total. 2 dp half-up throughout; `qty` in base units.
+ * Null when the line carries no tax at all. The server always recomputes the real figures.
  */
-export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; saleType?: string; mrp?: any; overridePct?: string | number | null }): { label: string; amount: number } | null {
+export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; saleType?: string; mrp?: any; overridePct?: string | number | null; others?: OtherRates }): LineTax | null {
+  const base0 = r2(o.taxable);
+  const pctOf = (rate: any) => r2((base0 * (Number(rate) || 0)) / 100);
+  const fed = pctOf(o.others?.fed), extra = pctOf(o.others?.extra), further = pctOf(o.others?.further), wht = pctOf(o.others?.wht);
+  const rest = { fed, extra, further, wht, other: r2(fed + extra + further) };
   if (o.overridePct !== undefined && o.overridePct !== null && o.overridePct !== "") {
     const p = Number(o.overridePct) || 0;
-    return { label: `${p}%`, amount: r2((r2(o.taxable) * p) / 100) };
+    return { label: `${p}%`, amount: r2((base0 * p) / 100), ...rest };
   }
-  if (!o.rate) return null;
+  if (!o.rate) return fed || extra || further || wht ? { label: "", amount: 0, ...rest } : null;
   const { pct, fixed } = fbrRateParts(o.rate);
-  let base = r2(o.taxable);
+  let base = base0;
   if ((o.saleType || "").trim().toLowerCase() === "3rd schedule goods") {
     const retail = r2(Number(o.mrp || 0) * o.qty);
     if (retail > base) base = retail;
   }
-  return { label: fbrRateLabel(o.rate), amount: r2((base * pct) / 100 + o.qty * fixed) };
+  return { label: fbrRateLabel(o.rate), amount: r2((base * pct) / 100 + o.qty * fixed), ...rest };
+}
+
+/** "FED 2% · Further 3%" — which of the other taxes a line carries, for the sub-label under its amount. */
+export function otherTaxLabel(r: OtherRates): string {
+  return ([["FED", r.fed], ["Extra", r.extra], ["Further", r.further]] as const).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k} ${Number(v)}%`).join(" · ");
 }

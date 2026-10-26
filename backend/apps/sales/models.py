@@ -8,7 +8,31 @@ from apps.core.models import MONEY, QTY, DocumentModel, TenantModel
 from apps.purchasing.models import TaxLineMixin
 
 
-class SalesOrder(DocumentModel):
+class OtherTaxLineMixin(models.Model):
+    """The guide's four per-line taxes beside GST (INVOICE_TAX_FLOW_GUIDE §4), each a % of the line's taxable
+    value, from the product's FBR card. FED, Extra and Further are inside line_total; WHT is not — the buyer
+    withholds it, so it comes off the document's total instead (and is filed as salesTaxWithheldAtSource)."""
+    fed_amount = models.DecimalField(**MONEY)
+    extra_tax_amount = models.DecimalField(**MONEY)
+    further_tax_amount = models.DecimalField(**MONEY)
+    wht_amount = models.DecimalField(**MONEY)
+
+    class Meta:
+        abstract = True
+
+
+class OtherTaxTotalsMixin(models.Model):
+    """Header sums of OtherTaxLineMixin. total = net + GST + FED + Extra + Further − WHT: what the buyer pays."""
+    fed_total = models.DecimalField(**MONEY)
+    extra_tax_total = models.DecimalField(**MONEY)
+    further_tax_total = models.DecimalField(**MONEY)
+    wht_total = models.DecimalField(**MONEY)
+
+    class Meta:
+        abstract = True
+
+
+class SalesOrder(OtherTaxTotalsMixin, DocumentModel):
     SOURCES = [("rep_app", "Rep app"), ("api", "API"), ("staff", "Staff"), ("portal", "Portal")]
     STATUS = [
         ("draft", "Draft"), ("submitted", "Submitted"), ("under_review", "Under review"), ("confirmed", "Confirmed"), ("on_hold_credit", "On hold (credit)"), ("on_hold_stock", "On hold (stock)"),
@@ -74,7 +98,7 @@ class SalesOrder(DocumentModel):
         return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock", "confirmed", "issued", "dispatched")
 
 
-class SalesOrderLine(TaxLineMixin, TenantModel):
+class SalesOrderLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name="lines")
     variant = models.ForeignKey("catalog.ProductVariant", on_delete=models.PROTECT, related_name="order_lines")
     packaging = models.ForeignKey("catalog.Packaging", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -111,7 +135,7 @@ class StockReservation(TenantModel):
     released = models.BooleanField(default=False)
 
 
-class SalesInvoice(DocumentModel):
+class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("partially_paid", "Partially paid"), ("paid", "Paid"), ("overdue", "Overdue"), ("cancelled", "Cancelled")]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="invoices")
     order = models.ForeignKey(SalesOrder, null=True, blank=True, on_delete=models.SET_NULL, related_name="invoices")
@@ -152,7 +176,7 @@ class SalesInvoice(DocumentModel):
         return self.total - self.paid_amount
 
 
-class SalesInvoiceLine(TaxLineMixin, TenantModel):
+class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     # a typed per-line tax % (owner, 24 Oct 2026): beats the product's own % and the invoice's rate while
     # the invoice's tax switch is on; null = inherit. Survives recompute, unlike tax1_rate which it feeds.
     tax_pct_override = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
@@ -175,7 +199,7 @@ class SalesInvoiceLine(TaxLineMixin, TenantModel):
         ordering = ["sequence", "id"]
 
 
-class CreditNote(DocumentModel):
+class CreditNote(OtherTaxTotalsMixin, DocumentModel):
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("cancelled", "Cancelled")]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="credit_notes")
     invoice = models.ForeignKey(SalesInvoice, null=True, blank=True, on_delete=models.SET_NULL, related_name="credit_notes")
@@ -200,7 +224,7 @@ class CreditNote(DocumentModel):
         return self.number
 
 
-class CreditNoteLine(TaxLineMixin, TenantModel):
+class CreditNoteLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     CONDITIONS = [("good", "Good"), ("damaged", "Damaged"), ("expired", "Expired")]
     credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name="lines")
     variant = models.ForeignKey("catalog.ProductVariant", on_delete=models.PROTECT, related_name="+")

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, fbrRateLabel, money, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, money, otherTaxLabel, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -14,6 +14,7 @@ import { ListPage } from "@/components/ui/ListPage";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { DocTabs } from "@/components/documents/DocTabs";
 import { EditLine, LinesEditor, newLine } from "@/components/documents/LinesEditor";
+import { TaxFooterRows } from "@/components/documents/TaxFooter";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 
 const STATUS_OPTIONS = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
@@ -125,12 +126,19 @@ export function OrderDetailPage() {
                      Taxable = Qty × Price − Disc is what the GST is computed on, Total = Taxable + GST */
                   // the tax face follows the customer's flag alone (owner 26 Oct: "if customer tax is off then do not show")
                   const taxed = Boolean(o.charge_tax);
-                  const span = taxed ? 9 : 7;
+                  const otherOf = (l: any) => (Number(l.fed_amount) || 0) + (Number(l.extra_tax_amount) || 0) + (Number(l.further_tax_amount) || 0);
+                  // FED / Extra / Further get a column once any line carries them
+                  const showOther = taxed && o.lines.some((l: any) => otherOf(l) > 0);
+                  const span = (taxed ? 9 : 7) + (showOther ? 1 : 0);
                   const taxTotal = (Number(o.tax1_total) || 0) + (Number(o.tax2_total) || 0);
                   return <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: taxed ? 900 : 760 }}>
-                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th>{taxed && <th className="num">Taxable</th>}{taxed && <th className="num">GST</th>}<th className="num">{taxed ? "Line Total" : "Total"}</th></tr></thead>
-                    <tbody>{o.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td>{taxed && <td className="num">{money(Number(l.line_total) - taxAmt)}</td>}{taxed && <td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.product_fbr_rate ? fbrRateLabel(l.product_fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>}<td className="num fw-medium">{money(l.line_total)}</td></tr>; })}</tbody>
-                    <tfoot>{taxed && <tr><td colSpan={span} className="text-end">Sub Total</td><td className="num">{money(o.subtotal)}</td></tr>}{Number(o.discount) > 0 && <tr><td colSpan={span} className="text-end">Discount{Number(o.discount_pct) > 0 ? ` (${Number(o.discount_pct)}%)` : ""}</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={span} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}{taxed && <><tr><td colSpan={span} className="text-end">Net Total</td><td className="num">{money(Number(o.total) - taxTotal)}</td></tr><tr><td colSpan={span} className="text-end">GST</td><td className="num">{money(taxTotal)}</td></tr><tr><td colSpan={span} className="text-end">Total Tax</td><td className="num">{money(taxTotal)}</td></tr><tr><td colSpan={span} className="text-end">Grand Total</td><td className="num">{money(o.total)}</td></tr></>}<tr className="fw-bold"><td colSpan={span} className="text-end">{taxed ? "Total Payable" : "Total"} ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
+                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th>{taxed && <th className="num">Taxable</th>}{taxed && <th className="num">GST</th>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{taxed ? "Line Total" : "Total"}</th></tr></thead>
+                    <tbody>{o.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td>{taxed && <td className="num">{money(Number(l.line_total) - taxAmt - otherOf(l))}</td>}{taxed && <td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.product_fbr_rate ? fbrRateLabel(l.product_fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>}{showOther && <td className="num">{otherOf(l) ? <>{money(otherOf(l))}<div className="text-muted fs-11">{otherTaxLabel({ fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate })}</div></> : "—"}</td>}<td className="num fw-medium">{money(l.line_total)}</td></tr>; })}</tbody>
+                    <tfoot>{taxed
+                      ? <TaxFooterRows span={span} sub={Number(o.subtotal)} discount={Number(o.discount)} discountLabel={Number(o.discount_pct) > 0 ? `Discount (${Number(o.discount_pct)}%)` : "Discount"} scheme={Number(o.scheme_discount)}
+                          net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
+                          further={Number(o.further_tax_total)} wht={Number(o.wht_total)} payableLabel={`Total Payable (${o.currency})`} />
+                      : <>{Number(o.discount) > 0 && <tr><td colSpan={span} className="text-end">Discount{Number(o.discount_pct) > 0 ? ` (${Number(o.discount_pct)}%)` : ""}</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={span} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={span} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></>}</tfoot>
                   </table>;
                 })()}
               </div>
@@ -204,7 +212,7 @@ export function OrderFormPage() {
   if (!form) {
     const o = existing.data;
     setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
-    if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct, extra: { fbr_rate: l.product_fbr_rate || "", fbr_sale_type: l.product_fbr_sale_type || "", fbr_mrp: l.product_mrp } })));
+    if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct, extra: { fbr_rate: l.product_fbr_rate || "", fbr_sale_type: l.product_fbr_sale_type || "", fbr_mrp: l.product_mrp, fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } })));
     return <Spinner />;
   }
   const submit = async (confirm: boolean) => {

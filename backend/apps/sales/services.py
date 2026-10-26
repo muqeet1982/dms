@@ -64,22 +64,25 @@ class OrderService:
                 from apps.catalog.models import TaxType
 
                 order._sales_tax_tt = TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
-            rate, amount = InvoiceService.forced_line_tax(
+            t = InvoiceService.line_taxes(
                 line.variant.product, qty=line.qty_ordered, unit_price=line.unit_price,
                 discount_amount=line.discount_amount + line.scheme_discount)
-            line.tax1_type, line.tax1_rate, line.tax1_amount = order._sales_tax_tt, rate, q4(amount)
+            line.tax1_type, line.tax1_rate, line.tax1_amount = order._sales_tax_tt, t["rate"], q4(t["gst"])
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
+            others = InvoiceService.set_other_taxes(line, t)
         else:
             tax_class = TaxService.resolve_class(line.variant, customer)
             t = TaxService.compute(taxable, tax_class, order.order_date)
             line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
             line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
-        line.line_total = taxable + line.tax1_amount + line.tax2_amount
+            others = InvoiceService.set_other_taxes(line)
+        # FED/Extra/Further ride in the line; WHT is withheld by the buyer and comes off the order total
+        line.line_total = taxable + line.tax1_amount + line.tax2_amount + others
         return gross, flags
 
     @staticmethod
     def recompute(order, allow_override=False):
-        subtotal = disc = sd = t1 = t2 = Decimal("0")
+        subtotal = disc = sd = t1 = t2 = fed = extra = further = wht = Decimal("0")
         flags = []
         for line in order.lines.select_related("variant", "variant__product", "packaging"):
             gross, f = OrderService.price_line(order, line, allow_override)
@@ -90,10 +93,16 @@ class OrderService:
             sd += line.scheme_discount
             t1 += line.tax1_amount
             t2 += line.tax2_amount
+            fed += line.fed_amount
+            extra += line.extra_tax_amount
+            further += line.further_tax_amount
+            wht += line.wht_amount
         order.subtotal, order.discount, order.scheme_discount, order.tax1_total, order.tax2_total = subtotal, disc, sd, t1, t2
-        order.total = subtotal - disc - sd + t1 + t2
+        order.fed_total, order.extra_tax_total, order.further_tax_total, order.wht_total = fed, extra, further, wht
+        order.total = subtotal - disc - sd + t1 + t2 + fed + extra + further - wht
         order.price_flags = flags
-        order.save(update_fields=["subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "total", "price_flags", "updated_at"])
+        order.save(update_fields=["subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total",
+                                  "further_tax_total", "wht_total", "total", "price_flags", "updated_at"])
         return order
 
     @staticmethod
@@ -724,46 +733,86 @@ class InvoiceService:
         rates, no product Tax %, no invoice-level rate: an unclassified product simply carries no
         tax, and an FBR "Exempt"/"0%" product stays at zero on purpose.
         """
+        t = InvoiceService.line_taxes(product, qty=qty, unit_price=unit_price, discount_amount=discount_amount, override=override)
+        return t["rate"], t["gst"]
+
+    @staticmethod
+    def line_taxes(product, *, qty, unit_price, discount_amount, override=None):
+        """
+        EVERY tax one tax-document line carries, from the same engine.compute_line the FBR filing calls:
+        {"rate", "gst", "fed", "extra", "further", "wht"}. GST is forced_line_tax's (a typed % overrides it);
+        FED, Extra Tax, Further Tax and WHT are the product's FBR-card rates on the line's TAXABLE value
+        (guide §4 — never on taxable + GST, never on the MRP base), owner 26 Oct 2026.
+        """
         from apps.fbr import engine
 
-        if override is not None:
-            taxable = engine.round2(engine.round2(Decimal(str(qty)) * Decimal(str(unit_price))) - Decimal(str(discount_amount or 0)))
-            return override, engine.round2(taxable * Decimal(str(override)) / 100)
-        if product is None or not product.fbr_rate_desc:
-            return Decimal("0"), Decimal("0")
-        mrp = product.mrp_ex_tax if engine.is_mrp_sale_type(product.fbr_sale_type) else None
+        zero = Decimal("0")
+        rates = ({"fed_rate": product.fbr_fed_rate, "extra_rate": product.fbr_extra_tax_rate,
+                  "further_rate": product.fbr_further_tax_rate, "withheld_rate": product.fbr_wht_rate}
+                 if product is not None else {})
+        rate_str = product.fbr_rate_desc if product is not None else ""
+        mrp = product.mrp_ex_tax if product is not None and engine.is_mrp_sale_type(product.fbr_sale_type) else None
         money = engine.compute_line(quantity=qty, unit_price=unit_price, discount_amount=discount_amount,
-                                    rate_str=product.fbr_rate_desc, sale_type=product.fbr_sale_type, mrp=mrp)
-        return engine.gst_rate_num(product.fbr_rate_desc), money["salesTaxApplicable"]
+                                    rate_str=rate_str, sale_type=product.fbr_sale_type if product is not None else "",
+                                    mrp=mrp, **rates)
+        if override is not None:
+            rate = Decimal(str(override))
+            gst = engine.round2(money["valueSalesExcludingST"] * rate / 100)
+        elif rate_str:
+            rate, gst = engine.gst_rate_num(rate_str), money["salesTaxApplicable"]
+        else:
+            rate, gst = zero, zero
+        return {"rate": rate, "gst": gst, "fed": money["fedPayable"], "extra": money["extraTax"],
+                "further": money["furtherTax"], "wht": money["salesTaxWithheldAtSource"]}
+
+    @staticmethod
+    def set_other_taxes(line, t=None):
+        """Write line_taxes' FED/Extra/Further/WHT onto a line (zeros when `t` is None — no tax switch)."""
+        t = t or {}
+        line.fed_amount = q4(t.get("fed", 0))
+        line.extra_tax_amount = q4(t.get("extra", 0))
+        line.further_tax_amount = q4(t.get("further", 0))
+        line.wht_amount = q4(t.get("wht", 0))
+        return line.fed_amount + line.extra_tax_amount + line.further_tax_amount
 
     @staticmethod
     def recompute(inv):
         """Re-total an invoice from its lines (used after a discount or tax change)."""
         forced = inv.force_tax_type
-        subtotal = discount = t1 = t2 = Decimal("0")
+        subtotal = discount = t1 = t2 = fed = extra = further = wht = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
-                rate, amount = InvoiceService.forced_line_tax(
+                t = InvoiceService.line_taxes(
                     line.variant.product if line.variant_id else None,
                     qty=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
                     override=line.tax_pct_override)
-                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(amount)
+                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, t["rate"], q4(t["gst"])
+                others = InvoiceService.set_other_taxes(line, t)
             else:
                 # no switch, no tax (owner, 25 Oct 2026): the tax classes do not feed sales invoices
                 line.tax1_type, line.tax1_rate, line.tax1_amount = None, Decimal("0"), Decimal("0")
+                others = InvoiceService.set_other_taxes(line)
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
-            line.line_total = taxable + line.tax1_amount + line.tax2_amount
-            line.save(update_fields=["tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total"])
+            # the line's own taxes are in its total; WHT is withheld by the buyer, so it leaves the invoice total
+            line.line_total = taxable + line.tax1_amount + line.tax2_amount + others
+            line.save(update_fields=["tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount",
+                                     "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"])
             subtotal += gross
             discount += line.discount_amount
             t1 += line.tax1_amount
             t2 += line.tax2_amount
+            fed += line.fed_amount
+            extra += line.extra_tax_amount
+            further += line.further_tax_amount
+            wht += line.wht_amount
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, discount, t1, t2
+        inv.fed_total, inv.extra_tax_total, inv.further_tax_total, inv.wht_total = fed, extra, further, wht
         inv.tax1_type, inv.tax2_type = forced, None
-        inv.total = subtotal - discount + t1 + t2
-        inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "total", "updated_at"])
+        inv.total = subtotal - discount + t1 + t2 + fed + extra + further - wht
+        inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "fed_total",
+                                "extra_tax_total", "further_tax_total", "wht_total", "total", "updated_at"])
         return inv
 
     @staticmethod
@@ -843,6 +892,30 @@ class InvoiceService:
         return groups
 
     @staticmethod
+    def other_tax_context(doc, lines):
+        """
+        FED / Extra Tax / Further Tax / WHT on a printed tax document (owner 26 Oct 2026). Each line gets
+        `other_tax` (FED + Extra + Further — inside its Line Total) and `other_label` naming the rates; the
+        footer gets the guide's header figures: Total Tax = GST + FED + Extra + Further, Grand Total = Net +
+        Total Tax, and WHT — withheld by the buyer — taken off to reach Total Payable (= doc.total).
+        """
+        for l in lines:
+            l.other_tax = (l.fed_amount or 0) + (l.extra_tax_amount or 0) + (l.further_tax_amount or 0)
+            p = l.variant.product if l.variant_id else None
+            parts = []
+            if p is not None:
+                for label, rate, amt in (("FED", p.fbr_fed_rate, l.fed_amount), ("Extra", p.fbr_extra_tax_rate, l.extra_tax_amount),
+                                         ("Further", p.fbr_further_tax_rate, l.further_tax_amount)):
+                    if amt and rate:
+                        parts.append(f"{label} {Decimal(rate).normalize():f}%")
+            l.other_label = " · ".join(parts)
+        gst = (doc.tax1_total or Decimal("0")) + (doc.tax2_total or Decimal("0"))
+        fed, extra, further, wht = doc.fed_total or 0, doc.extra_tax_total or 0, doc.further_tax_total or 0, doc.wht_total or 0
+        return {"show_other": any(l.other_tax for l in lines), "fed_total": q4(fed), "extra_total": q4(extra),
+                "further_total": q4(further), "wht_total": q4(wht), "total_tax": q4(gst + fed + extra + further),
+                "grand_total": q4((doc.total or Decimal("0")) + wht)}
+
+    @staticmethod
     def present_lines(inv, lines):
         """
         How the printed invoice reads. A plain invoice (owner's rule, 21 Oct 2026): a line's Discount column
@@ -879,7 +952,8 @@ class InvoiceService:
             tax_label = f"{inv.tax1_type.name}{f' ({rate.normalize()}%)' if rate else ''}"
         return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_on": tax_on, "tax_label": tax_label,
                 "gross_total": q4(gross_total), "taxable_total": q4(taxable_total),
-                "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown)}
+                "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown),
+                **InvoiceService.other_tax_context(inv, lines)}
 
     @staticmethod
     def _raise_company_claims(inv):
@@ -1075,47 +1149,63 @@ class CreditNoteService:
         # over ALL the variant's invoice lines — two lines of one variant (two batches, two packagings)
         # can carry different per-unit tax, and keeping only the last line's figure mis-credited both
         # (audit, 26 Oct 2026); both taxes ride along so a legacy class-taxed invoice credits in full.
+        # FED, Extra Tax, Further Tax and WHT (owner 26 Oct 2026) are mirrored per unit the same way, so a
+        # return reverses every tax the invoice put on the books — and gives back the WHT the buyer withheld
+        OTHER = ("fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount")
         charged = {}
         if invoice is not None:
             for il in invoice.lines.all():
                 c = charged.setdefault(il.variant_id, {"qty": Decimal("0"), "t1": Decimal("0"), "t2": Decimal("0"),
-                                                       "tt1": None, "r1": None, "tt2": None, "r2": None})
+                                                       "tt1": None, "r1": None, "tt2": None, "r2": None,
+                                                       **{k: Decimal("0") for k in OTHER}})
                 c["qty"] += il.qty
                 c["t1"] += il.tax1_amount
                 c["t2"] += il.tax2_amount
+                for k in OTHER:
+                    c[k] += getattr(il, k)
                 c["tt1"], c["r1"] = c["tt1"] or il.tax1_type, c["r1"] if c["r1"] is not None else il.tax1_rate
                 c["tt2"], c["r2"] = c["tt2"] or il.tax2_type, c["r2"] if c["r2"] is not None else il.tax2_rate
         from apps.fbr.engine import round2
 
         subtotal = t1 = t2 = Decimal("0")
+        sums = {k: Decimal("0") for k in OTHER}
         tax1_type = tax2_type = None
         for l in lines:
             variant = l["variant"]
             unit_price = q4(l["unit_price"])
             taxable = q4(Decimal(l["qty"]) * unit_price)
             hit = charged.get(variant.id)
+            other = {k: Decimal("0") for k in OTHER}
             if hit is not None and hit["qty"]:
                 tt1, r1 = hit["tt1"], hit["r1"] or Decimal("0")
                 tt2, r2 = hit["tt2"], hit["r2"] or Decimal("0")
                 amt1 = round2(hit["t1"] / hit["qty"] * Decimal(l["qty"]))
                 amt2 = round2(hit["t2"] / hit["qty"] * Decimal(l["qty"]))
+                other = {k: round2(hit[k] / hit["qty"] * Decimal(l["qty"])) for k in OTHER}
             elif invoice is not None and invoice.force_tax_type_id:
                 # a variant the invoice never carried, credited against a switch invoice: same chain
                 tt1 = invoice.force_tax_type
-                r1, amt1 = InvoiceService.forced_line_tax(variant.product, qty=l["qty"], unit_price=unit_price, discount_amount=Decimal("0"))
-                amt1, tt2, r2, amt2 = q4(amt1), None, Decimal("0"), Decimal("0")
+                lt = InvoiceService.line_taxes(variant.product, qty=l["qty"], unit_price=unit_price, discount_amount=Decimal("0"))
+                r1, amt1, tt2, r2, amt2 = lt["rate"], q4(lt["gst"]), None, Decimal("0"), Decimal("0")
+                other = {"fed_amount": q4(lt["fed"]), "extra_tax_amount": q4(lt["extra"]),
+                         "further_tax_amount": q4(lt["further"]), "wht_amount": q4(lt["wht"])}
             else:
                 tt1, r1, amt1, tt2, r2, amt2 = None, Decimal("0"), Decimal("0"), None, Decimal("0"), Decimal("0")
             t = {"tax1_type": tt1 if amt1 else None, "tax1_rate": r1 or Decimal("0"), "tax1_amount": amt1,
                  "tax2_type": tt2 if amt2 else None, "tax2_rate": r2 or Decimal("0"), "tax2_amount": amt2}
-            CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"])
+            in_line = other["fed_amount"] + other["extra_tax_amount"] + other["further_tax_amount"]
+            CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"] + in_line, tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], **other)
             subtotal += taxable
             t1 += t["tax1_amount"]
             t2 += t["tax2_amount"]
+            for k in OTHER:
+                sums[k] += other[k]
             tax1_type = tax1_type or t["tax1_type"]
             tax2_type = tax2_type or t["tax2_type"]
         cn.subtotal, cn.tax1_total, cn.tax2_total, cn.tax1_type, cn.tax2_type = subtotal, t1, t2, tax1_type, tax2_type
-        cn.total = subtotal + t1 + t2
+        cn.fed_total, cn.extra_tax_total = sums["fed_amount"], sums["extra_tax_amount"]
+        cn.further_tax_total, cn.wht_total = sums["further_tax_amount"], sums["wht_amount"]
+        cn.total = subtotal + t1 + t2 + cn.fed_total + cn.extra_tax_total + cn.further_tax_total - cn.wht_total
         cn.save()
         AuditService.log("created", cn, after={"customer": customer.name, "total": str(cn.total)})
         return cn

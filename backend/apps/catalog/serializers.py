@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.inventory.models import Warehouse
@@ -143,15 +145,36 @@ class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
     fbr_rate_desc = serializers.CharField(source="product.fbr_rate_desc", read_only=True, default="")
     fbr_sale_type = serializers.CharField(source="product.fbr_sale_type", read_only=True, default="")
     mrp_ex_tax = serializers.DecimalField(source="product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
+    fbr_fed_rate = serializers.DecimalField(source="product.fbr_fed_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    fbr_extra_tax_rate = serializers.DecimalField(source="product.fbr_extra_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    fbr_further_tax_rate = serializers.DecimalField(source="product.fbr_further_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    fbr_wht_rate = serializers.DecimalField(source="product.fbr_wht_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
 
     class Meta:
         model = ProductVariant
-        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "product_discount_min_qty", "product_offers", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "fbr_rate_desc", "fbr_sale_type", "mrp_ex_tax", "packagings", "barcodes", "stock_on_hand"]
+        fields = ["id", "product", "product_name", "product_sku", "brand_name", "category_name", "sku", "name", "attributes", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "product_discount_pct", "product_discount_min_qty", "product_offers", "avg_cost", "is_default", "is_active", "image", "base_uom", "is_batch_tracked", "is_expiry_tracked", "tax_class", "fbr_rate_desc", "fbr_sale_type", "mrp_ex_tax", "fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate", "packagings", "barcodes", "stock_on_hand"]
         read_only_fields = ["id", "avg_cost"]
         extra_kwargs = {"product": {"required": False}}
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    def _pct(self, value, label):
+        if value is not None and not (0 <= value <= 100):
+            raise serializers.ValidationError(f"{label} must be a percentage between 0 and 100.")
+        return value if value is not None else Decimal("0")
+
+    def validate_fbr_fed_rate(self, value):
+        return self._pct(value, "FED rate")
+
+    def validate_fbr_extra_tax_rate(self, value):
+        return self._pct(value, "Extra tax")
+
+    def validate_fbr_further_tax_rate(self, value):
+        return self._pct(value, "Further tax")
+
+    def validate_fbr_wht_rate(self, value):
+        return self._pct(value, "WHT")
+
     def validate_fbr_hs_code(self, value):
         """HS guide §9.1: a chapter 01–97 code must exist in FBR's list (the rejection weeks later blames
         the sale type and sends you to the wrong field). Chapter 98 service headings are legitimately
@@ -217,7 +240,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "discount_min_qty", "tax_pct", "fbr_hs_code", "fbr_uom", "fbr_trans_type_id", "fbr_sale_type", "fbr_rate_id", "fbr_rate_desc", "fbr_sro_schedule", "fbr_sro_item", "mrp_ex_tax", "fbr_ready", "offers", "offers_write", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
+        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "discount_min_qty", "tax_pct", "fbr_hs_code", "fbr_uom", "fbr_trans_type_id", "fbr_sale_type", "fbr_rate_id", "fbr_rate_desc", "fbr_sro_schedule", "fbr_sro_item", "mrp_ex_tax", "fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate", "fbr_ready", "offers", "offers_write", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
         extra_kwargs = {"sku": {"required": False}}
 

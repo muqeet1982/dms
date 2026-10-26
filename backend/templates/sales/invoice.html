@@ -55,6 +55,7 @@ The HS code rides under the item name, where the classification belongs.
     <th class="r" style="width:10mm">Qty</th>
     <th class="r" style="width:15mm">Rate</th><th class="r" style="width:13mm">Disc</th>
     <th class="r" style="width:17mm">Taxable</th><th class="r" style="width:17mm">GST</th>
+    {% if show_other %}<th class="r" style="width:16mm">Other Tax</th>{% endif %}
     <th class="r" style="width:19mm">Line Total</th>
   </tr></thead>
   <tbody>
@@ -66,6 +67,7 @@ The HS code rides under the item name, where the classification belongs.
     <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
     <td class="r">{{ l.taxable|num }}</td>
     <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.fbr_rate_desc|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span></td>
+    {% if show_other %}<td class="r">{% if l.other_tax %}{{ l.other_tax|num }}<span class="sku">{{ l.other_label }}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.line_total|num }}</td>
   </tr>{% endfor %}
   </tbody>
@@ -110,10 +112,10 @@ The HS code rides under the item name, where the classification belongs.
 
 {% block totals %}
 {% comment %}
-Tax invoice, the owner's sample footer (26 Oct 2026): Sub Total − Discount = Net Total, + GST (= Total Tax,
-one sales tax) = Grand Total = Total Payable — Net Total and Total Tax are the two figures the sales tax
-register reports. Plain invoice: each Amount already carries its own tax, so the column adds up to the Total
-and the page can be checked with a pencil.
+Tax invoice, the owner's sample footer (26 Oct 2026): Sub Total − Discount = Net Total; GST, FED, Extra Tax and
+Further Tax add up to Total Tax; Net Total + Total Tax = Grand Total; less the sales tax the buyer withholds
+(WHT) = Total Payable, which is what is owed and what FBR is filed. Plain invoice: each Amount already
+carries its own tax, so the column adds up to the Total and the page can be checked with a pencil.
 {% endcomment %}
 <table class="totals">
   {% if tax_on %}
@@ -121,8 +123,12 @@ and the page can be checked with a pencil.
   {% if inv.discount %}<tr><td class="l">Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">&minus;{{ inv.discount|num }}</td></tr>{% endif %}
   <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
   <tr><td class="l">GST{% if tax_label %} — {{ tax_label }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
-  <tr><td class="l">Total Tax</td><td class="r">{{ tax_shown|num }}</td></tr>
-  <tr><td class="l">Grand Total</td><td class="r">{{ inv.total|num }}</td></tr>
+  {% if fed_total %}<tr><td class="l">FED</td><td class="r">{{ fed_total|num }}</td></tr>{% endif %}
+  {% if extra_total %}<tr><td class="l">Extra Tax</td><td class="r">{{ extra_total|num }}</td></tr>{% endif %}
+  {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}
+  <tr><td class="l">Total Tax</td><td class="r">{{ total_tax|num }}</td></tr>
+  <tr><td class="l">Grand Total</td><td class="r">{{ grand_total|num }}</td></tr>
+  {% if wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">&minus;{{ wht_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ inv.total|num }}</td></tr>
   {% else %}
   {% if customer_discount %}<tr><td class="l">Subtotal</td><td class="r">{{ display_subtotal|num }}</td></tr>

@@ -69,6 +69,9 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_schedule", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "fbr_sro_item", label: "", type: "custom", col: "d-none", render: () => null },
   { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name: "mrp_ex_tax", label: "", type: "custom", col: "d-none", render: () => null },
+  ...(["fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate"].map((name) => (
+    { section: "FBR e-invoicing (optional)", sectionIcon: "ti-building-bank", sectionCollapsed: true, name, label: "", type: "custom", col: "d-none", default: 0, render: () => null }
+  )) as FieldDef[]),
 
   // the owner wants these last, below the FBR card (25 Oct 2026)
   { name: "is_expiry_tracked", label: "Expiry tracked", type: "checkbox", col: "col-md-3", hint: "Receiving this product will insist on the expiry date from the carton, and the near-expiry alerts, the expiry report and first-expiry-first-out picking all read it." },
@@ -507,6 +510,22 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
         <input type="number" step="0.01" className="form-control" value={values.mrp_ex_tax ?? ""} onChange={(e) => setField("mrp_ex_tax", e.target.value === "" ? null : Number(e.target.value))} />
       </div>}
+      {/* the four taxes beside GST (owner, 26 Oct 2026; INVOICE_TAX_FLOW_GUIDE §4): each a % of the line's taxable
+          value, charged only on a tax invoice. FED / Extra / Further are added to the bill; WHT is withheld by
+          the buyer, so it comes off what they pay. Blank = 0. */}
+      <div className="col-12"><hr className="my-2" /></div>
+      {([
+        ["fbr_fed_rate", "FED rate %", "Federal Excise Duty — added to the bill"],
+        ["fbr_extra_tax_rate", "Extra tax %", "added to the bill"],
+        ["fbr_further_tax_rate", "Further tax %", "added to the bill (e.g. 3% to unregistered buyers)"],
+        ["fbr_wht_rate", "WHT %", "sales tax withheld at source by the buyer — deducted from what they pay"],
+      ] as const).map(([name, label, hint]) => (
+        <Field key={name} label={label} col="col-md-3" hint={hint}>
+          <input type="number" step="0.01" min="0" max="100" className="form-control" placeholder="0"
+            value={values[name] === null || values[name] === undefined || Number(values[name]) === 0 ? "" : values[name]}
+            onChange={(e) => setField(name, e.target.value === "" ? 0 : e.target.value)} />
+        </Field>
+      ))}
       <div className="col-12 form-text">{(() => {
         const probs: string[] = [];
         if (!values.fbr_hs_code) probs.push("HS code");

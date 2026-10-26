@@ -152,6 +152,14 @@ class Product(TenantModel):
     fbr_sro_item = models.CharField(max_length=100, blank=True, default="")
     # 3rd Schedule only: the retail price printed on the packet, PER UNIT
     mrp_ex_tax = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    # the four per-line taxes beside GST (owner 26 Oct 2026; INVOICE_TAX_FLOW_GUIDE §4): each a % of the
+    # line's TAXABLE value — never taxable + GST, never the MRP base — charged only on a tax invoice/order.
+    # FED, Extra and Further are added to the bill; WHT is the sales tax the buyer withholds, so it comes
+    # OFF what the buyer pays and is reported to FBR as salesTaxWithheldAtSource.
+    fbr_fed_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
+    fbr_extra_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
+    fbr_further_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
+    fbr_wht_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
 
     @property
     def fbr_ready(self):

@@ -66,14 +66,19 @@ class OrderLineSerializer(serializers.ModelSerializer):
     # the preview mirrors engine.compute_line, and these two decide the 3rd Schedule MRP base (guide §5)
     product_fbr_sale_type = serializers.CharField(source="variant.product.fbr_sale_type", read_only=True, default="")
     product_mrp = serializers.DecimalField(source="variant.product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
+    # the FED / Extra / Further / WHT rates on the product's FBR card — previews mirror line_taxes with them
+    product_fed_rate = serializers.DecimalField(source="variant.product.fbr_fed_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_extra_tax_rate = serializers.DecimalField(source="variant.product.fbr_extra_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_further_tax_rate = serializers.DecimalField(source="variant.product.fbr_further_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_wht_rate = serializers.DecimalField(source="variant.product.fbr_wht_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
     packaging_qty_in_base = serializers.DecimalField(source="packaging.qty_in_base", max_digits=18, decimal_places=3, read_only=True, default=None)
     tax1_name = serializers.CharField(source="tax1_type.name", read_only=True, default="")
     tax2_name = serializers.CharField(source="tax2_type.name", read_only=True, default="")
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "product_fbr_rate", "hs_code", "product_fbr_sale_type", "product_mrp", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
-        read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total", "sequence"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "product_fbr_rate", "hs_code", "product_fbr_sale_type", "product_mrp", "product_fed_rate", "product_extra_tax_rate", "product_further_tax_rate", "product_wht_rate", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total", "sequence"]
+        read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total", "sequence"]
         extra_kwargs = {"unit_price": {"required": False}}
 
 
@@ -142,8 +147,8 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         return f"{days} days credit" if days else "Cash on delivery"
 
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
-        read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
         return {"lat": float(obj.gps_lat), "lng": float(obj.gps_lng)} if obj.gps_lat is not None else None
@@ -161,6 +166,10 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
     # with fbr_rate, these let the draft editor preview GST live the way engine.compute_line will charge it
     fbr_sale_type = serializers.CharField(source="variant.product.fbr_sale_type", read_only=True, default="")
     mrp = serializers.DecimalField(source="variant.product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
+    product_fed_rate = serializers.DecimalField(source="variant.product.fbr_fed_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_extra_tax_rate = serializers.DecimalField(source="variant.product.fbr_extra_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_further_tax_rate = serializers.DecimalField(source="variant.product.fbr_further_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
+    product_wht_rate = serializers.DecimalField(source="variant.product.fbr_wht_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
     variant_name = serializers.CharField(source="variant.name", read_only=True)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     batch_no = serializers.CharField(source="batch.batch_no", read_only=True, default="")
@@ -169,7 +178,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoiceLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "hs_code", "fbr_rate", "fbr_sale_type", "mrp", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "batch_no", "description", "qty", "free_qty", "unit_price", "unit_cost", "discount_amount", "product_discount_pct", "tax_pct_override", "hs_code", "fbr_rate", "fbr_sale_type", "mrp", "product_fed_rate", "product_extra_tax_rate", "product_further_tax_rate", "product_wht_rate", "tax1_name", "tax1_rate", "tax1_amount", "tax2_name", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
 
 
 class SalesInvoiceEditSerializer(serializers.ModelSerializer):
@@ -270,7 +279,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "force_tax_type", "force_tax_rate", "fbr", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
@@ -280,8 +289,8 @@ class CreditNoteLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNoteLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "tax1_rate", "tax1_amount", "tax2_amount", "line_total"]
-        read_only_fields = ["id", "tax1_rate", "tax1_amount", "tax2_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
+        read_only_fields = ["id", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
         extra_kwargs = {"unit_cost": {"required": False}}
 
 
@@ -293,8 +302,8 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNote
-        fields = ["id", "number", "version", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at"]
-        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "total", "status", "journal", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at"]
+        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "created_at"]
 
 
 class RepCollectionSerializer(serializers.ModelSerializer):
