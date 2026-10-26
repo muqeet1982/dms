@@ -676,21 +676,28 @@ class InvoiceService:
         return inv
 
     @staticmethod
-    def forced_line_rate(product, *, override=None):
+    def forced_line_tax(product, *, qty, unit_price, discount_amount, override=None):
         """
-        The tax switch's rate for one line (owner, 25 Oct 2026): "if tax on then use fbr rate via hs
-        code. otherwise no tax at all." A % typed on the line overrides; else the product's FBR GST
-        rate from its HS classification — the same rate an FBR filing computes — else zero. No dated
-        rates, no product Tax %, no invoice-level rate: an unclassified product simply carries no tax.
-        An FBR "Exempt"/"0%" product stays at zero on purpose — FBR's own classification said so.
+        The tax switch's charge for one line, as (display rate %, amount) — owner, 25 Oct 2026: "if
+        tax on then use fbr rate via hs code. otherwise no tax at all", completed to the full FBR
+        arithmetic on 26 Oct 2026 (INVOICE_TAX_FLOW_GUIDE.md): the amount comes from the SAME
+        engine.compute_line the filing calls, so a compound rate keeps its rupee part, a fixed rate
+        ("Rs.700/MT") is no longer invoiced at zero, and 3rd Schedule goods tax on max(MRP × qty,
+        taxable). A % typed on the line overrides as a plain percentage — the human's word. No dated
+        rates, no product Tax %, no invoice-level rate: an unclassified product simply carries no
+        tax, and an FBR "Exempt"/"0%" product stays at zero on purpose.
         """
-        if override is not None:
-            return override
-        if product is not None and product.fbr_rate_desc:
-            from apps.fbr import engine
+        from apps.fbr import engine
 
-            return engine.gst_rate_num(product.fbr_rate_desc)
-        return Decimal("0")
+        if override is not None:
+            taxable = engine.round2(engine.round2(Decimal(str(qty)) * Decimal(str(unit_price))) - Decimal(str(discount_amount or 0)))
+            return override, engine.round2(taxable * Decimal(str(override)) / 100)
+        if product is None or not product.fbr_rate_desc:
+            return Decimal("0"), Decimal("0")
+        mrp = product.mrp_ex_tax if engine.is_mrp_sale_type(product.fbr_sale_type) else None
+        money = engine.compute_line(quantity=qty, unit_price=unit_price, discount_amount=discount_amount,
+                                    rate_str=product.fbr_rate_desc, sale_type=product.fbr_sale_type, mrp=mrp)
+        return engine.gst_rate_num(product.fbr_rate_desc), money["salesTaxApplicable"]
 
     @staticmethod
     def recompute(inv):
@@ -701,9 +708,11 @@ class InvoiceService:
             gross = q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
-                rate = InvoiceService.forced_line_rate(
-                    line.variant.product if line.variant_id else None, override=line.tax_pct_override)
-                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(taxable * rate / 100)
+                rate, amount = InvoiceService.forced_line_tax(
+                    line.variant.product if line.variant_id else None,
+                    qty=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
+                    override=line.tax_pct_override)
+                line.tax1_type, line.tax1_rate, line.tax1_amount = forced, rate, q4(amount)
             else:
                 # no switch, no tax (owner, 25 Oct 2026): the tax classes do not feed sales invoices
                 line.tax1_type, line.tax1_rate, line.tax1_amount = None, Decimal("0"), Decimal("0")
@@ -744,6 +753,17 @@ class InvoiceService:
                 raise DomainError(
                     "Tax is on but none of these products carries an FBR rate — classify them on the "
                     "product's FBR card (HS code → sale type → rate) first.", code="no_tax_rate")
+            # 3rd Schedule goods tax on the PRINTED retail price (guide §5) — without it the invoice
+            # would quietly under-tax on the charged price, and the filing would refuse anyway
+            from apps.fbr import engine
+
+            for l in inv.lines.select_related("variant__product"):
+                p = l.variant.product if l.variant_id else None
+                if p is not None and engine.is_mrp_sale_type(p.fbr_sale_type) and not (p.mrp_ex_tax or 0):
+                    raise DomainError(
+                        f"{p.name} is 3rd Schedule Goods but has no printed retail price — set the MRP "
+                        "on the product's FBR card first; the law taxes these on the retail price.",
+                        code="mrp_required")
             inv.force_tax_type, inv.force_tax_rate = tt, None
         else:
             inv.force_tax_type, inv.force_tax_rate = None, None
@@ -1003,23 +1023,30 @@ class CreditNoteService:
         cn = CreditNote.objects.create(number=next_number("credit_note"), customer=customer, invoice=invoice, warehouse=warehouse, date=date or timezone.localdate(), reason=reason, notes=notes, applied_to_invoice=applied_to_invoice and invoice is not None)
         # the credit reverses what the invoice actually charged, per variant — never the tax classes;
         # a standalone credit note (no invoice) charges no tax, because tax rides only on an invoice's
-        # tax switch (owner, 25 Oct 2026)
-        charged = ({il.variant_id: (il.tax1_type, il.tax1_rate, il.tax2_type, il.tax2_rate) for il in invoice.lines.all()}
-                   if invoice is not None else {})
+        # tax switch (owner, 25 Oct 2026). Mirrored as PER-UNIT tax, not a rate %: a fixed ("Rs.700/MT"),
+        # compound or MRP-based charge has no single percentage, and reversing the rate alone
+        # under-credited exactly the part the rate could not say (guide §4-§6, 26 Oct 2026)
+        charged = ({il.variant_id: (il.tax1_type, il.tax1_rate, il.tax1_amount / il.qty if il.qty else Decimal("0"))
+                    for il in invoice.lines.all()} if invoice is not None else {})
         subtotal = t1 = t2 = Decimal("0")
         tax1_type = tax2_type = None
         for l in lines:
             variant = l["variant"]
             unit_price = q4(l["unit_price"])
             taxable = q4(Decimal(l["qty"]) * unit_price)
-            tt1, r1, tt2, r2 = charged.get(variant.id, (None, None, None, None))
-            if r1 is None and invoice is not None and invoice.force_tax_type_id:
+            hit = charged.get(variant.id)
+            if hit is not None:
+                tt1, r1, per_unit = hit
+                amt1 = q4(per_unit * Decimal(l["qty"]))
+            elif invoice is not None and invoice.force_tax_type_id:
                 # a variant the invoice never carried, credited against a switch invoice: same chain
                 tt1 = invoice.force_tax_type
-                r1 = InvoiceService.forced_line_rate(variant.product)
-            r1, r2 = r1 or Decimal("0"), r2 or Decimal("0")
-            t = {"tax1_type": tt1 if r1 else None, "tax1_rate": r1, "tax1_amount": q4(taxable * r1 / 100),
-                 "tax2_type": tt2 if r2 else None, "tax2_rate": r2, "tax2_amount": q4(taxable * r2 / 100)}
+                r1, amt1 = InvoiceService.forced_line_tax(variant.product, qty=l["qty"], unit_price=unit_price, discount_amount=Decimal("0"))
+                amt1 = q4(amt1)
+            else:
+                tt1, r1, amt1 = None, Decimal("0"), Decimal("0")
+            t = {"tax1_type": tt1 if amt1 else None, "tax1_rate": r1 or Decimal("0"), "tax1_amount": amt1,
+                 "tax2_type": None, "tax2_rate": Decimal("0"), "tax2_amount": Decimal("0")}
             CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"])
             subtotal += taxable
             t1 += t["tax1_amount"]

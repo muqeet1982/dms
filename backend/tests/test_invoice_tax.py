@@ -26,12 +26,12 @@ def _product_tax(tenant, variant, pct):
         Product.objects.filter(pk=variant.product_id).update(tax_pct=Decimal(str(pct)))
 
 
-def _product_fbr(tenant, variant, rate_str):
+def _product_fbr(tenant, variant, rate_str, **fields):
     from apps.catalog.models import Product
     from apps.core.tenancy import tenant_context as _tc
 
     with _tc(tenant, tenant.owner):
-        Product.objects.filter(pk=variant.product_id).update(fbr_rate_desc=rate_str)
+        Product.objects.filter(pk=variant.product_id).update(fbr_rate_desc=rate_str, **fields)
 
 
 @pytest.fixture
@@ -311,3 +311,118 @@ def test_a_credit_note_against_a_forced_invoice_reverses_the_charged_rate(api, t
     assert cn.status_code == 201, cn.content
     assert Decimal(cn.data["tax1_total"]) == Decimal("27")  # 1 × 150 × the invoice's 18%
     assert Decimal(cn.data["total"]) == Decimal("177")
+
+
+# ── the full FBR arithmetic on the switch (owner 26 Oct 2026, INVOICE_TAX_FLOW_GUIDE.md §4-§6, §15) ──
+
+
+def test_a_compound_rate_keeps_its_rupee_part(api, tenant, taxed_world):
+    """Guide example D: '18% along with rupees 60 per kilogram' is 18% ON TOP OF Rs.60 a unit — a
+    parser that reads only the 18 under-charges by the rupee part."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18% along with rupees 60 per kilogram")
+    oid = _issued_order(api, wh, cust, v)  # 4 × 150 = 600
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("348"), inv["tax1_total"]  # 600×18% + 4×60
+    assert Decimal(inv["total"]) == Decimal("948")
+
+
+def test_a_fixed_rupee_rate_no_longer_invoices_zero(api, tenant, taxed_world):
+    """Guide example G: 'Rs.700/MT' has no percentage at all — the invoice used to charge nothing
+    while the filing charged qty × 700."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "Rs.700/MT")
+    oid = _issued_order(api, wh, cust, v)  # qty 4
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("2800"), inv["tax1_total"]  # 4 × 700
+    assert Decimal(inv["lines"][0]["tax1_rate"]) == 0, "no percentage part — the amount carries it all"
+
+
+def test_third_schedule_taxes_the_printed_retail_price_when_higher(api, tenant, taxed_world):
+    """Guide examples B and C: GST base = max(MRP × qty, taxable) — per-unit MRP times quantity,
+    never the bare MRP, and never 'always MRP'."""
+    wh, cust, v, tt = taxed_world
+    # B: MRP 200 beats the charged 150 → tax on 10 × 200 = 2000
+    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("200"))
+    oid = _issued_order(api, wh, cust, v, qty="10")  # 10 × 150 = 1500 charged
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert Decimal(inv["tax1_total"]) == Decimal("360"), inv["tax1_total"]  # 2000 × 18%
+    assert Decimal(inv["subtotal"]) == Decimal("1500"), "the charged value stays what was charged"
+
+    # C: MRP 100 loses to the charged price → tax on 1500, max() not always-MRP
+    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("100"))
+    oid2 = _issued_order(api, wh, cust, v, qty="10")
+    made2 = api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"apply_tax": True}, format="json")
+    inv2 = made2.data[0] if isinstance(made2.data, list) else made2.data
+    assert Decimal(inv2["tax1_total"]) == Decimal("270"), inv2["tax1_total"]  # 1500 × 18%
+
+
+def test_third_schedule_without_mrp_refuses_the_switch(api, tenant, taxed_world):
+    """Guide §5: the law taxes 3rd Schedule goods on the printed retail price — without one the
+    invoice would quietly under-tax, so the switch refuses and says where to set it."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=None)
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert r.status_code in (400, 422) and "retail price" in str(r.data), r.content
+
+
+def test_the_filing_and_the_invoice_charge_the_same_tax(api, tenant, taxed_world):
+    """Guide §3, the honest-mirror check: the FBR payload's salesTaxApplicable must equal the stored
+    line's tax1_amount to the paisa — one engine, two readers."""
+    import json as _json
+    from unittest import mock
+
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18% along with rupees 60 per kilogram",
+                 fbr_hs_code="7306.3090", fbr_uom="KG", fbr_sale_type="Goods at standard rate (default)",
+                 fbr_sro_schedule="SRO 1125(I)/2011", fbr_sro_item="3")
+    with tenant_context(tenant, tenant.owner):
+        from apps.fbr.models import FBRSettings
+
+        cust.cnic, cust.business_name = "35202-1234567-1", "Salon One Traders"
+        cust.address, cust.city, cust.province = "Mall Road", "Lahore", "Punjab"
+        cust.fbr_registration_type = "Unregistered"
+        cust.save(update_fields=["cnic", "business_name", "address", "city", "province", "fbr_registration_type"])
+        FBRSettings.objects.create(ntn="1234567-8", business_name="DEMO DISTRIBUTORS",
+                                   address="Plot 12 Lahore", province="Punjab", sandbox_token="tok-sb")
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+
+    ok_body = {"validationResponse": {"statusCode": "00", "status": "Valid", "error": "", "invoiceStatuses": []}}
+    resp = mock.Mock()
+    resp.text = _json.dumps(ok_body)
+    resp.json = lambda: ok_body
+    with mock.patch("apps.fbr.services.requests.post", return_value=resp) as post:
+        ok = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+        assert ok.status_code == 200, ok.content
+        item = post.call_args.kwargs["json"]["items"][0]
+    line = inv["lines"][0]
+    assert item["salesTaxApplicable"] == float(Decimal(line["tax1_amount"])), (item, line["tax1_amount"])
+    assert item["valueSalesExcludingST"] == 600.0
+    assert item["salesTaxApplicable"] == 348.0
+
+
+def test_a_credit_note_mirrors_the_per_unit_tax_not_the_rate(api, tenant, taxed_world):
+    """A compound or fixed charge has no single percentage — the credit must reverse the per-unit
+    tax actually charged, or the rupee part stays on the books."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18% along with rupees 60 per kilogram")
+    oid = _issued_order(api, wh, cust, v)  # 4 units, tax 348 → 87 a unit
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import SalesInvoice
+        from apps.sales.services import CreditNoteService
+
+        row = SalesInvoice.objects.get(id=inv["id"])
+        cn = CreditNoteService.create(customer=cust, invoice=row, warehouse=row.order.warehouse if row.order_id else None,
+                                      lines=[{"variant": v, "qty": Decimal("1"), "unit_price": Decimal("150")}])
+        assert cn.tax1_total == Decimal("87"), cn.tax1_total  # (600×18% + 240) / 4 units × 1
+        assert cn.total == Decimal("237")

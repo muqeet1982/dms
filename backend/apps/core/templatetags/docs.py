@@ -61,3 +61,11 @@ def figure(value):
     if isinstance(value, bool):
         return "Yes" if value else "No"
     return num(value) if isnumber(value) else value
+
+
+@register.filter
+def fbr_rate(value):
+    """FBR's prose rate in a narrow column: '18% along with rupees 60 per kilogram' → '18% + Rs.60'."""
+    from apps.fbr import engine
+
+    return engine.rate_label(value)

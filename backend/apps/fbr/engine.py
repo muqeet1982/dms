@@ -66,6 +66,19 @@ def fixed_tax_amount(rate_str) -> Decimal:
         return Decimal("0")
 
 
+def rate_label(rate_str) -> str:
+    """Both components of a prose rate in a narrow column: '18% along with rupees 60 per kilogram'
+    → '18% + Rs.60'; 'Exempt' and plain '18%' pass through untouched (guide §6)."""
+    s = str(rate_str or "").strip()
+    if not s:
+        return ""
+    pct, fixed = gst_rate_num(s), fixed_tax_amount(s)
+    if not fixed:
+        return s
+    rs = f"Rs.{fixed.normalize():f}"
+    return f"{pct.normalize():f}% + {rs}" if pct else rs
+
+
 # ── §6.3: 3rd Schedule goods tax on the PRINTED retail price when higher — and the MRP is PER UNIT ──
 _MRP_SALE_TYPES = {"3rd schedule goods"}
 
