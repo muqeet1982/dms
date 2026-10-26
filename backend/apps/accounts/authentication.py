@@ -105,7 +105,7 @@ class TenantJWTAuthentication(JWTAuthentication):
                         if target_m is not None and not target_m.is_owner:
                             request.membership = target_m
                             request.impersonating = True
-                            request.impersonation = imp
+                            request.impersonation = _keep_impersonation_alive(imp)
         if tenant is not None:
             if tenant.status in ("cancelled", "archived") and not user.is_platform_admin:
                 raise exceptions.PermissionDenied("This company account is closed.")

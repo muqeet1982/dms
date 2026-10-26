@@ -27,6 +27,25 @@ export function AppShell({ sections, notificationsTo }: { sections: MenuSection[
     document.body.classList.toggle("mini-sidebar", mini);
     localStorage.setItem("dms.mini", mini ? "1" : "0");
   }, [mini]);
+  // An impersonation window only slides on SERVER activity, but nothing here polls — so an hour of
+  // reading or form-typing made zero requests and dumped the admin back on the platform side mid-work
+  // (26 Oct 2026). While impersonating, touching the page counts as activity: every 10 minutes one
+  // light /me call lets the server slide the window. An untouched tab sends nothing, so the one-hour
+  // idle expiry and the 8-hour cap both stand.
+  const impersonating = Boolean((me as any)?.impersonating);
+  useEffect(() => {
+    if (!impersonating) return;
+    let touched = false;
+    const mark = () => { touched = true; };
+    window.addEventListener("pointerdown", mark);
+    window.addEventListener("keydown", mark);
+    const beat = window.setInterval(() => {
+      if (!touched) return;
+      touched = false;
+      api.get("/api/v1/me").catch(() => { /* the next real request surfaces any problem */ });
+    }, 10 * 60 * 1000);
+    return () => { window.removeEventListener("pointerdown", mark); window.removeEventListener("keydown", mark); window.clearInterval(beat); };
+  }, [impersonating]);
   useEffect(() => {
     document.querySelector(".main-wrapper")?.classList.toggle("slide-nav", mobile);
     document.documentElement.classList.toggle("menu-opened", mobile);
