@@ -77,3 +77,25 @@ def test_platform_branding_is_public_and_admin_only_to_edit(admin_api, api, sett
     assert up.status_code == 200 and up.data["favicon_url"].startswith("/media/branding/")
     public = APIClient().get("/api/v1/branding").data
     assert public["site_name"] == "InvoiceFlow" and public["favicon_url"] == up.data["favicon_url"] and "login_headline" in public
+
+
+def test_me_serves_effective_settings_not_just_the_stored_overrides(api, tenant):
+    """Irfan Aleem's missing photo buttons (26 Oct 2026): /me sent only the tenant's stored settings
+    column, so a company that never touched Business rules served no `rep_order_photo` at all and
+    the mobile app fell back to its own "off" — hiding the shop/shelf photo tiles from every rep.
+    /me must serve the same effective merge Tenant.setting() reads."""
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        (tenant.settings or {}).pop("rep_order_photo", None)
+        tenant.save(update_fields=["settings"])
+
+    got = api.get("/api/v1/me").data["tenant"]["settings"]
+    assert got.get("rep_order_photo") == "optional", "the code default must reach the client"
+    assert got.get("reserve_stock_on_confirm") is True
+
+    # a stored override still wins over the default
+    with tenant_context(tenant, tenant.owner):
+        tenant.settings = {**(tenant.settings or {}), "rep_order_photo": "required"}
+        tenant.save(update_fields=["settings"])
+    assert api.get("/api/v1/me").data["tenant"]["settings"]["rep_order_photo"] == "required"

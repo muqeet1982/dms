@@ -38,10 +38,17 @@ class TenantPublicSerializer(serializers.ModelSerializer):
     """What a tenant user sees about their own company."""
 
     plan = serializers.SerializerMethodField()
+    settings = serializers.SerializerMethodField()
 
     class Meta:
         model = Tenant
         fields = ["id", "slug", "legal_name", "display_name", "status", "address", "city", "phone", "email", "website", "tax_numbers", "logo", "base_currency", "fiscal_year_start_month", "timezone", "settings", "branding", "plan"]
+
+    def get_settings(self, obj):
+        # clients act on the EFFECTIVE value, the same merge Tenant.setting() reads — the stored
+        # column alone omits every code default, and the mobile app then substituted its own
+        # fallback (rep_order_photo read as "off" hid the order photo tiles from whole companies)
+        return {**Tenant.DEFAULT_SETTINGS, **(obj.settings or {})}
 
     def get_plan(self, obj):
         sub = obj.active_subscription
