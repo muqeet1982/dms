@@ -342,3 +342,34 @@ def test_a_confirmed_order_is_not_short_against_its_own_reservation(api, tenant)
                                            "lines": [{"variant": str(v.id), "qty": "45"}]}, format="json")
     assert r2.status_code == 201 and r2.data["status"] == "on_hold_stock", r2.content
     assert "short 5" in r2.data["hold_reason"]
+
+
+def test_a_salon_buys_at_the_retail_price(api, tenant):
+    """Owner (26 Oct 2026): "if customer is salon then show price for retail. in sale, invoice etc."
+    An explicit price-list row still wins; a product without an R.P falls back to the trade price."""
+    from apps.catalog.models import ProductVariant
+    from apps.partners.models import Customer
+
+    wh, _sup, v, retailer = seed_basic(tenant)  # T.P 150
+    with tenant_context(tenant, tenant.owner):
+        ProductVariant.objects.filter(pk=v.id).update(retail_price=Decimal("200"))
+        salon = Customer.objects.create(code="C-SAL", name="Shine Salon", type="salon", credit_limit=Decimal("100000"))
+
+    # the price the order form asks for, per customer
+    assert Decimal(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(salon.id)}).data["unit_price"]) == Decimal("200")
+    assert Decimal(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(retailer.id)}).data["unit_price"]) == Decimal("150")
+
+    # the order prices itself at R.P, and the invoice inherits it
+    r = api.post("/api/v1/sales-orders", {"customer": str(salon.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert Decimal(r.data["lines"][0]["unit_price"]) == Decimal("200") and Decimal(r.data["total"]) == Decimal("400")
+    done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
+    assert done.status_code == 200, done.content
+    inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
+    assert Decimal(inv["total"]) == Decimal("400")
+
+    # no printed retail price → the trade price, never zero
+    with tenant_context(tenant, tenant.owner):
+        ProductVariant.objects.filter(pk=v.id).update(retail_price=Decimal("0"))
+    assert Decimal(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(salon.id)}).data["unit_price"]) == Decimal("150")

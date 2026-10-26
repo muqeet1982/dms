@@ -407,7 +407,13 @@ class PricingService:
                     return (base_item.price * (packaging.qty_in_base if packaging else 1)).quantize(Q4), pl
             else:
                 return item.price.quantize(Q4), pl
-        return (variant.sale_price * (packaging.qty_in_base if packaging else 1)).quantize(Q4), pl
+        # a salon buys at the retail price (owner, 26 Oct 2026: "if customer is salon then show price for
+        # retail. in sale, invoice etc.") — an explicit price-list row above still wins, and a product
+        # with no R.P falls back to the trade price rather than pricing at zero
+        base = variant.sale_price
+        if customer is not None and customer.type == "salon" and (variant.retail_price or 0) > 0:
+            base = variant.retail_price
+        return (base * (packaging.qty_in_base if packaging else 1)).quantize(Q4), pl
 
     @staticmethod
     def applicable_schemes(variant, customer=None, on_date=None):

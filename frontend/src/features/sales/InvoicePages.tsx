@@ -72,8 +72,10 @@ export function InvoiceDetailPage() {
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
-          {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): reopen → FBR tax → review → re-post */}
-          {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && inv.fbr?.status !== "submitted" && (
+          {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): reopen → FBR tax → review → re-post.
+              Both rights are needed — the server gates /reopen on edit_posted and /tax on the discount extra,
+              and a button that strands the user halfway (reopened, untaxed) is worse than none */}
+          {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && page.can("discount") && inv.fbr?.status !== "submitted" && (
             <button className={inv.force_tax_type ? "btn btn-outline-warning" : "btn btn-outline-success"} disabled={!!busy || saving}
               title={inv.force_tax_type ? "Reopens this invoice, removes the tax, and leaves it for you to review and re-post" : "Reopens this invoice, charges each item at its FBR rate, and leaves it for you to review and re-post"}
               onClick={async () => {
