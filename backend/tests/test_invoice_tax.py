@@ -469,6 +469,58 @@ def test_a_flagged_order_with_unclassified_products_still_bills_and_notifies(api
         assert n is not None and "WITHOUT the tax" in n.title
 
 
+def test_a_flagged_order_carries_the_fbr_tax_itself(api, tenant, taxed_world):
+    """Owner (26 Oct 2026): "do same for sale order" — a tax-invoice order prices its lines through the
+    same engine the invoice uses, so the order total IS the taxed total and a cash delivery collects it."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert Decimal(r.data["tax1_total"]) == Decimal("108")  # 4 × 150 × 18%
+    assert Decimal(r.data["total"]) == Decimal("708")
+    line = r.data["lines"][0]
+    assert Decimal(line["tax1_amount"]) == Decimal("108") and Decimal(line["line_total"]) == Decimal("708")
+    # the automatic billing lands on the same figure — order and invoice agree to the paisa
+    done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
+    assert done.status_code == 200, done.content
+    inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
+    assert Decimal(inv["total"]) == Decimal(r.data["total"])
+
+    # without the flag, the order stays untaxed exactly as before
+    r2 = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                           "charge_tax": False, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert Decimal(r2.data["tax1_total"]) == 0 and Decimal(r2.data["total"]) == Decimal("600")
+
+
+def test_the_order_pdf_shows_the_tax_invoice_columns(api, tenant, taxed_world):
+    """The order confirmation reads like the invoice that will bill it: Disc · Taxable · GST · Total,
+    HS under the item, and Taxable value + Sales tax footing to the order total."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%", fbr_hs_code="7306.3090")
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    with tenant_context(tenant, tenant.owner):
+        from django.template.loader import render_to_string
+
+        from apps.sales.models import SalesOrder
+
+        o = SalesOrder.objects.get(id=r.data["id"])
+        lines = list(o.lines.select_related("variant__product"))
+        for l in lines:
+            l.pending = l.qty_ordered
+            l.discount_total = (l.discount_amount or 0) + (l.scheme_discount or 0)
+            l.tax_amount = (l.tax1_amount or 0) + (l.tax2_amount or 0)
+            l.taxable = (l.line_total or 0) - l.tax_amount
+        html = render_to_string("sales/order.html", {"o": o, "lines": lines, "tenant": tenant, "tax_on": True,
+                                                     "tax_shown": o.tax1_total, "taxable_total": o.subtotal - o.discount - o.scheme_discount,
+                                                     "show_progress": False, "tax1_name": "Sales Tax", "tax2_name": None,
+                                                     "logo_url": None, "printed_at": "", "doc_title": "SALES ORDER", "doc_ref": o.number})
+        assert ">Disc<" in html and ">Taxable<" in html and ">GST<" in html and ">Total<" in html
+        assert "HS 7306.3090" in html and "Taxable value" in html and "Sales tax" in html
+        assert "708" in html and "108" in html
+
+
 def test_the_create_page_switch_beats_the_orders_flag(api, tenant, taxed_world):
     """apply_tax sent explicitly — even false — wins over the order's switch; absent, the order decides."""
     wh, cust, v, tt = taxed_world

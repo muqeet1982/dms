@@ -62,6 +62,7 @@ class OrderLineSerializer(serializers.ModelSerializer):
     # tax before the invoice exists (the server recomputes the real figures at creation)
     product_tax_pct = serializers.DecimalField(source="variant.product.tax_pct", max_digits=7, decimal_places=3, read_only=True, default=None)
     product_fbr_rate = serializers.CharField(source="variant.product.fbr_rate_desc", read_only=True, default="")
+    hs_code = serializers.CharField(source="variant.product.fbr_hs_code", read_only=True, default="")
     # the preview mirrors engine.compute_line, and these two decide the 3rd Schedule MRP base (guide §5)
     product_fbr_sale_type = serializers.CharField(source="variant.product.fbr_sale_type", read_only=True, default="")
     product_mrp = serializers.DecimalField(source="variant.product.mrp_ex_tax", max_digits=14, decimal_places=4, read_only=True, default=None)
@@ -71,7 +72,7 @@ class OrderLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "product_fbr_rate", "product_fbr_sale_type", "product_mrp", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "product_fbr_rate", "hs_code", "product_fbr_sale_type", "product_mrp", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "line_total", "sequence"]
         extra_kwargs = {"unit_price": {"required": False}}
 

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, money, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -120,11 +120,18 @@ export function OrderDetailPage() {
                 <InfoItem label="Trip" col="col-md-3">{o.trip_number ? <Link to={`/app/delivery/trips/${o.trip}`}>{o.trip_number}</Link> : "—"}{o.driver_name && <div className="text-muted fs-12">{o.driver_name} · {o.vehicle_reg}</div>}</InfoItem>
               </div>
               <div className="table-responsive">
-                <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: 760 }}>
-                  <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Total</th></tr></thead>
-                  <tbody>{o.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td><td className="num fw-medium">{money(l.line_total)}</td></tr>)}</tbody>
-                  <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={7} className="text-end">Discount{Number(o.discount_pct) > 0 ? ` (${Number(o.discount_pct)}%)` : ""}</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={7} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}<tr className="fw-bold"><td colSpan={7} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
-                </table>
+                {(() => {
+                  /* a tax-invoice order reads like the invoice that will bill it (owner, 26 Oct 2026):
+                     Taxable = Qty × Price − Disc is what the GST is computed on, Total = Taxable + GST */
+                  const taxed = Boolean(o.charge_tax) || Number(o.tax1_total) > 0 || Number(o.tax2_total) > 0;
+                  const span = taxed ? 9 : 7;
+                  const taxTotal = (Number(o.tax1_total) || 0) + (Number(o.tax2_total) || 0);
+                  return <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: taxed ? 900 : 760 }}>
+                    <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th><th className="num">Price</th><th className="num">Disc</th>{taxed && <th className="num">Taxable</th>}{taxed && <th className="num">GST</th>}<th className="num">Total</th></tr></thead>
+                    <tbody>{o.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td><td className="num">{money(Number(l.discount_amount) + Number(l.scheme_discount))}</td>{taxed && <td className="num">{money(Number(l.line_total) - taxAmt)}</td>}{taxed && <td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.product_fbr_rate ? fbrRateLabel(l.product_fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>}<td className="num fw-medium">{money(l.line_total)}</td></tr>; })}</tbody>
+                    <tfoot>{Number(o.discount) > 0 && <tr><td colSpan={span} className="text-end">Discount{Number(o.discount_pct) > 0 ? ` (${Number(o.discount_pct)}%)` : ""}</td><td className="num">-{money(o.discount)}</td></tr>}{Number(o.scheme_discount) > 0 && <tr><td colSpan={span} className="text-end">Scheme discount</td><td className="num">-{money(o.scheme_discount)}</td></tr>}{taxed && <><tr><td colSpan={span} className="text-end">Taxable value</td><td className="num">{money(Number(o.total) - taxTotal)}</td></tr><tr><td colSpan={span} className="text-end">Sales tax</td><td className="num">{money(taxTotal)}</td></tr></>}<tr className="fw-bold"><td colSpan={span} className="text-end">Total ({o.currency})</td><td className="num">{money(o.total)}</td></tr></tfoot>
+                  </table>;
+                })()}
               </div>
               {o.notes && <p className="text-muted fs-13 mt-2 mb-0"><i className="ti ti-note me-1" />{o.notes}</p>}
             </div></div>

@@ -5,6 +5,8 @@ only once something has actually moved, so a fresh order prints as a clean order
 empty columns.
 {% endcomment %}
 {% block doc_title %}SALES ORDER{% endblock %}
+
+{% block company_tax %}{% if tax_on %}{% for k, v in tenant.tax_numbers.items %}{% if v %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}{% else %}{{ block.super }}{% endif %}{% endblock %}
 {% block doc_ref %}{{ o.number }}{% endblock %}
 {% block watermark %}{% if o.status == 'draft' %}<div class="mark">DRAFT</div>{% elif o.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% elif o.status == 'rejected' %}<div class="mark">REJECTED</div>{% endif %}{% endblock %}
 
@@ -33,11 +35,45 @@ empty columns.
     {% if o.customer.city %}<div>{{ o.customer.city }}</div>{% endif %}
     <div class="muted">{% if o.customer.phone %}Tel {{ o.customer.phone }}{% endif %}{% if o.customer.contact_person %} · {{ o.customer.contact_person }}{% endif %}</div>
     {% if o.customer.ntn %}<div class="muted">NTN: {{ o.customer.ntn }}</div>{% endif %}
+    {% if tax_on %}{% if o.customer.cnic and not o.customer.ntn %}<div class="muted">CNIC: {{ o.customer.cnic }}</div>{% endif %}{% if o.customer.strn %}<div class="muted">STRN: {{ o.customer.strn }}</div>{% endif %}{% if o.customer.fbr_registration_type %}<div class="muted">FBR: {{ o.customer.fbr_registration_type }}</div>{% endif %}{% endif %}
   </div>
 </div>
 {% endblock %}
 
 {% block lines %}
+{% if tax_on %}
+{% comment %}
+The tax-invoice face, same as the invoice (owner, 26 Oct 2026): Taxable = Qty × Rate − Disc is the value the GST
+is computed on, Total = Taxable + GST, and the HS code rides under the item name. A 3rd Schedule line's GST can
+read higher than Taxable × rate — the law taxes those on the printed retail price.
+{% endcomment %}
+<table class="lines">
+  <thead><tr>
+    <th style="width:6mm">#</th><th>Item</th><th style="width:13mm">Pack</th>
+    <th class="r" style="width:11mm">Qty</th>    {% if show_progress %}<th class="r" style="width:12mm">Delivered</th><th class="r" style="width:11mm">Pending</th>{% endif %}
+    <th class="r" style="width:14mm">Rate</th><th class="r" style="width:12mm">Disc</th>
+    <th class="r" style="width:16mm">Taxable</th><th class="r" style="width:15mm">GST</th>
+    <th class="r" style="width:18mm">Total</th>
+  </tr></thead>
+  <tbody>
+  {% for l in lines %}<tr>
+    <td>{{ forloop.counter }}</td>
+    <td>{{ l.variant.name }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.variant.product.fbr_hs_code %} · HS {{ l.variant.product.fbr_hs_code }}{% endif %}{% if l.scheme_names %} · {{ l.scheme_names|join:", " }}{% endif %}</span></td>
+    <td>{{ l.packaging.name|default:"unit" }}{% if l.variant.product.packing > 1 %}<span class="sku">{{ l.variant.product.packing }}/carton</span>{% endif %}</td>
+    <td class="r">{{ l.qty_ordered|qty }}</td>
+    {% if show_progress %}
+      <td class="r">{{ l.qty_delivered|qty }}</td>
+      <td class="r">{% if l.pending %}<strong>{{ l.pending|qty }}</strong>{% else %}—{% endif %}</td>
+    {% endif %}
+    <td class="r">{{ l.unit_price|num }}</td>
+    <td class="r">{% if l.discount_amount or l.scheme_discount %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
+    <td class="r">{{ l.taxable|num }}</td>
+    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{{ l.variant.product.fbr_rate_desc|fbr_rate }}</span></td>
+    <td class="r b">{{ l.line_total|num }}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}
 <table class="lines">
   <thead><tr>
     <th style="width:6mm">#</th><th>Item</th><th style="width:18mm">Pack</th>
@@ -61,6 +97,7 @@ empty columns.
   </tr>{% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endblock %}
 
 {% block words %}{% if o.total %}<div class="words"><strong>Amount in words:</strong> {{ o.total|in_words }}</div>{% endif %}{% endblock %}
@@ -72,10 +109,22 @@ empty columns.
 {% endblock %}
 
 {% block totals %}
+{% comment %}
+Tax order: Subtotal − Discount − Scheme = Taxable value, + Sales tax = Order total — the same footing as the
+tax invoice that will bill it, so the cash to collect on delivery is the taxed figure.
+{% endcomment %}
 <table class="totals">
+  {% if tax_on %}
+  {% if o.discount or o.scheme_discount %}<tr><td class="l">Gross amount</td><td class="r">{{ o.subtotal|num }}</td></tr>{% endif %}
+  {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
+  {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
+  <tr><td class="l">Taxable value</td><td class="r">{{ taxable_total|num }}</td></tr>
+  <tr><td class="l">Sales tax{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  {% else %}
   <tr><td class="l">Subtotal</td><td class="r">{{ o.subtotal|num }}</td></tr>
   {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
+  {% endif %}
   <tr class="sum"><td>Order total</td><td class="r">{{ o.total|num }}</td></tr>
 </table>
 {% endblock %}

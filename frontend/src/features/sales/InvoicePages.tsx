@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, money, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, fbrRateParts, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -193,21 +193,6 @@ export function InvoiceDetailPage() {
 // the tax switch charges each line the full FBR arithmetic (owner 25-26 Oct 2026, INVOICE_TAX_FLOW_GUIDE.md):
 // percentage on the base — MRP × qty for 3rd Schedule goods when higher — plus the fixed rupee part × qty.
 // This mirrors apps/fbr/engine.compute_line for PREVIEW only; the server recomputes the real figures.
-function fbrRateParts(rate: string): { pct: number; fixed: number } {
-  const pm = /(\d+(?:\.\d+)?)\s*%/.exec(rate);
-  const fm = /(?:\brs\.?|\brupees)\s*([\d,]+(?:\.\d+)?)/i.exec(rate);
-  let pct = pm ? Number(pm[1]) : 0;
-  // a bare number ("16") is a percentage — the engine reads it that way (gst_rate_num)
-  if (!pm && !fm && rate.trim() !== "" && !Number.isNaN(Number(rate.trim()))) pct = Number(rate.trim());
-  return { pct, fixed: fm ? Number(fm[1].replace(/,/g, "")) : 0 };
-}
-
-// "18% along with rupees 60 per kilogram" → "18% + Rs.60", same as the server's rate_label
-function fbrRateLabel(rate: string): string {
-  const { pct, fixed } = fbrRateParts(rate);
-  return fixed ? (pct ? `${pct}% + Rs.${fixed}` : `Rs.${fixed}`) : rate;
-}
-
 function effLineTax(l: any, base: number): { label: string; amount: number } | null {
   const rate: string = l.product_fbr_rate || "";
   if (!rate) return null;

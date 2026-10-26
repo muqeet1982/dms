@@ -253,11 +253,16 @@ class SalesOrderViewSet(DocumentViewSet):
     def pdf(self, request, pk=None):
         o = self.get_object()
         lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
+        tax_shown = Decimal(str(o.tax1_total or 0)) + Decimal(str(o.tax2_total or 0))
+        tax_on = bool(o.charge_tax) or tax_shown > 0
         for l in lines:
             l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
             l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
+            l.tax_amount = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
+            l.taxable = Decimal(str(l.line_total or 0)) - l.tax_amount
         return render_doc(request, "sales/order.html", {
-            "o": o, "lines": lines,
+            "o": o, "lines": lines, "tax_on": tax_on, "tax_shown": tax_shown,
+            "taxable_total": Decimal(str(o.subtotal or 0)) - Decimal(str(o.discount or 0)) - Decimal(str(o.scheme_discount or 0)),
             "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
             "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
             "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),

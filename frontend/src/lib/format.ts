@@ -55,3 +55,21 @@ export const num = (v: any) => Number(v || 0);
 export function labelCase(s: string): string {
   return s.replace(/(^|\s|\/|\()([a-z])/g, (_m, pre, ch) => pre + ch.toUpperCase());
 }
+
+// ── FBR rate strings ("18% along with rupees 60 per kilogram") ─────────────────────────────────────
+// Mirrors apps/fbr/engine (gst_rate_num / fixed_tax_amount / rate_label) for PREVIEW and labels only;
+// the server always recomputes the real figures.
+export function fbrRateParts(rate: string): { pct: number; fixed: number } {
+  const pm = /(\d+(?:\.\d+)?)\s*%/.exec(rate);
+  const fm = /(?:\brs\.?|\brupees)\s*([\d,]+(?:\.\d+)?)/i.exec(rate);
+  let pct = pm ? Number(pm[1]) : 0;
+  // a bare number ("16") is a percentage — the engine reads it that way (gst_rate_num)
+  if (!pm && !fm && rate.trim() !== "" && !Number.isNaN(Number(rate.trim()))) pct = Number(rate.trim());
+  return { pct, fixed: fm ? Number(fm[1].replace(/,/g, "")) : 0 };
+}
+
+// "18% along with rupees 60 per kilogram" → "18% + Rs.60", same as the server's rate_label
+export function fbrRateLabel(rate: string): string {
+  const { pct, fixed } = fbrRateParts(rate);
+  return fixed ? (pct ? `${pct}% + Rs.${fixed}` : `Rs.${fixed}`) : rate;
+}

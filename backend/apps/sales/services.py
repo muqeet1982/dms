@@ -56,10 +56,24 @@ class OrderService:
         sd, free, names = PricingService.apply_schemes(line.variant, line.qty_ordered, line.unit_price, customer, order.order_date)
         line.scheme_discount, line.free_qty, line.scheme_names = sd, free, names
         taxable = gross - line.discount_amount - line.scheme_discount
-        tax_class = TaxService.resolve_class(line.variant, customer)
-        t = TaxService.compute(taxable, tax_class, order.order_date)
-        line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
-        line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
+        if getattr(order, "charge_tax", False):
+            # a tax-invoice order carries the SAME FBR tax its invoice will charge (owner, 26 Oct 2026:
+            # "do same for sale order"), so a cash delivery collects the taxed total, not the net one.
+            # No rate on the product → zero here, and the billing notifies (invoice.tax_skipped).
+            if not hasattr(order, "_sales_tax_tt"):
+                from apps.catalog.models import TaxType
+
+                order._sales_tax_tt = TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
+            rate, amount = InvoiceService.forced_line_tax(
+                line.variant.product, qty=line.qty_ordered, unit_price=line.unit_price,
+                discount_amount=line.discount_amount + line.scheme_discount)
+            line.tax1_type, line.tax1_rate, line.tax1_amount = order._sales_tax_tt, rate, q4(amount)
+            line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
+        else:
+            tax_class = TaxService.resolve_class(line.variant, customer)
+            t = TaxService.compute(taxable, tax_class, order.order_date)
+            line.tax1_type, line.tax1_rate, line.tax1_amount = t["tax1_type"], t["tax1_rate"], t["tax1_amount"]
+            line.tax2_type, line.tax2_rate, line.tax2_amount = t["tax2_type"], t["tax2_rate"], t["tax2_amount"]
         line.line_total = taxable + line.tax1_amount + line.tax2_amount
         return gross, flags
 
