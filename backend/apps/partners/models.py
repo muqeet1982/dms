@@ -138,6 +138,9 @@ class Customer(TenantModel):
     # invoice total, the party's own rate. It is charged on YOUR printed invoice and ledger — never part
     # of the FBR DI payload (party guide §2.3).
     advance_income_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # tax invoices are a property of the CUSTOMER (owner, 26 Oct 2026: "manage from customer") — every
+    # order taken for them inherits it, and the billing (even automatic at delivery) charges FBR tax
+    charge_tax = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
         # FBR's gateway refuses ANY payload containing a double quote (guide §11.2) — scrub at the door,

@@ -163,6 +163,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "Registration Status", type: "select", col: "col-md-3",
       options: [{ value: "", label: "Not set" }, { value: "Registered", label: "Registered" }, { value: "Unregistered", label: "Unregistered" }] },
     { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-4", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "charge_tax", label: "Tax invoice — charge FBR sales tax on this customer's invoices (each item at the GST rate of its HS classification)", type: "checkbox", col: "col-md-8", default: false },
 
     // ── everything occasional folds away until asked for ─────────────────────────────────────────────
     { ...sec("More shops (multi-shop account)", "ti-building-community", "Orders can be taken at any of these; each delivery goes to the shop the order was taken at.", true), name: "locations_write", label: "", type: "custom", col: "col-md-12", default: [],

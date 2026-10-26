@@ -127,7 +127,7 @@ class OrderService:
     # ---------------------------------------------------------------- create
     @staticmethod
     @transaction.atomic
-    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None, location=None, payment_mode=None, charge_tax=False):
+    def create(*, customer, lines, source="staff", rep=None, supplier=None, warehouse=None, order_date=None, requested_delivery_date=None, notes="", external_ref="", price_list=None, allow_override=False, auto_confirm=False, apply_customer_discount=True, discount_pct=None, location=None, payment_mode=None, charge_tax=None):
         tenant = get_current_tenant()
         PlanLimitService.check(tenant, "max_orders_month")
         if rep is None:
@@ -150,7 +150,10 @@ class OrderService:
         if payment_mode and payment_mode not in ("cash", "credit"):
             raise DomainError("payment_mode must be cash or credit.", code="bad_payment_mode")
         payment_mode = payment_mode or ("cash" if not (customer.credit_days or 0) else "credit")
-        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, location=location, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, payment_mode=payment_mode, charge_tax=bool(charge_tax), status="draft" if source == "staff" and not auto_confirm else "submitted")
+        order = SalesOrder.objects.create(number=next_number("sales_order"), customer=customer, location=location, supplier=supplier, rep=rep, source=source, warehouse=warehouse, order_date=order_date or timezone.localdate(), requested_delivery_date=requested_delivery_date, notes=notes, apply_customer_discount=apply_customer_discount, discount_pct=Decimal(str(discount_pct)), external_ref=external_ref, price_list=price_list or customer.price_list, currency=tenant.base_currency, payment_mode=payment_mode,
+                                           # tax invoices are managed on the CUSTOMER (owner, 26 Oct 2026); an explicit value still wins via the API
+                                           charge_tax=bool(customer.charge_tax) if charge_tax is None else bool(charge_tax),
+                                           status="draft" if source == "staff" and not auto_confirm else "submitted")
         OrderService.write_lines(order, lines, allow_override)
         if not order.lines.exists():
             raise DomainError("Order has no valid lines.")

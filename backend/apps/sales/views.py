@@ -101,7 +101,7 @@ class SalesOrderViewSet(DocumentViewSet):
             raise DomainError("Customer is not assigned to you.", status_code=403)
         serializer.instance = OrderService.create(
             customer=d["customer"], lines=self._lines(d["lines"]), source=source, rep=rep, supplier=d.get("supplier"), warehouse=d.get("warehouse"), order_date=d.get("order_date"), requested_delivery_date=d.get("requested_delivery_date"),
-            notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), price_list=d.get("price_list"), allow_override=can_override, apply_customer_discount=d.get("apply_customer_discount", True), discount_pct=d.get("discount_pct"), charge_tax=d.get("charge_tax", False), auto_confirm=bool(self.request.data.get("confirm")) and m.has_perm("sales.confirm_sales_order"),
+            notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), price_list=d.get("price_list"), allow_override=can_override, apply_customer_discount=d.get("apply_customer_discount", True), discount_pct=d.get("discount_pct"), charge_tax=d.get("charge_tax"), auto_confirm=bool(self.request.data.get("confirm")) and m.has_perm("sales.confirm_sales_order"),
         )
 
     def perform_update(self, serializer):

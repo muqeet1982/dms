@@ -569,3 +569,23 @@ def test_a_credit_note_against_two_lines_of_one_variant_credits_the_true_total(a
         cn = CreditNoteService.create(customer=cust, invoice=row, warehouse=row.order.warehouse,
                                       lines=[{"variant": v, "qty": Decimal("4"), "unit_price": Decimal("150")}])
         assert cn.tax1_total == row.tax1_total, (cn.tax1_total, row.tax1_total)
+
+
+def test_the_customer_flag_makes_every_order_a_tax_invoice(api, tenant, taxed_world):
+    """Owner (26 Oct 2026): the tax-invoice choice is managed on the CUSTOMER — each order inherits
+    it, and the automatic billing at delivery charges the FBR tax without anyone touching anything."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    assert api.patch(f"/api/v1/customers/{cust.id}", {"charge_tax": True}, format="json").status_code == 200
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
+    assert r.status_code == 201 and r.data["charge_tax"] is True, r.content
+    done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
+    assert done.status_code == 200, done.content
+    inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
+    assert inv["force_tax_type"] and Decimal(inv["tax1_total"]) == Decimal("108")
+
+    # an explicit value on the order API still wins over the customer's flag
+    r2 = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                           "charge_tax": False, "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    assert r2.status_code == 201 and r2.data["charge_tax"] is False, r2.content

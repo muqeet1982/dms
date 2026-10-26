@@ -191,7 +191,7 @@ export function OrderFormPage() {
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
-    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, charge_tax: Boolean(o.charge_tax), discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, charge_tax: false, discount_pct: "" });
+    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
     if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
     return <Spinner />;
   }
@@ -220,14 +220,10 @@ export function OrderFormPage() {
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
         <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock />
-        <div className="row">
-          <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
-            <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />
-          </Field>
-          <Field label="Tax invoice" col="col-md-5" hint="when this order is billed — even automatically at delivery confirmation — the invoice charges FBR sales tax, each item at the GST rate of its HS classification">
-            <div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="ord-tax" checked={Boolean(form.charge_tax)} onChange={(e) => setForm({ ...form, charge_tax: e.target.checked })} /><label className="form-check-label fs-13" htmlFor="ord-tax">Charge FBR sales tax on the invoice</label></div>
-          </Field>
-        </div>
+        {/* the tax-invoice choice lives on the CUSTOMER (owner, 26 Oct 2026) — the order inherits it */}
+        <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
+          <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />
+        </Field>
         <Field label="Notes"><textarea className="form-control" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
         {!page.can("override_price") && <div className="form-text">Prices you enter are advisory — the price list applies unless you have the price-override permission.</div>}
       </div></div>
