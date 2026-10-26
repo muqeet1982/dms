@@ -430,10 +430,19 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
     @action(detail=True, methods=["post"])
     def tax(self, request, pk=None):
-        """POST { apply: true|false, tax_type? } — the invoice's tax switch; only on a draft invoice."""
+        """POST { apply: true|false, tax_type? } — the invoice's tax switch. A draft switches in place; a
+        POSTED, unpaid invoice is reopened and switched in this ONE request (review + re-post by the user) —
+        two separate calls could strand it reopened off the books when the switch refuses (audit, 26 Oct 2026).
+        ATOMIC_REQUESTS rolls the reopen back with the refusal, so a failure leaves the invoice exactly posted."""
         from apps.catalog.models import TaxType
 
         inv = self.get_object()
+        if inv.status in ("posted", "overdue") and not inv.paid_amount:
+            m = request.membership
+            if not (m.is_owner or m.has_perm("sales.edit_posted_invoice")):
+                raise DomainError("Changing tax on a posted invoice needs the edit-posted right.", status_code=403)
+            InvoiceService.reopen(inv, reason="tax switch", actor=request.user)
+            inv.refresh_from_db()
         tt = TaxType.objects.filter(pk=request.data["tax_type"]).first() if request.data.get("tax_type") else None
         InvoiceService.set_tax(inv, apply=request.data.get("apply") in (True, "true", "1", 1), tax_type=tt,
                                actor=request.user)

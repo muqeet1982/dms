@@ -72,16 +72,15 @@ export function InvoiceDetailPage() {
           {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
           {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
-          {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): reopen → FBR tax → review → re-post.
-              Both rights are needed — the server gates /reopen on edit_posted and /tax on the discount extra,
-              and a button that strands the user halfway (reopened, untaxed) is worse than none */}
+          {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): ONE atomic call
+              reopens it and flips the switch — a refusal rolls the reopen back too, so nothing strands.
+              Both rights are shown-for because the server demands edit_posted (reopen) + discount (tax) */}
           {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && page.can("discount") && inv.fbr?.status !== "submitted" && (
             <button className={inv.force_tax_type ? "btn btn-outline-warning" : "btn btn-outline-success"} disabled={!!busy || saving}
               title={inv.force_tax_type ? "Reopens this invoice, removes the tax, and leaves it for you to review and re-post" : "Reopens this invoice, charges each item at its FBR rate, and leaves it for you to review and re-post"}
               onClick={async () => {
                 setSaving(true);
                 try {
-                  await api.post(`/api/v1/invoices/${id}/reopen`, {}, true);
                   await api.post(`/api/v1/invoices/${id}/tax`, { apply: !inv.force_tax_type }, true);
                   toast.success(inv.force_tax_type ? "Tax removed — review, then press Post to ledger" : "Tax on — review the figures, then press Post to ledger");
                 } catch (e: any) { toast.error(e.message); } finally { setSaving(false); qc.invalidateQueries(); }
@@ -182,7 +181,10 @@ export function InvoiceDetailPage() {
 function fbrRateParts(rate: string): { pct: number; fixed: number } {
   const pm = /(\d+(?:\.\d+)?)\s*%/.exec(rate);
   const fm = /(?:\brs\.?|\brupees)\s*([\d,]+(?:\.\d+)?)/i.exec(rate);
-  return { pct: pm ? Number(pm[1]) : 0, fixed: fm ? Number(fm[1].replace(/,/g, "")) : 0 };
+  let pct = pm ? Number(pm[1]) : 0;
+  // a bare number ("16") is a percentage — the engine reads it that way (gst_rate_num)
+  if (!pm && !fm && rate.trim() !== "" && !Number.isNaN(Number(rate.trim()))) pct = Number(rate.trim());
+  return { pct, fixed: fm ? Number(fm[1].replace(/,/g, "")) : 0 };
 }
 
 // "18% along with rupees 60 per kilogram" → "18% + Rs.60", same as the server's rate_label
@@ -249,7 +251,9 @@ export function InvoiceCreatePage() {
         <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), ...(applyTax ? { apply_tax: true } : {}) }, true);
+            // apply_tax is sent BOTH ways: absent means "follow the order's own flag", so unticking the
+            // seeded switch must say false out loud or a flagged order gets taxed anyway (audit, 26 Oct 2026)
+            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), apply_tax: applyTax }, true);
             const made = Array.isArray(r) ? r : [r];
             toast.success(made.length > 1 ? `${made.length} invoices created` : `${made[0]?.number || "Invoice"} created`);
             nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");

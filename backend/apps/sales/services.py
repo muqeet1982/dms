@@ -601,16 +601,17 @@ class InvoiceService:
         want_tax = charge_tax if charge_tax is not None else bool(order and order.charge_tax)
         if want_tax:
             try:
-                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type)
-            except DomainError:
+                InvoiceService.set_tax(inv, apply=True, tax_type=tax_type, actor=get_current_user())
+            except DomainError as e:
                 if charge_tax is not None:
                     raise
                 from apps.core.notifications import notify_permission
 
+                # carry the switch's OWN refusal — "no FBR rate", "no MRP" and "no tax type" each send
+                # the office to a different screen, and a generic text sent them to the wrong one
                 notify_permission("sales.change_invoice", "invoice.tax_skipped",
                                   f"Invoice {inv.number} was billed WITHOUT the tax the order asked for",
-                                  "A product has no FBR rate (or a 3rd Schedule item has no MRP). Classify it on the "
-                                  "product's FBR card, then reopen the invoice and turn tax on.",
+                                  f"{e.detail} Fix that, then open the invoice and press Tax on.",
                                   {"invoice_id": str(inv.id)})
         if post:
             InvoiceService.post(inv)
@@ -1044,9 +1045,22 @@ class CreditNoteService:
         # a standalone credit note (no invoice) charges no tax, because tax rides only on an invoice's
         # tax switch (owner, 25 Oct 2026). Mirrored as PER-UNIT tax, not a rate %: a fixed ("Rs.700/MT"),
         # compound or MRP-based charge has no single percentage, and reversing the rate alone
-        # under-credited exactly the part the rate could not say (guide §4-§6, 26 Oct 2026)
-        charged = ({il.variant_id: (il.tax1_type, il.tax1_rate, il.tax1_amount / il.qty if il.qty else Decimal("0"))
-                    for il in invoice.lines.all()} if invoice is not None else {})
+        # under-credited exactly the part the rate could not say (guide §4-§6, 26 Oct 2026). Aggregated
+        # over ALL the variant's invoice lines — two lines of one variant (two batches, two packagings)
+        # can carry different per-unit tax, and keeping only the last line's figure mis-credited both
+        # (audit, 26 Oct 2026); both taxes ride along so a legacy class-taxed invoice credits in full.
+        charged = {}
+        if invoice is not None:
+            for il in invoice.lines.all():
+                c = charged.setdefault(il.variant_id, {"qty": Decimal("0"), "t1": Decimal("0"), "t2": Decimal("0"),
+                                                       "tt1": None, "r1": None, "tt2": None, "r2": None})
+                c["qty"] += il.qty
+                c["t1"] += il.tax1_amount
+                c["t2"] += il.tax2_amount
+                c["tt1"], c["r1"] = c["tt1"] or il.tax1_type, c["r1"] if c["r1"] is not None else il.tax1_rate
+                c["tt2"], c["r2"] = c["tt2"] or il.tax2_type, c["r2"] if c["r2"] is not None else il.tax2_rate
+        from apps.fbr.engine import round2
+
         subtotal = t1 = t2 = Decimal("0")
         tax1_type = tax2_type = None
         for l in lines:
@@ -1054,18 +1068,20 @@ class CreditNoteService:
             unit_price = q4(l["unit_price"])
             taxable = q4(Decimal(l["qty"]) * unit_price)
             hit = charged.get(variant.id)
-            if hit is not None:
-                tt1, r1, per_unit = hit
-                amt1 = q4(per_unit * Decimal(l["qty"]))
+            if hit is not None and hit["qty"]:
+                tt1, r1 = hit["tt1"], hit["r1"] or Decimal("0")
+                tt2, r2 = hit["tt2"], hit["r2"] or Decimal("0")
+                amt1 = round2(hit["t1"] / hit["qty"] * Decimal(l["qty"]))
+                amt2 = round2(hit["t2"] / hit["qty"] * Decimal(l["qty"]))
             elif invoice is not None and invoice.force_tax_type_id:
                 # a variant the invoice never carried, credited against a switch invoice: same chain
                 tt1 = invoice.force_tax_type
                 r1, amt1 = InvoiceService.forced_line_tax(variant.product, qty=l["qty"], unit_price=unit_price, discount_amount=Decimal("0"))
-                amt1 = q4(amt1)
+                amt1, tt2, r2, amt2 = q4(amt1), None, Decimal("0"), Decimal("0")
             else:
-                tt1, r1, amt1 = None, Decimal("0"), Decimal("0")
+                tt1, r1, amt1, tt2, r2, amt2 = None, Decimal("0"), Decimal("0"), None, Decimal("0"), Decimal("0")
             t = {"tax1_type": tt1 if amt1 else None, "tax1_rate": r1 or Decimal("0"), "tax1_amount": amt1,
-                 "tax2_type": None, "tax2_rate": Decimal("0"), "tax2_amount": Decimal("0")}
+                 "tax2_type": tt2 if amt2 else None, "tax2_rate": r2 or Decimal("0"), "tax2_amount": amt2}
             CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"])
             subtotal += taxable
             t1 += t["tax1_amount"]

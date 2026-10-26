@@ -83,8 +83,11 @@ def test_the_switch_flips_both_ways_on_a_draft_and_refuses_posted(api, tenant, t
     assert Decimal(off.data["tax1_total"]) == 0 and Decimal(off.data["total"]) == Decimal("600")
 
     api.post(f"/api/v1/invoices/{inv['id']}/post", {}, format="json")
-    refused = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
-    assert refused.status_code in (400, 422)
+    # since 26 Oct 2026 a posted, UNPAID invoice takes the switch in one atomic call (reopen inside);
+    # it lands at draft for review — paid invoices still refuse, inside reopen itself
+    flipped = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert flipped.status_code == 200 and flipped.data["status"] == "draft", flipped.content
+    assert Decimal(flipped.data["tax1_total"]) == Decimal("108")
 
 
 def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
@@ -483,3 +486,86 @@ def test_the_create_page_switch_beats_the_orders_flag(api, tenant, taxed_world):
     made2 = api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"post": False}, format="json")
     inv2 = made2.data[0] if isinstance(made2.data, list) else made2.data
     assert inv2["force_tax_type"] and Decimal(inv2["tax1_total"]) == Decimal("108")
+
+
+# ── audit fixes (26 Oct 2026): atomic posted-invoice switch, override filing, CN aggregation ─────────
+
+
+def test_tax_on_a_posted_invoice_is_one_atomic_call(api, tenant, taxed_world):
+    """POST /invoices/{id}/tax on a posted, unpaid invoice reopens and switches in one request —
+    and a refusal rolls the reopen back, so the invoice is never stranded off the ledger."""
+    wh, cust, v, tt = taxed_world
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {}, format="json")  # posted, no tax
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert inv["status"] == "posted" and not inv["force_tax_type"]
+
+    # unclassified product: the switch refuses AND the invoice stays posted (nothing half-done)
+    r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert r.status_code in (400, 422) and "FBR" in str(r.data), r.content
+    assert api.get(f"/api/v1/invoices/{inv['id']}").data["status"] == "posted"
+
+    # classified: one call → reopened draft carrying the tax, ready to review and re-post
+    _product_fbr(tenant, v, "18%")
+    ok = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert ok.status_code == 200, ok.content
+    assert ok.data["status"] == "draft" and Decimal(ok.data["tax1_total"]) == Decimal("108")
+    assert api.post(f"/api/v1/invoices/{inv['id']}/post", {}, format="json").status_code == 200
+
+
+def test_an_override_line_cannot_be_filed_with_fbr(api, tenant, taxed_world):
+    """The invoice may charge a typed % — but FBR recomputes from the rate string, so filing one
+    would make the filing disagree with the invoice. It refuses and says what to clear."""
+    import json as _json
+    from unittest import mock
+
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%", fbr_hs_code="7306.3090", fbr_uom="KG",
+                 fbr_sale_type="Goods at standard rate (default)")
+    with tenant_context(tenant, tenant.owner):
+        from apps.fbr.models import FBRSettings
+
+        cust.cnic, cust.business_name = "35202-1234567-1", "Salon One Traders"
+        cust.address, cust.city, cust.province = "Mall Road", "Lahore", "Punjab"
+        cust.fbr_registration_type = "Unregistered"
+        cust.save(update_fields=["cnic", "business_name", "address", "city", "province", "fbr_registration_type"])
+        FBRSettings.objects.create(ntn="1234567-8", business_name="DEMO DISTRIBUTORS",
+                                   address="Plot 12 Lahore", province="Punjab", sandbox_token="tok-sb")
+    oid = _issued_order(api, wh, cust, v)
+    made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True, "post": False}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    line_id = inv["lines"][0]["id"]
+    edited = api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line_id, "tax_pct": "5"}]}, format="json")
+    assert edited.status_code == 200, edited.content
+    api.post(f"/api/v1/invoices/{inv['id']}/post", {}, format="json")
+    resp = mock.Mock()
+    resp.text = _json.dumps({})
+    resp.json = lambda: {}
+    with mock.patch("apps.fbr.services.requests.post", return_value=resp):
+        r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+    assert r.status_code in (400, 422) and "typed" in str(r.data), r.content
+
+
+def test_a_credit_note_against_two_lines_of_one_variant_credits_the_true_total(api, tenant, taxed_world):
+    """Two invoice lines of the same variant can carry different per-unit tax (one discounted);
+    the mirror aggregates them, so crediting everything reverses exactly what was charged."""
+    wh, cust, v, tt = taxed_world
+    _product_fbr(tenant, v, "18%")
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"},
+                                                    {"variant": str(v.id), "qty": "2", "discount_pct": "50"}]}, format="json")
+    assert r.status_code == 201, r.content
+    pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
+    issues = [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]
+    api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json")
+    made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"apply_tax": True}, format="json")
+    inv = made.data[0] if isinstance(made.data, list) else made.data
+    assert len(inv["lines"]) == 2, "two lines of the same variant must stay two lines"
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.models import SalesInvoice
+        from apps.sales.services import CreditNoteService
+
+        row = SalesInvoice.objects.get(id=inv["id"])
+        cn = CreditNoteService.create(customer=cust, invoice=row, warehouse=row.order.warehouse,
+                                      lines=[{"variant": v, "qty": Decimal("4"), "unit_price": Decimal("150")}])
+        assert cn.tax1_total == row.tax1_total, (cn.tax1_total, row.tax1_total)

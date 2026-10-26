@@ -185,6 +185,14 @@ def build_payload(inv, filing, *, use_sandbox):
         problems = engine.product_fbr_problems(p) if p is not None else ["no product on the line"]
         if problems:
             raise DomainError(f"{line.description}: " + " ".join(problems), code="fbr_not_ready")
+        # FBR recomputes tax from the RATE it is sent, so a line charged at a typed % cannot be filed
+        # truthfully under the product's rate string — the invoice and the filing would disagree, the
+        # exact drift the one-engine rule exists to prevent (audit, 26 Oct 2026)
+        if line.tax_pct_override is not None:
+            raise DomainError(
+                f"{line.description}: this line charges a typed {line.tax1_rate}% instead of the product's "
+                f"FBR rate ({p.fbr_rate_desc}) — FBR recomputes tax from the rate itself. Clear the line's "
+                "typed % (edit the invoice) before filing.", code="fbr_override")
         mrp = p.mrp_ex_tax if engine.is_mrp_sale_type(p.fbr_sale_type) else None
         money = engine.compute_line(
             quantity=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,

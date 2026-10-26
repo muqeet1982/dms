@@ -57,7 +57,7 @@ words under it.
     <td class="r">{{ l.qty|qty }}</td>
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.prod_discount %}{{ l.prod_discount|num }}{% else %}—{% endif %}</td>
-    {% if tax_on %}<td>{{ l.variant.product.fbr_hs_code|default:"—" }}</td><td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}<span class="sku">{{ l.variant.product.fbr_rate_desc|fbr_rate }}</span>{% else %}—{% endif %}</td>{% endif %}
+    {% if tax_on %}<td>{{ l.variant.product.fbr_hs_code|default:"—" }}</td><td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.fbr_rate_desc|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.display_amount|default:l.line_total|num }}</td>
   </tr>{% endfor %}
   </tbody>
