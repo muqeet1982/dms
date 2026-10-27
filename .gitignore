@@ -19,3 +19,6 @@ firebase/
 # CI workflow (push needs a token with workflow scope; add via GitHub UI)
 .github/workflows/
 Discount-Accounting-Trafco.pdf
+
+# TypeScript incremental build state — a by-product of `tsc -b`
+*.tsbuildinfo
