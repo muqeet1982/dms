@@ -67,6 +67,15 @@ class SalesOrderViewSet(DocumentViewSet):
 
     def get_queryset(self):
         qs = SalesOrder.objects.select_related("customer", "rep", "supplier", "warehouse", "trip", "trip__driver", "trip__vehicle", "confirmed_by", "created_by")
+        # where the order was taken, as the location check recorded it (owner, 27 Oct 2026: "when order is not
+        # created from location then mention it") — one subquery, so the list stays a single query
+        from django.db.models import CharField, OuterRef, Subquery
+        from django.db.models.functions import Cast
+
+        from apps.partners.models import GeoFenceEvent
+
+        ev = GeoFenceEvent.objects.filter(action="order", document_id=Cast(OuterRef("pk"), output_field=CharField())).order_by("-occurred_at")
+        qs = qs.annotate(loc_verdict=Subquery(ev.values("verdict")[:1]), loc_distance=Subquery(ev.values("distance_m")[:1]))
         if self.action != "list":
             qs = qs.prefetch_related("lines__variant__product__base_uom", "lines__packaging", "lines__tax1_type", "lines__tax2_type", "invoices", "delivery_notes__trip")
         qs = _rep_scope(self.request, qs)

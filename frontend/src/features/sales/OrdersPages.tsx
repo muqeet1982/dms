@@ -34,8 +34,36 @@ export function DiscountPctSelect({ value, onChange, autoLabel }: { value: strin
   );
 }
 
+const far = (m: any) => (m === null || m === undefined ? "" : Number(m) >= 1000 ? `${(Number(m) / 1000).toFixed(1)} km` : `${Math.round(Number(m))} m`);
+
+/**
+ * Where the order was taken (owner, 27 Oct 2026: "when order is not created from location then mention it").
+ * From the location check the rep app's order passed: at the shop, away from it, no GPS, not checked (the shop has
+ * no pin), typed in the office, or no record (orders older than the check). `compact` = the list's marker, shown
+ * only when the order was NOT confirmed at the shop.
+ */
+export function LocationCheck({ check, compact }: { check?: { verdict: string; distance_m?: number | null; gps?: { lat: number; lng: number } | null }; compact?: boolean }) {
+  if (!check) return null;
+  const map = check.gps ? `https://www.google.com/maps?q=${check.gps.lat},${check.gps.lng}` : null;
+  const look: Record<string, { tone: string; icon: string; text: string }> = {
+    inside: { tone: "success", icon: "ti-map-pin-check", text: `At the shop${check.distance_m != null ? ` · ${far(check.distance_m)} from its pin` : ""}` },
+    outside: { tone: "danger", icon: "ti-map-pin-off", text: `Away from the shop${check.distance_m != null ? ` · ${far(check.distance_m)}` : ""}` },
+    no_fix: { tone: "warning", icon: "ti-map-pin-question", text: "No GPS location sent" },
+    skipped: { tone: "warning", icon: "ti-map-pin-question", text: "Location not checked — the shop has no pin" },
+    office: { tone: "secondary", icon: "ti-building", text: "Entered in the office" },
+    unknown: { tone: "secondary", icon: "ti-map-pin", text: "No location record" },
+  };
+  const l = look[check.verdict] || look.unknown;
+  if (compact) {
+    if (!["outside", "no_fix", "skipped"].includes(check.verdict)) return null;
+    return <i className={`ti ${l.icon} text-${l.tone} fs-13 ms-1`} title={l.text} />;
+  }
+  return <><span className={`badge bg-${l.tone}-light text-${l.tone}`}><i className={`ti ${l.icon} me-1`} />{l.text}</span>
+    {map && <div className="fs-11 mt-1"><a href={map} target="_blank" rel="noreferrer"><i className="ti ti-external-link me-1" />Open on map</a></div>}</>;
+}
+
 const orderColumns: Column<any>[] = [
-  { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span> <i className={`ti ${o.source === "rep_app" ? "ti-device-mobile text-success" : "ti-world text-info"} fs-12`} title={o.source === "rep_app" ? "Taken on the mobile app" : "Entered on the web"} /></> },
+  { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span> <i className={`ti ${o.source === "rep_app" ? "ti-device-mobile text-success" : "ti-world text-info"} fs-12`} title={o.source === "rep_app" ? "Taken on the mobile app" : "Entered on the web"} /><LocationCheck check={o.location_check} compact /></> },
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
   { key: "customer_name", header: "Customer", render: (o) => <><div>{o.customer_name}</div><div className="text-muted fs-11">{o.customer_code}</div></> },
   { key: "sales_person", header: "Sales person", render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
@@ -115,6 +143,7 @@ export function OrderDetailPage() {
               <div className="row g-3 mb-3">
                 <InfoItem label="Customer"><Link to={`/app/customers/${o.customer}`}>{o.customer_name}</Link><div className="text-muted fs-12">{o.customer_phone} · {o.customer_address}</div></InfoItem>
                 <InfoItem label="Sales person / supplier" col="col-md-2">{o.sales_person || o.rep_name || "—"}<div className="text-muted fs-12">{o.supplier_name}</div></InfoItem>
+                <InfoItem label="Taken at" col="col-md-2"><LocationCheck check={o.location_check} /></InfoItem>
                 <InfoItem label="Dates" col="col-md-2">{date(o.order_date)}<div className="text-muted fs-12">deliver by {date(o.requested_delivery_date)}</div></InfoItem>
                 <InfoItem label="Warehouse" col="col-md-2">{o.warehouse_name}</InfoItem><InfoItem label="Payment term" col="col-md-2">{o.payment_terms || "—"}</InfoItem><InfoItem label="Delivery person" col="col-md-2">{o.delivery_person || "—"}</InfoItem>
                 {o.charge_tax && <InfoItem label="Tax" col="col-md-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span></InfoItem>}

@@ -687,3 +687,26 @@ def test_a_basket_is_priced_before_it_is_sent_and_nothing_is_saved(api, tenant, 
         stranger = Customer.objects.create(code="C-OTHER", name="Not Yours")
     nope = rep_app["phone"].post("/ext/v1/orders/preview", {**body, "customer": {"id": str(stranger.id)}}, format="json")
     assert nope.status_code in (403, 404), nope.content
+
+
+def test_an_order_says_where_it_was_taken(api, tenant, rep_app):
+    """Owner, 27 Oct 2026: "when order is not created from location then mention it". Every order carries the
+    location check it passed — at the shop, away (with how far), or entered in the office — on the list and detail."""
+    t = rep_app["tenant"]
+    at_shop = _order(rep_app)
+    assert at_shop.status_code == 201, at_shop.content
+    detail = api.get(f"/api/v1/sales-orders/{at_shop.data['id']}").data
+    assert detail["location_check"]["verdict"] == "inside" and detail["location_check"]["gps"] is not None
+
+    with tenant_context(t, t.owner):
+        t.settings = {**(t.settings or {}), "geofence_policy": "warn"}   # let an away order through, flagged
+        t.save(update_fields=["settings"])
+    away = rep_app["phone"].post("/ext/v1/orders", {
+        "customer": {"id": str(rep_app["customer"].id)}, "gps": {"lat": KARACHI[0], "lng": KARACHI[1], "accuracy_m": 9.0},
+        "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}]}, format="json")
+    assert away.status_code == 201, away.content
+    rows = {r["number"]: r["location_check"] for r in api.get("/api/v1/sales-orders").data["results"]}
+    assert rows[away.data["number"]]["verdict"] == "outside" and rows[away.data["number"]]["distance_m"] > 900_000, rows[away.data["number"]]
+
+    office = api.post("/api/v1/sales-orders", {"customer": str(rep_app["customer"].id), "lines": [{"variant": str(rep_app["variant"].id), "qty": "1"}]}, format="json")
+    assert api.get(f"/api/v1/sales-orders/{office.data['id']}").data["location_check"]["verdict"] == "office"

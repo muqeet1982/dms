@@ -92,6 +92,26 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     delivery_status = serializers.SerializerMethodField()
     delivery_state = serializers.SerializerMethodField()
     location_name = serializers.CharField(source="location.name", read_only=True, default="")
+    location_check = serializers.SerializerMethodField()
+
+    def get_location_check(self, obj):
+        """
+        Was the order taken AT the shop? (owner, 27 Oct 2026). From the location check the rep app's order went
+        through: inside (at the shop pin, with the distance), outside (away, with how far), no_fix (no GPS sent),
+        skipped (not checked — the shop has no pin, or the rep is not fenced). An order typed in the office has no
+        position: "office". A field order with no check on record (before the checks existed): "unknown".
+        """
+        if hasattr(obj, "loc_verdict"):
+            verdict, distance = obj.loc_verdict, obj.loc_distance
+        else:
+            from apps.partners.models import GeoFenceEvent
+
+            e = GeoFenceEvent.objects.filter(action="order", document_id=str(obj.pk)).order_by("-occurred_at").first()
+            verdict, distance = (e.verdict, e.distance_m) if e else (None, None)
+        if verdict is None:
+            verdict = "office" if obj.source == "staff" else "unknown"
+        return {"verdict": verdict, "distance_m": distance,
+                "gps": {"lat": float(obj.gps_lat), "lng": float(obj.gps_lng)} if obj.gps_lat is not None else None}
 
     def get_delivery_state(self, obj):
         """The dispatch stage as a code — "", "on_trip" or "out_for_delivery" — for counting, not reading.
@@ -125,7 +145,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrder
-        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "location", "location_name", "payment_mode", "charge_tax", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
+        fields = ["id", "number", "customer", "customer_name", "customer_code", "rep", "rep_name", "sales_person", "supplier", "supplier_name", "source", "warehouse", "warehouse_name", "order_date", "requested_delivery_date", "status", "delivery_status", "delivery_state", "location", "location_name", "location_check", "payment_mode", "charge_tax", "total", "trip", "trip_number", "external_ref", "lines_count", "hold_reason", "created_at"]
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):
