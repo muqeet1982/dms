@@ -171,7 +171,7 @@ class ExtOrdersView(ExtBase):
     def get(self, request):
         self.perm(request, "external.view_own_orders")
         supplier, rep = self.context(request)
-        qs = SalesOrder.objects.select_related("customer", "rep", "supplier", "trip")
+        qs = SalesOrder.objects.select_related("customer", "location", "rep", "supplier", "trip")
         if rep is not None:
             qs = qs.filter(rep=rep)
         elif supplier is not None:

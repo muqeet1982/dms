@@ -108,6 +108,15 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
             e = GeoFenceEvent.objects.filter(action="order", document_id=str(obj.pk)).order_by("-occurred_at").first()
             verdict, distance = (e.verdict, e.distance_m) if e else (None, None)
+        if verdict is None and obj.source != "staff" and obj.gps_lat is not None:
+            # a field order with its position but no check (the rep may order anywhere, or checking is off):
+            # say it was not checked, and how far from the shop it was taken anyway
+            from apps.partners.geofence import distance_m
+
+            pin = obj.location if obj.location_id and obj.location.gps_lat is not None else obj.customer
+            if pin is not None and pin.gps_lat is not None and pin.gps_lng is not None:
+                verdict = "unchecked"
+                distance = int(distance_m((float(obj.gps_lat), float(obj.gps_lng)), (float(pin.gps_lat), float(pin.gps_lng))))
         if verdict is None:
             verdict = "office" if obj.source == "staff" else "unknown"
         return {"verdict": verdict, "distance_m": distance,

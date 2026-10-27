@@ -79,7 +79,7 @@ class SalesOrderViewSet(DocumentViewSet):
         return SalesOrderListSerializer if self.action == "list" else SalesOrderSerializer
 
     def get_queryset(self):
-        qs = SalesOrder.objects.select_related("customer", "rep", "supplier", "warehouse", "trip", "trip__driver", "trip__vehicle", "confirmed_by", "created_by")
+        qs = SalesOrder.objects.select_related("customer", "location", "rep", "supplier", "warehouse", "trip", "trip__driver", "trip__vehicle", "confirmed_by", "created_by")
         qs = with_location_check(qs)
         if self.action != "list":
             qs = qs.prefetch_related("lines__variant__product__base_uom", "lines__packaging", "lines__tax1_type", "lines__tax2_type", "invoices", "delivery_notes__trip")

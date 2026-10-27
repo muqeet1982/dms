@@ -421,9 +421,14 @@ class GeoFenceService:
 
         if rep is None or document is None:
             return None
-        event = (GeoFenceEvent.objects
-                 .filter(rep=rep, action=action, document_id="", occurred_at__gte=timezone.now() - timedelta(minutes=2))
-                 .order_by("-occurred_at").first())
+        # only a check that LET the document through may claim it — a refused attempt produced no document, and
+        # claiming it stamped a stale "outside" on a later order whose own check was switched off (27 Oct 2026)
+        events = GeoFenceEvent.objects.filter(rep=rep, action=action, document_id="", blocked=False,
+                                              occurred_at__gte=timezone.now() - timedelta(minutes=2))
+        customer_id = getattr(document, "customer_id", None)
+        if customer_id:
+            events = events.filter(customer_id=customer_id)
+        event = events.order_by("-occurred_at").first()
         if event is None:
             return None
         event.document_type = type(document).__name__

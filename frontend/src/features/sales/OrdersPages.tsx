@@ -50,12 +50,13 @@ export function LocationCheck({ check, compact }: { check?: { verdict: string; d
     outside: { tone: "danger", icon: "ti-map-pin-off", text: `Away from the shop${check.distance_m != null ? ` · ${far(check.distance_m)}` : ""}` },
     no_fix: { tone: "warning", icon: "ti-map-pin-question", text: "No GPS location sent" },
     skipped: { tone: "warning", icon: "ti-map-pin-question", text: "Location not checked — the shop has no pin" },
+    unchecked: { tone: "warning", icon: "ti-map-pin-question", text: `Not checked — rep may order anywhere${check.distance_m != null ? ` · taken ${far(check.distance_m)} from the shop` : ""}` },
     office: { tone: "secondary", icon: "ti-building", text: "Entered in the office" },
     unknown: { tone: "secondary", icon: "ti-map-pin", text: "No location record" },
   };
   const l = look[check.verdict] || look.unknown;
   if (compact) {
-    if (!["outside", "no_fix", "skipped"].includes(check.verdict)) return null;
+    if (!["outside", "no_fix", "skipped", "unchecked"].includes(check.verdict)) return null;
     return <i className={`ti ${l.icon} text-${l.tone} fs-13 ms-1`} title={l.text} />;
   }
   return <><span className={`badge bg-${l.tone}-light text-${l.tone}`}><i className={`ti ${l.icon} me-1`} />{l.text}</span>

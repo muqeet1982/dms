@@ -710,3 +710,25 @@ def test_an_order_says_where_it_was_taken(api, tenant, rep_app):
 
     office = api.post("/api/v1/sales-orders", {"customer": str(rep_app["customer"].id), "lines": [{"variant": str(rep_app["variant"].id), "qty": "1"}]}, format="json")
     assert api.get(f"/api/v1/sales-orders/{office.data['id']}").data["location_check"]["verdict"] == "office"
+
+
+def test_a_refused_attempt_never_labels_a_later_order(api, tenant, rep_app):
+    """Live check, 27 Oct 2026: with the rep's check switched off, the order claimed the PREVIOUS refused attempt's
+    record and read "outside". Only a check that let the order through may label it; an unchecked field order says
+    so, with how far from the shop it was taken."""
+    from apps.partners.models import SupplierRep
+
+    t = rep_app["tenant"]
+    with tenant_context(t, t.owner):
+        t.settings = {**(t.settings or {}), "geofence_policy": "block"}
+        t.save(update_fields=["settings"])
+    away = {"customer": {"id": str(rep_app["customer"].id)}, "gps": {"lat": KARACHI[0], "lng": KARACHI[1], "accuracy_m": 9.0},
+            "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 1}]}
+    refused = rep_app["phone"].post("/ext/v1/orders", away, format="json")
+    assert refused.status_code == 403, refused.content
+    with tenant_context(t, t.owner):
+        SupplierRep.objects.filter(pk=rep_app["rep"].pk).update(geofence_policy="off")   # "Can take orders: Anywhere"
+    ok = rep_app["phone"].post("/ext/v1/orders", away, format="json")
+    assert ok.status_code == 201, ok.content
+    check = api.get(f"/api/v1/sales-orders/{ok.data['id']}").data["location_check"]
+    assert check["verdict"] == "unchecked" and check["distance_m"] > 900_000, check
