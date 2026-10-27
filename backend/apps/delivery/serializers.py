@@ -103,13 +103,16 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default="")
     invoice_id = serializers.UUIDField(source="invoice.id", read_only=True, default=None)
+    # a delivery can bill a DRAFT for the office to review (27 Oct 2026) — the driver app words its message by this
+    invoice_status = serializers.CharField(source="invoice.status", read_only=True, default="")
+    invoice_total = serializers.DecimalField(source="invoice.total", max_digits=18, decimal_places=4, read_only=True, default=None)
     delivered_by_name = serializers.CharField(source="delivered_by.full_name", read_only=True, default="")
     signature_url = serializers.SerializerMethodField()
     photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryNote
-        fields = ["id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
         read_only_fields = fields
 
     def get_gps(self, obj):
