@@ -196,7 +196,9 @@ class ExtOrdersView(ExtBase):
                 qs = qs.filter(customer_id=p["customer"])
         if p.get("external_ref"):
             qs = qs.filter(external_ref=p["external_ref"])
-        orders = list(qs.order_by("-created_at")[: int(p.get("limit", 100))])
+        from apps.sales.views import with_location_check
+
+        orders = list(with_location_check(qs).order_by("-created_at")[: int(p.get("limit", 100))])
         rows = SalesOrderListSerializer(orders, many=True).data
         for row, order in zip(rows, orders):
             row["can_edit"] = OrderService.rep_can_edit(order)
