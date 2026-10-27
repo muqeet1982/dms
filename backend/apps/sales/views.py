@@ -359,6 +359,9 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
             qs = qs.filter(status__in=["posted", "partially_paid", "paid", "overdue"])
         if p.get("overdue") == "1":
             qs = qs.filter(status__in=["posted", "partially_paid", "overdue"], due_date__lt=timezone.localdate())
+        if p.get("customer_type"):
+            # retailer / salon / wholesaler / LMT / other — several may be asked for at once (owner, 27 Oct 2026)
+            qs = qs.filter(customer__type__in=p["customer_type"].split(","))
         return qs
 
     @action(detail=True, methods=["post"])

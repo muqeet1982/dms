@@ -47,5 +47,19 @@ def render_doc(request, template, ctx, filename, *, title=None, ref=None):
         **ctx,
     })
     resp = HttpResponse(HTML(string=html).write_pdf(), content_type="application/pdf")
-    resp["Content-Disposition"] = f'inline; filename="{filename}.pdf"'
+    resp["Content-Disposition"] = content_disposition(filename)
     return resp
+
+
+def content_disposition(name, ext="pdf", disposition="inline"):
+    """
+    The file name a download keeps (owner, 27 Oct 2026: invoices save as "TDN-INV-00062 - House Of Charbel.pdf").
+    Characters no file system accepts are dropped and spaces collapsed; a plain ASCII `filename` for old clients
+    and an RFC 5987 `filename*` so a name in Urdu or with accents arrives intact.
+    """
+    import re
+    from urllib.parse import quote
+
+    clean = re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|\x00-\x1f]', "", str(name or "document"))).strip(" .")[:150] or "document"
+    ascii_name = re.sub(r"[\s.-]+$", "", re.sub(r"\s+", " ", clean.encode("ascii", "ignore").decode())).strip() or "document"
+    return f'{disposition}; filename="{ascii_name}.{ext}"; filename*=UTF-8\'\'{quote(f"{clean}.{ext}")}'

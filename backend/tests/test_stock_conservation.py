@@ -61,7 +61,7 @@ def test_stock_is_conserved_through_the_whole_sales_lifecycle(api, tenant):
 
     drivers = rows_of(api.get("/api/v1/drivers", format="json").data) or [api.post("/api/v1/drivers", {"name": "D", "phone": "0300"}, format="json").data]
     vehicles = rows_of(api.get("/api/v1/vehicles", format="json").data) or [api.post("/api/v1/vehicles", {"reg_no": "AUD-1", "type": "van"}, format="json").data]
-    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(drivers[0]["id"]), "vehicle": str(vehicles[0]["id"]), "order_ids": [r.data["id"]]}, format="json")
+    trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.id), "driver": str(drivers[0]["id"]), "vehicle": str(vehicles[0]["id"]), "order_ids": [r.data["id"]]}, format="json")
     assert trip.status_code == 201, trip.content
     assert api.post(f"/api/v1/trips/{trip.data['id']}/start", {"odometer_start": 100}, format="json").status_code == 200
     dn_rows = api.get("/api/v1/delivery-notes", {"order": r.data["id"]}, format="json").data
@@ -177,7 +177,7 @@ def test_editing_or_cancelling_before_delivery_pulls_the_flow_back(api, tenant):
             return d.get("results", d) if isinstance(d, dict) else d
         drivers = rows_of(api.get("/api/v1/drivers", format="json").data) or [api.post("/api/v1/drivers", {"name": "E", "phone": "0301"}, format="json").data]
         vehicles = rows_of(api.get("/api/v1/vehicles", format="json").data) or [api.post("/api/v1/vehicles", {"reg_no": "EDI-1", "type": "van"}, format="json").data]
-        trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(drivers[0]["id"]), "vehicle": str(vehicles[0]["id"]), "order_ids": [r.data["id"]]}, format="json")
+        trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.id), "driver": str(drivers[0]["id"]), "vehicle": str(vehicles[0]["id"]), "order_ids": [r.data["id"]]}, format="json")
         api.post(f"/api/v1/trips/{trip.data['id']}/start", {"odometer_start": 1}, format="json")
         return r.data["id"], pl.data["id"]
 

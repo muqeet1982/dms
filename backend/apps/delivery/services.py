@@ -177,6 +177,18 @@ class PickListService:
                 continue
             dn = pl.delivery_notes.filter(order=order).first()
             if dn is None:
+                # a trip opened BEFORE the issue already holds a delivery note for this order, still unissued —
+                # that note is the one that travels, so it carries the issue. A second note here took the goods
+                # out of stock twice and billed them twice (TDN-SO-00044, 23–26 Oct 2026).
+                dn = DeliveryNote.objects.filter(order=order, stock_out_done=False, status="pending").exclude(trip=None).first()
+                if dn is not None:
+                    dn.lines.all().delete()
+                    for l in order_lines:
+                        DeliveryNoteLine.objects.create(delivery_note=dn, order_line=l.order_line, variant=l.variant, batch=l.batch, qty_loaded=l.qty_picked,
+                                                        unit_cost=l.variant.avg_cost or l.variant.cost_price)
+                    dn.picklist = pl
+                    dn.save(update_fields=["picklist", "updated_at"])
+            if dn is None:
                 dn = DeliveryService.create_note(
                     order, lines=[{"order_line": l.order_line, "qty": l.qty_picked, "batch": l.batch} for l in order_lines], picklist=pl
                 )
@@ -236,6 +248,14 @@ class DeliveryService:
         """Dispatch = stock out (§6.3 point 3). With two-step setting, move to the van warehouse instead."""
         if dn.stock_out_done:
             return
+        # an order line never leaves the warehouse beyond what was ordered — the guard that would have stopped
+        # TDN-SO-00044 going out twice through two delivery notes (27 Oct 2026)
+        for line in dn.lines.select_related("order_line", "variant"):
+            ol = line.order_line
+            if ol is not None and line.qty_loaded > 0 and ol.qty_dispatched + line.qty_loaded > ol.qty_ordered + ol.free_qty:
+                raise DomainError(
+                    f"{line.variant.name} on {dn.order.number} is already out of the warehouse ({ol.qty_dispatched:g} of "
+                    f"{ol.qty_ordered + ol.free_qty:g}) — taking {line.qty_loaded:g} more would issue it twice.", code="already_issued")
         value = Decimal("0")
         for line in dn.lines.select_related("variant", "variant__product", "batch", "order_line"):
             if line.qty_loaded <= 0:

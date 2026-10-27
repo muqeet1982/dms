@@ -40,7 +40,7 @@ def dispatch(api, tenant):
     issues = [{"line_id": line["id"], "qty_issued": line["qty_to_pick"]} for line in picklist["lines"]]
     assert api.post(f"/api/v1/pick-lists/{picklist['id']}/issue", {"issues": issues}, format="json").status_code == 200
 
-    r = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "order_ids": [str(order["id"])]}, format="json")
+    r = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "order_ids": [str(order["id"])]}, format="json")
     assert r.status_code == 201, r.content
     trip = r.data
     assert api.post(f"/api/v1/trips/{trip['id']}/start", {"odometer_start": 12000}, format="json").status_code == 200
@@ -112,7 +112,7 @@ def test_sheet_renders_before_anything_is_delivered(api, tenant):
 
     with tenant_context(tenant, tenant.owner):
         wh = Warehouse.objects.create(code="W2", name="Second", type="main")
-    r = api.post("/api/v1/trips", {"warehouse": str(wh.id), "order_ids": []}, format="json")
+    r = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.id), "order_ids": []}, format="json")
     assert r.status_code == 201, r.content
 
     trip_id = r.data["id"]

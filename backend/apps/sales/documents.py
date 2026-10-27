@@ -49,5 +49,6 @@ def invoice_pdf(request, inv):
         extra["fbr_qr"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
         extra["fbr_sandbox"] = filing.sandbox
     doc_title = "SALES TAX INVOICE" if extra.get("tax_on") else "SALES INVOICE"
-    return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, inv.number,
+    # every invoice download carries its number AND who it is for (owner, 27 Oct 2026)
+    return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, **extra}, f"{inv.number} - {inv.customer.name}",
                       title=doc_title, ref=inv.number)

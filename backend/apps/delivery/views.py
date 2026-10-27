@@ -194,6 +194,9 @@ class PickListViewSet(DocumentViewSet):
 
         pl = self.get_object()
         d = request.data
+        # every trip names who delivers it (owner, 27 Oct 2026: "Delivery Person field mandatory")
+        if not User.objects.filter(pk=d.get("delivery_rep") or None, memberships__tenant=request.tenant).exists():
+            raise DomainError("Choose the delivery person for this trip — it is required.", code="delivery_person_required", errors={"delivery_rep": ["Required."]})
         trip = TripService.from_picklist(
             pl,
             driver=Driver.objects.filter(pk=d.get("driver")).first(),
@@ -259,6 +262,8 @@ class TripViewSet(DocumentViewSet):
 
     def perform_create(self, serializer):
         d = serializer.validated_data
+        if not d.get("delivery_rep"):
+            raise DomainError("Choose the delivery person for this trip — it is required.", code="delivery_person_required", errors={"delivery_rep": ["Required."]})
         orders = list(SalesOrder.objects.filter(id__in=d.pop("order_ids", [])))
         serializer.instance = TripService.create(warehouse=d["warehouse"], date=d.get("date"), driver=d.get("driver"), vehicle=d.get("vehicle"), rep=d.get("rep"), delivery_rep=d.get("delivery_rep"), loader=d.get("loader"), helper=d.get("helper"), route=d.get("route"), orders=orders, notes=d.get("notes", ""), picklist=d.get("picklist"))
 
@@ -271,6 +276,8 @@ class TripViewSet(DocumentViewSet):
         changed = {f for f in crew if f in serializer.validated_data and getattr(trip, f"{f}_id") != getattr(serializer.validated_data.get(f), "pk", None)}
         if changed and not has_tenant_perm(self.request, extra_perm("trips", "assign_driver")):
             raise DomainError("You can edit this dispatch, but not change its driver, vehicle or crew.", code="forbidden", status_code=403)
+        if "delivery_rep" in serializer.validated_data and not serializer.validated_data.get("delivery_rep"):
+            raise DomainError("Choose the delivery person for this trip — it is required.", code="delivery_person_required", errors={"delivery_rep": ["Required."]})
         serializer.validated_data.pop("order_ids", None)
         super().perform_update(serializer)
 

@@ -397,7 +397,7 @@ def test_the_rep_can_count_where_their_goods_are_without_parsing_prose(rep_app, 
     assert pl.status_code == 201, pl.content
     issues = [{"line_id": line["id"], "qty_issued": line["qty_to_pick"]} for line in pl.data["lines"]]
     assert api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": issues}, format="json").status_code == 200
-    trip = api.post("/api/v1/trips", {"warehouse": str(wh_id), "driver": str(driver.id), "vehicle": str(vehicle.id), "order_ids": [moving.data["id"]]}, format="json")
+    trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh_id), "driver": str(driver.id), "vehicle": str(vehicle.id), "order_ids": [moving.data["id"]]}, format="json")
     assert trip.status_code == 201, trip.content
 
     phone = rep_app["phone"]

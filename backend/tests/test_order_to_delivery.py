@@ -110,7 +110,7 @@ def test_full_chain(api, tenant, order_with_stock):
         vehicle = Vehicle.objects.create(reg_no="LEA-1234", type="van")
         driver = Driver.objects.create(name="Akram", phone="03001234567")
     helper = User.objects.filter(memberships__tenant=tenant).first()
-    r = api.post("/api/v1/trips", {"warehouse": str(warehouse.pk), "driver": str(driver.pk), "vehicle": str(vehicle.pk), "helper": str(helper.pk), "order_ids": [str(order.pk)]}, format="json")
+    r = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(warehouse.pk), "driver": str(driver.pk), "vehicle": str(vehicle.pk), "helper": str(helper.pk), "order_ids": [str(order.pk)]}, format="json")
     assert r.status_code == 201, r.content
     trip = r.data
     assert trip["helper_name"] and trip["driver_name"] == "Akram" and trip["vehicle_reg"] == "LEA-1234"
@@ -183,7 +183,7 @@ def test_an_invoiced_order_can_still_be_dispatched(api, tenant, order_with_stock
         order.status = "invoiced"
         order.save(update_fields=["status"])
 
-    r = api.post(f"/api/v1/pick-lists/{form['id']}/create-dispatch", {}, format="json")
+    r = api.post(f"/api/v1/pick-lists/{form['id']}/create-dispatch", {"delivery_rep": str(tenant.owner.id)}, format="json")
     assert r.status_code in (200, 201), r.content
     assert r.data.get("number"), "a dispatch (trip) should have been created"
     order.refresh_from_db()
