@@ -1,14 +1,14 @@
-<!doctype html><html><head><meta charset="utf-8"><style>
+{% load docs %}<!doctype html><html><head><meta charset="utf-8"><style>
 body{font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#202C4B}h1{font-size:16px;margin:0}.muted{color:#6B7280}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:5px 6px;border-bottom:1px solid #e5e7eb;text-align:left}th{background:#F8F9FA}.r{text-align:right}.box{border:1px solid #e5e7eb;padding:10px;margin-top:10px}
 </style></head><body>
 <h1>{{ tenant.display_name }}</h1><div class="muted">{{ tenant.address }} · {{ tenant.phone }}</div>
 <h2 style="font-size:14px;margin-top:14px">{% if p.direction == 'in' %}Receipt{% else %}Payment{% endif %} voucher {{ p.number }}</h2>
 <div class="box">
 <div><strong>Date:</strong> {{ p.date }} &nbsp; <strong>{% if p.direction == 'in' %}Received from{% else %}Paid to{% endif %}:</strong> {{ p.partner_name }} ({{ p.partner_type }})</div>
-<div><strong>Amount:</strong> {{ p.amount }} &nbsp; <strong>Method:</strong> {{ p.get_method_display }} {% if p.cheque_no %}· Cheque {{ p.cheque_no }} {{ p.cheque_date }} {{ p.cheque_bank }}{% endif %}</div>
+<div><strong>Amount:</strong> {{ p.amount|num }} &nbsp; <strong>Method:</strong> {{ p.get_method_display }} {% if p.cheque_no %}· Cheque {{ p.cheque_no }} {{ p.cheque_date }} {{ p.cheque_bank }}{% endif %}</div>
 <div><strong>Reference:</strong> {{ p.reference }} &nbsp; <strong>Collected by:</strong> {{ p.collected_by.full_name }}</div>
 </div>
-{% if p.allocations.exists %}<table><thead><tr><th>Document</th><th class="r">Allocated</th></tr></thead><tbody>{% for a in p.allocations.all %}<tr><td>{{ a.document_number }}</td><td class="r">{{ a.amount }}</td></tr>{% endfor %}
+{% if p.allocations.exists %}<table><thead><tr><th>Document</th><th class="r">Allocated</th></tr></thead><tbody>{% for a in p.allocations.all %}<tr><td>{{ a.document_number }}</td><td class="r">{{ a.amount|num }}</td></tr>{% endfor %}
 {% if p.unallocated %}<tr><td>Unallocated (advance)</td><td class="r">{{ p.unallocated }}</td></tr>{% endif %}</tbody></table>{% endif %}
 <p class="muted" style="margin-top:30px">Signature: ____________________</p>
 </body></html>

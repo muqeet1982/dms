@@ -37,6 +37,19 @@ def qty(value):
 
 
 @register.filter
+def cell(value):
+    """A report figure: an amount (the API's 4-decimal money) reads 1,234.56; a quantity (3 decimals) keeps its own
+    shape, 12 or 1.5 — the same rule as the report screen (owner, 27 Oct 2026: amounts with commas, 2 decimals)."""
+    import re
+
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"{value:,}"  # a count (invoices, lines, days) — never "7.00"
+    if isinstance(value, str) and re.fullmatch(r"-?\d+\.\d{3}", value.strip()):
+        return qty(value)
+    return num(value)
+
+
+@register.filter
 def label(value):
     """`opening_debit` → "Opening Debit". Django's `cut` deletes the underscore instead of replacing it."""
     return str(value or "").replace("_", " ").strip().title()

@@ -1,4 +1,4 @@
-{% comment %}
+{% load docs %}{% comment %}
 The sheet the driver carries out of the warehouse: the stops in sequence, what to drop at each one, what to
 collect, and somewhere to sign.
 
@@ -71,9 +71,9 @@ thead{display:table-header-group}
 
 <div class="strip">
   Stops <b>{{ stops|length }}</b> &nbsp;&middot;&nbsp; Items <b>{{ line_count }}</b> &nbsp;&middot;&nbsp;
-  Units loaded <b>{{ qty_total }}</b> &nbsp;&middot;&nbsp; Order value <b>{{ tenant.base_currency }} {{ orders_value }}</b>
+  Units loaded <b>{{ qty_total }}</b> &nbsp;&middot;&nbsp; Order value <b>{{ tenant.base_currency }} {{ orders_value|num }}</b>
   &nbsp;&middot;&nbsp; <span class="muted">Odometer out {{ trip.odometer_start|default:"—" }}</span>
-  {% if cash_due %}<br>To collect on this run (cash customers): <b>{{ tenant.base_currency }} {{ cash_due }}</b>{% endif %}
+  {% if cash_due %}<br>To collect on this run (cash customers): <b>{{ tenant.base_currency }} {{ cash_due|num }}</b>{% endif %}
 </div>
 {% if trip.notes %}<div class="muted" style="margin-top:6px">Note: {{ trip.notes }}</div>{% endif %}
 
@@ -81,7 +81,7 @@ thead{display:table-header-group}
 <div class="stop">
   <div class="bar"><table><tr>
     <td><span class="n">STOP {{ s.note.sequence|default:forloop.counter }}</span>{{ s.note.customer.name }}</td>
-    <td class="r">{{ s.note.order.number }} &middot; {{ tenant.base_currency }} {{ s.order_total }}</td>
+    <td class="r">{{ s.note.order.number }} &middot; {{ tenant.base_currency }} {{ s.order_total|num }}</td>
   </tr></table></div>
   <div class="who">
     <strong>{% if s.note.order.location %}{{ s.note.order.location.name }}{% if s.note.order.location.address %} — {{ s.note.order.location.address }}{% endif %}{% else %}{{ s.note.customer.address|default:"—" }}{% endif %}</strong><br>
@@ -113,7 +113,7 @@ thead{display:table-header-group}
       {% if s.note.remarks %}<br><span class="muted">Remarks: {{ s.note.remarks }}</span>{% endif %}
     {% elif s.note.delivered_at %}
       Received by <strong>{{ s.note.receiver_name|default:"—" }}</strong> on {{ s.note.delivered_at|date:"d/m/Y H:i" }}
-      {% if s.cash_collected %}&nbsp;&middot;&nbsp; Collected {{ tenant.base_currency }} <strong>{{ s.cash_collected }}</strong>{% endif %}
+      {% if s.cash_collected %}&nbsp;&middot;&nbsp; Collected {{ tenant.base_currency }} <strong>{{ s.cash_collected|num }}</strong>{% endif %}
       &nbsp;&middot;&nbsp; <span class="badge">{{ s.note.get_status_display }}</span>
       {% if s.note.remarks %}<br><span class="muted">Remarks: {{ s.note.remarks }}</span>{% endif %}
     {% else %}
@@ -133,9 +133,9 @@ thead{display:table-header-group}
 <div class="foot">
   <table class="grid"><tr>
     <td><span class="k">Odometer in</span>{{ trip.odometer_end|default:"&nbsp;" }}</td>
-    <td><span class="k">Fuel</span>{% if trip.fuel_amount %}{{ fuel_amount }}{% else %}&nbsp;{% endif %}</td>
-    <td><span class="k">Other expenses</span>{% if trip.expense_amount %}{{ expense_amount }}{% else %}&nbsp;{% endif %}</td>
-    <td><span class="k">Cash returned</span>{% if trip.cash_collected %}{{ cash_collected }}{% else %}&nbsp;{% endif %}</td>
+    <td><span class="k">Fuel</span>{% if trip.fuel_amount %}{{ fuel_amount|num }}{% else %}&nbsp;{% endif %}</td>
+    <td><span class="k">Other expenses</span>{% if trip.expense_amount %}{{ expense_amount|num }}{% else %}&nbsp;{% endif %}</td>
+    <td><span class="k">Cash returned</span>{% if trip.cash_collected %}{{ cash_collected|num }}{% else %}&nbsp;{% endif %}</td>
   </tr></table>
   <div class="bigsigns">
     <div>Driver{% if trip.driver %} — {{ trip.driver.name }}{% endif %}</div>

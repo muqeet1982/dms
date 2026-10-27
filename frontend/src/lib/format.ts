@@ -3,11 +3,14 @@ import relativeTime from "dayjs/plugin/relativeTime";
 
 dayjs.extend(relativeTime);
 
-export const money = (v: any, digits = 2): string => {
+// Every amount, everywhere, reads 1,234.56 — commas and exactly two decimals (owner, 27 Oct 2026: "all pdf, view,
+// print amounts should be 2 digits after . and also add commas"). The second argument is accepted for the older
+// call sites that asked for whole rupees, and deliberately ignored.
+export const money = (v: any, _digits?: number): string => {
   if (v === null || v === undefined || v === "") return "—";
   const n = Number(v);
   if (Number.isNaN(n)) return String(v);
-  return n.toLocaleString("en-PK", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return n.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 export const qty = (v: any): string => {
   if (v === null || v === undefined || v === "") return "—";

@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { money, startOfMonth, titleCase, today } from "@/lib/format";
+import { money, qty, startOfMonth, titleCase, today } from "@/lib/format";
 import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, PageHeader, Spinner } from "@/components/ui/Bits";
@@ -49,7 +49,9 @@ export function ReportViewPage() {
   const dl = (fmt: string) => api.download(`/api/v1/reports/${key}`, `${key}.${fmt}`, { ...params, format: fmt });
   const cols: string[] = q.data?.columns || [];
   const isNum = (v: any) => typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) && v.length < 20;
-  const fmtCell = (v: any) => (v === null || v === undefined ? "" : isNum(v) ? money(v, Number(v) % 1 === 0 ? 0 : 2) : typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "object" ? JSON.stringify(v) : String(v));
+  // amounts arrive with four decimals and quantities with three (the API's money and quantity fields): an amount
+  // always reads 1,234.56 (owner, 27 Oct 2026), a quantity keeps its own shape (12, 1.5)
+  const fmtCell = (v: any) => (v === null || v === undefined ? "" : isNum(v) ? (/\.\d{3}$/.test(v) ? qty(v) : money(v)) : typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "object" ? JSON.stringify(v) : String(v));
   return (
     <>
       <PageHeader title={spec.title} crumbs={[{ label: "Reports", to: "/app/reports" }, { label: spec.title }]} actions={pageRights("reports").extras.export && <><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/reports/${key}?${new URLSearchParams({ ...params, format: "pdf" }).toString()}`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => dl("pdf")}><i className="ti ti-file-type-pdf me-1" />PDF</button><button className="btn btn-outline-success" onClick={() => dl("xlsx")}><i className="ti ti-file-type-xls me-1" />Excel</button><button className="btn btn-outline-secondary" onClick={() => dl("csv")}><i className="ti ti-file-type-csv me-1" />CSV</button></>} />

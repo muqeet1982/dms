@@ -1,14 +1,14 @@
-<!doctype html><html><head><meta charset="utf-8"><style>
+{% load docs %}<!doctype html><html><head><meta charset="utf-8"><style>
 body{font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#202C4B}h1{font-size:18px;margin:0}.muted{color:#6B7280}
 table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:5px 6px;border-bottom:1px solid #e5e7eb;text-align:left}th{background:#F8F9FA}.r{text-align:right}
 </style></head><body>
 <h1>{{ tenant.display_name }}</h1><div class="muted">{{ tenant.address }} · {{ tenant.phone }}</div>
 <h2 style="font-size:14px;margin-top:14px">Customer statement — {{ d.customer.name }} ({{ d.customer.code }})</h2>
-<div class="muted">{{ d.customer.address }} · {{ d.customer.phone }} · Outstanding: <strong>{{ d.outstanding }}</strong></div>
+<div class="muted">{{ d.customer.address }} · {{ d.customer.phone }} · Outstanding: <strong>{{ d.outstanding|num }}</strong></div>
 <table><thead><tr><th>Date</th><th>Ref</th><th>Description</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead><tbody>
-<tr><td colspan="5">Opening balance</td><td class="r">{{ d.ledger.opening_balance }}</td></tr>
-{% for r in d.ledger.rows %}<tr><td>{{ r.date }}</td><td>{{ r.journal }}</td><td>{{ r.description }}</td><td class="r">{{ r.debit }}</td><td class="r">{{ r.credit }}</td><td class="r">{{ r.balance }}</td></tr>{% endfor %}
-<tr><td colspan="5"><strong>Closing balance</strong></td><td class="r"><strong>{{ d.ledger.closing_balance }}</strong></td></tr>
+<tr><td colspan="5">Opening balance</td><td class="r">{{ d.ledger.opening_balance|num }}</td></tr>
+{% for r in d.ledger.rows %}<tr><td>{{ r.date }}</td><td>{{ r.journal }}</td><td>{{ r.description }}</td><td class="r">{{ r.debit|num }}</td><td class="r">{{ r.credit|num }}</td><td class="r">{{ r.balance|num }}</td></tr>{% endfor %}
+<tr><td colspan="5"><strong>Closing balance</strong></td><td class="r"><strong>{{ d.ledger.closing_balance|num }}</strong></td></tr>
 </tbody></table>
 <h3 style="font-size:12px;margin-top:14px">Ageing</h3>
 <table><tr>{% for k, v in ageing_rows %}<th>{{ k }}</th>{% endfor %}</tr>

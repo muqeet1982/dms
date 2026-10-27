@@ -33,7 +33,7 @@ landscape when there are more columns than a portrait page can hold.
   {% else %}<tr>{% for c in cols %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
   </thead>
   <tbody>
-  {% for r in rows %}<tr>{% for v in r %}{% if forloop.counter > 2 and v|isnumber %}<td class="r">{{ v|num }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+  {% for r in rows %}<tr>{% for v in r %}{% if forloop.counter > 2 and v|isnumber %}<td class="r">{{ v|cell }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
   {% if not rows %}<tr><td colspan="{{ cols|length }}" style="text-align:center;color:#6B7280;padding:14px">Nothing in this range.</td></tr>{% endif %}
   </tbody>
 </table>
