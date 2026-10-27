@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { api } from "@/api/client";
-import { fbrLineTax, LineTax, money, otherTaxLabel } from "@/lib/format";
+import { fbrLineTax, gstPctOfLabels, LineTax, money, otherTaxLabel } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "./TaxFooter";
 import { useScanListener } from "@/lib/scan";
 import { toast } from "@/lib/toast";
@@ -184,7 +184,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
             {!lines.length && <tr><td colSpan={9} className="text-center text-muted py-4">No lines — scan a barcode or add a line.</td></tr>}
           </tbody>
           {showPrice && lines.length > 0 && <tfoot>
-            {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} net={total} gst={taxTotal}
+            {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} net={total} gst={taxTotal} gstPct={gstPctOfLabels(lines.map((l) => taxOf(l)?.label))}
                 fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} payableLabel={payableLabel} />
               : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} payable={total} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}

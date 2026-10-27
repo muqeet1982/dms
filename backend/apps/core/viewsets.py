@@ -60,11 +60,14 @@ class ExportableMixin:
         # fields are used as they come, minus the plumbing — fine for a settings table, noisy for a document.
         picked = getattr(self, "export_fields", None)
         if picked:
-            rows = [{k.replace("_", " ").strip().title(): _flatten(r.get(k)) for k in picked} for r in data]
+            named = getattr(self, "export_labels", {})
+            rows = [{named.get(k) or k.replace("_", " ").strip().title(): _flatten(r.get(k)) for k in picked} for r in data]
         else:
             rows = [_printable(r) for r in data]
         title = request.query_params.get("title") or self.__class__.__name__.replace("ViewSet", "")
-        result = {"columns": list(rows[0].keys()) if rows else [], "rows": rows}
+        # a named column keeps its own casing ("GST %", not the exporter's "Gst %")
+        result = {"columns": list(rows[0].keys()) if rows else [], "rows": rows,
+                  "column_labels": {v: v for v in getattr(self, "export_labels", {}).values()}}
         fmt = request.query_params.get("format", "csv")
         if fmt == "xlsx":
             from apps.core.plan_limits import effective_features

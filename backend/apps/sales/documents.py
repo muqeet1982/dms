@@ -6,7 +6,7 @@ from apps.core.documents import render_doc
 
 
 def order_pdf(request, o):
-    from apps.sales.services import InvoiceService
+    from apps.sales.services import InvoiceService, gst_pct
 
     lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
     tax_shown = Decimal(str(o.tax1_total or 0)) + Decimal(str(o.tax2_total or 0))
@@ -26,6 +26,7 @@ def order_pdf(request, o):
         "total_discount": Decimal(str(o.discount or 0)) + Decimal(str(o.scheme_discount or 0)),
         "show_progress": any(l.qty_dispatched or l.qty_delivered for l in lines),
         "tax1_name": next((l.tax1_type.name for l in lines if l.tax1_type_id), None),
+        "gst_pct": gst_pct(l.tax1_rate for l in lines),
         "tax2_name": next((l.tax2_type.name for l in lines if l.tax2_type_id), None),
     }, o.number, title="SALES ORDER", ref=o.number)
 

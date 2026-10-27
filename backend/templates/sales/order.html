@@ -122,7 +122,7 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
   {% if o.discount %}<tr><td class="l">Discount{% if o.discount_pct %} ({{ o.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
   <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
-  <tr><td class="l">GST{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  <tr><td class="l">GST{% if gst_pct %} ({{ gst_pct }}){% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
   {% if fed_total %}<tr><td class="l">FED</td><td class="r">{{ fed_total|num }}</td></tr>{% endif %}
   {% if extra_total %}<tr><td class="l">Extra Tax</td><td class="r">{{ extra_total|num }}</td></tr>{% endif %}
   {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}

@@ -55,7 +55,10 @@ class PickListService:
             line = by_id.get(str(row.get("line_id")))
             if line is None:
                 raise DomainError("That line is not on this load form.")
-            qty = Decimal(str(row.get("qty_to_pick", line.qty_to_pick) or 0))
+            try:
+                qty = Decimal(str(row.get("qty_to_pick", line.qty_to_pick) or 0))
+            except ArithmeticError:
+                raise DomainError(f"{line.variant.name}: the quantity must be a number.")
             if qty < 0:
                 raise DomainError(f"{line.variant.name}: the quantity cannot be negative.")
             line.qty_to_pick = qty
@@ -87,6 +90,8 @@ class PickListService:
         """picks: [{line_id, qty_picked, batch?, scanned?}]"""
         if pl.status == "picked":
             raise DomainError("Pick list already completed.")
+        if pl.status == "open":
+            PickListService.send(pl)   # picking it is the warehouse having it
         from apps.inventory.models import Batch
 
         pl.status = "picking"
@@ -107,6 +112,9 @@ class PickListService:
     def scans(pl, scans):
         """Batch endpoint for scanner mode: [{code, qty}] → increments matching lines."""
         from apps.catalog.services import BarcodeParser
+
+        if pl.status == "open":
+            PickListService.send(pl)
 
         for s in scans:
             hit = BarcodeParser.parse(s["code"])
@@ -160,6 +168,8 @@ class PickListService:
         """
         if pl.status in ("issued", "cancelled"):
             raise DomainError("This load form is already issued." if pl.status == "issued" else "This load form was cancelled.")
+        if pl.status == "open":
+            PickListService.send(pl)   # issued straight from an unsent form: it went to the warehouse now
         if issues:
             PickListService.record_picks(pl, [{"line_id": i["line_id"], "qty_picked": i.get("qty_issued", i.get("qty_picked", 0)), "batch": i.get("batch")} for i in issues])
             pl.refresh_from_db()
@@ -385,7 +395,7 @@ class DeliveryService:
             # is applied the moment the invoice is posted (InvoiceService.post) — a draft is not on the books
             allocs = ([{"document_type": "sales_invoice", "document_id": str(invoice.pk), "amount": min(dn.cash_collected, invoice.balance)}]
                       if invoice.status != "draft" and invoice.balance > 0 else [])
-            PaymentService.record(direction="in", partner_type="customer", partner_id=str(dn.customer_id), partner_name=dn.customer.name, amount=dn.cash_collected, method="cash", allocations=allocs, reference=f"COD {dn.number}", trip=dn.trip, delivery_note=dn)
+            PaymentService.record(direction="in", partner_type="customer", partner_id=str(dn.customer_id), partner_name=dn.customer.name, amount=dn.cash_collected, method="cash", allocations=allocs, auto_allocate=invoice.status != "draft", reference=f"COD {dn.number}", trip=dn.trip, delivery_note=dn)
             if dn.trip_id:
                 dn.trip.cash_collected = (dn.trip.cash_collected or 0) + dn.cash_collected
                 dn.trip.save(update_fields=["cash_collected"])
@@ -455,10 +465,29 @@ class TripService:
 
     @staticmethod
     @transaction.atomic
+    def _let_go(notes):
+        """
+        A trip releasing its stops. A note the warehouse already issued (its stock is out, maybe an invoice hangs
+        off it) stays — off the trip, back at "issued" — so the next trip picks it up and nothing is issued twice
+        (review, 27 Oct 2026). Only a note that never took stock out is deleted.
+        """
+        from apps.sales.services import OrderService
+
+        for dn in list(notes.select_related("order")):
+            if not dn.stock_out_done:
+                dn.delete()
+                continue
+            dn.trip, dn.sequence = None, 0
+            dn.save(update_fields=["trip", "sequence", "updated_at"])
+            if dn.order.status == "dispatched":
+                OrderService._set(dn.order, "issued", "taken_off_trip")
+
+    @staticmethod
+    @transaction.atomic
     def remove_order(trip, order):
         if trip.status not in ("planned", "loading"):
             raise DomainError("Cannot remove orders after the trip started.")
-        trip.delivery_notes.filter(order=order).delete()
+        TripService._let_go(trip.delivery_notes.filter(order=order))
         order.trip = None
         order.save(update_fields=["trip"])
         trip.stops_count = trip.delivery_notes.count()
@@ -633,7 +662,7 @@ class TripService:
         for dn in trip.delivery_notes.select_related("order"):
             dn.order.trip = None
             dn.order.save(update_fields=["trip"])
-        trip.delivery_notes.all().delete()
+        TripService._let_go(trip.delivery_notes.all())
         trip.status = "cancelled"
         trip.notes = (trip.notes + f"\nCancelled: {reason}").strip()
         trip.save(update_fields=["status", "notes", "updated_at"])

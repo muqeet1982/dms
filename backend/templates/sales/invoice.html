@@ -122,7 +122,7 @@ carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount
   <tr><td class="l">Sub Total</td><td class="r">{{ gross_total|num }}</td></tr>
   {% if inv.discount %}<tr><td class="l">Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">&minus;{{ inv.discount|num }}</td></tr>{% endif %}
   <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
-  <tr><td class="l">GST{% if tax_label %} — {{ tax_label }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
+  <tr><td class="l">GST{% if gst_pct %} ({{ gst_pct }}){% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
   {% if fed_total %}<tr><td class="l">FED</td><td class="r">{{ fed_total|num }}</td></tr>{% endif %}
   {% if extra_total %}<tr><td class="l">Extra Tax</td><td class="r">{{ extra_total|num }}</td></tr>{% endif %}
   {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}

@@ -28,6 +28,42 @@ def _base_qty(qty, packaging):
     return Decimal(qty) * (packaging.qty_in_base if packaging else Decimal("1"))
 
 
+def gst_pct(rates):
+    """"18%" — the GST % a footer prints beside GST (owner, 27 Oct 2026: "change GST to GST (N%)"), from the lines'
+    own rates; a document mixing rates lists each ("17%, 18%"). Empty when no line carries a %."""
+    vals = sorted({Decimal(str(r)).normalize() for r in rates if r and Decimal(str(r)) > 0})
+    return ", ".join(f"{format(v, 'f')}%" for v in vals)
+
+
+def discount_parties(tenant=None):
+    """(distributor, manufacturer) names for the co-funded split. The distributor is the company itself; the
+    manufacturer is named when every product comes from one (TDN: Keune Pakistan), else "Manufacturer"."""
+    from apps.catalog.models import Product
+
+    tenant = tenant or get_current_tenant()
+    distributor = (getattr(tenant, "display_name", "") or getattr(tenant, "legal_name", "") or "Distributor") if tenant else "Distributor"
+    makers = list(Product.objects.exclude(supplier=None).order_by().values_list("supplier__name", flat=True).distinct()[:2])
+    return distributor, (makers[0] if len(makers) == 1 else "Manufacturer")
+
+
+def discount_split(total_pct, parties=None):
+    """
+    How a customer's total discount is funded (owner, 27 Oct 2026: "total discount to customer and show how much
+    will be from Keune and how much from Trafco") — read from the SAME DiscountContribution table invoices use when
+    they raise the manufacturer's claim. A % not in the table is given by the distributor alone (no claim is raised
+    for it on posting), and says so with in_table false.
+    """
+    from .models import DiscountContribution
+
+    total = Decimal(str(total_pct or 0))
+    distributor, company = parties or discount_parties()
+    row = DiscountContribution.objects.filter(total_pct=total, is_active=True).first() if total > 0 else None
+    d, c = (row.distributor_pct, row.company_pct) if row is not None else (total, Decimal("0"))
+    fmt = lambda x: format(Decimal(x).normalize(), "f")   # 12.000 → "12"
+    return {"total_pct": fmt(total), "distributor_pct": fmt(d), "company_pct": fmt(c), "in_table": row is not None or total == 0,
+            "distributor": distributor, "company": company}
+
+
 class OrderService:
     # ---------------------------------------------------------------- pricing
     @staticmethod
@@ -108,7 +144,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def follow_customer_discount(customer, old_pct, new_pct, actor=None):
+    def follow_customer_discount(customer, old_pct, new_pct, actor=None, repost=True):
         """
         A customer's standing discount changed: their business still in flight follows it, books included (owner,
         27 Oct 2026 — TDN-SO-00055 kept 0% after House Of Charbel was set to 15%: "fix for the project as well …
@@ -140,8 +176,8 @@ class OrderService:
             if o.discount_pct is not None and Decimal(str(o.discount_pct)) != old_pct:
                 continue  # a % set by hand for this order
             billed = list(o.invoices.exclude(status__in=["draft", "cancelled"]))
-            if any(settled(i) for i in billed):
-                continue  # money or a filing already rests on it — listed below
+            if any(settled(i) for i in billed) or (billed and not repost):
+                continue  # money or a filing already rests on it, or no right to re-post — listed below
             o.discount_pct = new_pct
             o.save(update_fields=["discount_pct", "updated_at"])
             o.lines.filter(discount_pct=old_pct).update(discount_pct=new_pct)
@@ -155,7 +191,11 @@ class OrderService:
                 InvoiceService.set_discount(inv, action=action, percent=new_pct, actor=actor)
                 InvoiceService.post(inv)
                 done["reposted_invoices"].append(inv.number)
-        for inv in SalesInvoice.objects.filter(customer=customer, status="draft", discount_pct=old_pct):
+        for inv in SalesInvoice.objects.filter(customer=customer, status="draft", discount_pct=old_pct).select_related("order"):
+            o = inv.order
+            if o is not None and o.number not in done["orders"] and (
+                    not o.apply_customer_discount or (o.discount_pct is not None and Decimal(str(o.discount_pct)) != old_pct)):
+                continue  # its order took no customer discount, or chose its own %
             InvoiceService.set_discount(inv, action=action, percent=new_pct, actor=actor)
             done["draft_invoices"].append(inv.number)
         done["posted_invoices"] = list(SalesInvoice.objects.filter(customer=customer, status__in=["posted", "overdue", "partially_paid"], discount_pct=old_pct)
@@ -227,7 +267,8 @@ class OrderService:
         t = totals
         total = t["subtotal"] - t["discount"] - t["scheme_discount"] + t["tax1_total"] + t["tax2_total"] + t["fed_total"] + t["extra_tax_total"] + t["further_tax_total"] - t["wht_total"]
         return {**{k: str(v) for k, v in t.items()}, "discount_pct": str(o.discount_pct if o.discount_pct is not None else default_pct),
-                "charge_tax": bool(o.charge_tax), "total": str(total), "lines": rows}
+                "charge_tax": bool(o.charge_tax), "total": str(total), "lines": rows,
+                "gst_pct": gst_pct(r.get("tax1_rate") for r in rows)}   # "18%" — the footer's GST (N%), as the saved order
 
     @staticmethod
     def effective_discount_pct(order):
@@ -778,12 +819,19 @@ class InvoiceService:
     @transaction.atomic
     def update_draft(inv, *, date=None, due_date=None, notes=None, lines=None):
         """
-        Correct a **draft** invoice before it goes to the ledger: its date, and the price or discount on a line.
+        Correct a **draft** invoice — a new one, or a posted one reopened to edit — before it goes to the ledger:
+        its date, and on its lines the price, the discount, the tax %, the QUANTITY, and items added or taken off
+        (owner, 27 Oct 2026: "reopen to edit should allow all kind of change and change here should also update
+        sale order as well").
 
-        Quantities are deliberately not among them. What is on an invoice is what the warehouse issued and the
-        delivery note records; letting the two disagree would mean the stock that left and the stock that was
-        billed are different numbers with nothing to say which is right. A quantity that is genuinely wrong is a
-        delivery-note matter, or a credit note once this has been posted.
+        A quantity is what the warehouse issued, so it never moves alone: the delivery note, the load form and
+        the stock move by the same difference (more issued, or the surplus back on the shelf), and the order
+        line follows. Once the goods are DELIVERED that is no longer a correction but a return or a second
+        delivery — prices, discounts and tax can still change, a quantity cannot. The order is then brought
+        into line with the invoice (`sync_order`).
+
+        lines: [{id, qty?, unit_price?, discount_amount?, product_discount_pct?, tax_pct?, remove?}] for lines on
+        it, and [{variant, qty, unit_price?, product_discount_pct?}] (no id) for an item to add.
 
         Tax is recomputed from the corrected figures rather than scaled, because a price change can cross a slab
         and the slab is the thing a tax authority checks.
@@ -798,16 +846,38 @@ class InvoiceService:
         if notes is not None:
             inv.notes = notes
 
-        by_id = {str(l.id): l for l in inv.lines.all()}
+        by_id = {str(l.id): l for l in inv.lines.select_related("order_line", "variant", "batch")}
         for row in lines or []:
+            if not row.get("id"):
+                InvoiceService._add_line(inv, row)
+                continue
             line = by_id.get(str(row.get("id")))
             if line is None:
                 raise DomainError("That line is not on this invoice.", status_code=400)
-            if row.get("unit_price") is not None:
+            new_qty = None if row.get("qty") in (None, "") else Decimal(str(row["qty"]))
+            if row.get("remove") or (new_qty == 0 and line.qty != 0):
+                by_id.pop(str(line.id))
+                InvoiceService._remove_line(inv, line)
+                continue
+            typed_disc = None if row.get("discount_amount") in (None, "") else Decimal(str(row["discount_amount"]))
+            if new_qty is not None and new_qty != line.qty and new_qty != 0:
+                if new_qty < 0:
+                    raise DomainError(f"{line.description}: the quantity cannot be negative.", status_code=400)
+                old_qty = line.qty
+                InvoiceService._reissue(inv, line.order_line, line.variant, line.batch, new_qty - old_qty)
+                if line.order_line_id:
+                    ol = line.order_line
+                    ol.qty_ordered = max(Decimal("0"), ol.qty_ordered + (new_qty - old_qty))
+                    ol.save(update_fields=["qty_ordered"])
+                # the discount travels with the quantity unless a new amount was typed
+                if typed_disc is None or typed_disc == line.discount_amount:
+                    typed_disc = q4(line.discount_amount * new_qty / old_qty) if old_qty else Decimal("0")
+                line.qty = new_qty
+            if row.get("unit_price") not in (None, ""):
                 line.unit_price = Decimal(str(row["unit_price"]))
-            if row.get("discount_amount") is not None:
-                line.discount_amount = Decimal(str(row["discount_amount"]))
-            if row.get("product_discount_pct") is not None:
+            if typed_disc is not None:
+                line.discount_amount = typed_disc
+            if row.get("product_discount_pct") not in (None, ""):
                 new_pct = Decimal(str(row["product_discount_pct"]))
                 gross = q4(line.qty * line.unit_price)
                 line.discount_amount = max(Decimal("0"), q4(line.discount_amount + gross * (new_pct - line.product_discount_pct) / 100))
@@ -824,13 +894,155 @@ class InvoiceService:
             if line.discount_amount > gross:
                 raise DomainError(f"The discount on {line.description} is more than the line is worth.", status_code=400)
             line.save()
+        if not inv.lines.exists():
+            raise DomainError("An invoice needs at least one line — cancel it instead of emptying it.", status_code=400)
 
         # one place owns the figures: recompute re-taxes every line (the tax switch, the products' own %,
         # per-line overrides, else the tax classes) and re-totals the invoice
         inv.save(update_fields=["date", "due_date", "notes", "updated_at"])
         InvoiceService.recompute(inv)
+        InvoiceService.sync_order(inv)
         AuditService.log("invoice.corrected", inv, after={"total": str(inv.total)})
         return inv
+
+    @staticmethod
+    def _reissue(inv, ol, variant, batch, delta):
+        """
+        A draft invoice's quantity moved by `delta` (billed units, free included): the warehouse paperwork and the
+        stock follow — the delivery note's line, the load form's issued count, and, once the stock has left, a
+        movement for the difference (more issued, or the surplus back in stock as "Issue reversed").
+        Returns the unit cost the units went out at.
+        """
+        from apps.delivery.models import DeliveryNoteLine, PickListLine
+
+        dn = inv.delivery_note
+        cost = variant.avg_cost
+        if dn is None or not delta:
+            return cost
+        if dn.status in ("delivered", "partially_delivered", "returned"):
+            raise DomainError(f"{variant.name}: the goods on {dn.number} are already delivered, so its quantity cannot change here — "
+                              "take a return with a credit note, or deliver the extra on a new order. Prices, discounts and tax can still be changed.",
+                              code="delivered", status_code=400)
+        dl = DeliveryNoteLine.objects.filter(delivery_note=dn, order_line=ol, variant=variant, batch=batch).first() if ol else None
+        if dl is None and ol is not None:
+            dl = DeliveryNoteLine(delivery_note=dn, order_line=ol, variant=variant, batch=batch, qty_loaded=Decimal("0"), unit_cost=cost)
+        if dn.stock_out_done:
+            mv = StockService.move(warehouse=dn.warehouse, variant=variant, qty=-delta, batch=batch, unit_cost=dl.unit_cost if dl and dl.unit_cost else None,
+                                   movement_type="sale_dispatch" if delta > 0 else "issue_cancelled", reference=dn,
+                                   note=f"Invoice {inv.number} edited")
+            cost = mv.unit_cost or cost
+            if ol is not None:
+                ol.qty_dispatched = max(Decimal("0"), ol.qty_dispatched + delta)
+                ol.save(update_fields=["qty_dispatched"])
+        if dl is not None:
+            dl.qty_loaded += delta
+            if dl.unit_cost is None or not dl.unit_cost:
+                dl.unit_cost = cost
+            if dl.qty_loaded <= 0:
+                if dl.pk:
+                    dl.delete()
+            else:
+                dl.save()
+        pick = PickListLine.objects.filter(picklist_id=dn.picklist_id, order_line=ol).first() if dn.picklist_id and ol else None
+        if pick is not None:
+            pick.qty_picked = max(Decimal("0"), pick.qty_picked + delta)
+            pick.qty_to_pick = max(pick.qty_picked, Decimal("0"))
+            pick.save(update_fields=["qty_picked", "qty_to_pick"])
+        elif dn.picklist_id and ol is not None and delta > 0:
+            PickListLine.objects.create(picklist_id=dn.picklist_id, order_line=ol, variant=variant, batch=batch, qty_to_pick=delta, qty_picked=delta)
+        return cost
+
+    @staticmethod
+    def _remove_line(inv, line):
+        """Take an item off a draft invoice: its units go back to stock and off the order."""
+        InvoiceService._reissue(inv, line.order_line, line.variant, line.batch, -(line.qty + line.free_qty))
+        ol = line.order_line
+        line.delete()
+        if ol is not None:
+            ol.qty_ordered = max(Decimal("0"), ol.qty_ordered - line.qty)
+            ol.free_qty = max(Decimal("0"), ol.free_qty - line.free_qty)
+            ol.save(update_fields=["qty_ordered", "free_qty"])
+            if ol.qty_ordered <= 0 and ol.free_qty <= 0 and not ol.delivery_lines.exists():
+                ol.delete()
+
+    @staticmethod
+    def _add_line(inv, row):
+        """An item added on a draft invoice: a new order line, issued from the warehouse onto the delivery note."""
+        from apps.catalog.models import ProductVariant, product_discount_for
+
+        order = inv.order
+        if order is None:
+            raise DomainError("This invoice has no order to add an item to.", status_code=400)
+        variant = ProductVariant.objects.filter(pk=row.get("variant")).select_related("product").first()
+        if variant is None:
+            raise DomainError("Pick the item to add.", status_code=400)
+        qty = Decimal(str(row.get("qty") or 0))
+        if qty <= 0:
+            raise DomainError(f"{variant.name}: enter a quantity.", status_code=400)
+        if row.get("unit_price") not in (None, ""):
+            price = q4(Decimal(str(row["unit_price"])))
+        else:
+            price, _pl = PricingService.price_for(variant, inv.customer, order.price_list, None, qty, order.order_date)
+        prod_pct = Decimal(str(row["product_discount_pct"])) if row.get("product_discount_pct") not in (None, "") else Decimal(str(product_discount_for(variant.product, qty, order.order_date) or 0))
+        seq = (order.lines.order_by("-sequence").values_list("sequence", flat=True).first() or 0) + 1
+        ol = SalesOrderLine.objects.create(order=order, variant=variant, qty_ordered=qty, unit_price=price,
+                                           discount_pct=inv.discount_pct or Decimal("0"), product_discount_pct=prod_pct, sequence=seq)
+        # a batch-tracked item goes out by batch, earliest expiry first, as the warehouse issue picks it
+        dn, plan = inv.delivery_note, [(None, qty)]
+        if dn is not None and variant.product.is_batch_tracked:
+            tenant = get_current_tenant()
+            plan, short = StockService.fefo_batches(variant, dn.warehouse, qty, inv.customer.min_shelf_life_days or tenant.setting("min_shelf_life_days"))
+            plan = [(b, q) for b, q, _bin in plan]
+            if short > 0:
+                raise DomainError(f"Not enough stock of {variant.name} in {dn.warehouse.name} (short {short:g}).", code="insufficient_stock", status_code=400)
+        seq = inv.lines.order_by("-sequence").values_list("sequence", flat=True).first() or 0
+        for batch, q in plan:
+            cost = InvoiceService._reissue(inv, ol, variant, batch, q)
+            gross = q4(q * price)
+            disc = q4(gross * ((inv.discount_pct or Decimal("0")) + prod_pct) / 100)
+            seq += 1
+            SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=variant, batch=batch, description=variant.name, qty=q, unit_price=price,
+                                            unit_cost=cost or variant.avg_cost, discount_amount=disc, product_discount_pct=prod_pct,
+                                            line_total=gross - disc, sequence=seq)
+
+    @staticmethod
+    def sync_order(inv, *, tax=False):
+        """
+        The order follows its invoice's corrections (owner, 27 Oct 2026: "change here should also update sale order
+        as well"): each line's price and discount and the discount % — then the order is re-totalled at those
+        prices. Quantities have already moved with the stock (`update_draft`). `tax=True` carries the invoice's tax
+        switch too: only when a person flipped it — an automatic tax that was skipped (unclassified items) must not
+        quietly switch the order's tax off. An order line another live invoice also bills keeps its own price: two
+        invoices would be arguing over one line. An item issued from two batches is two invoice lines of one
+        order line, and syncs as one.
+        """
+        order = inv.order
+        if order is None or order.status in ("cancelled", "rejected"):
+            return
+        others = set(SalesInvoiceLine.objects.filter(order_line__order=order).exclude(invoice__status="cancelled").exclude(invoice=inv)
+                     .values_list("order_line_id", flat=True))
+        groups = {}
+        for il in inv.lines.select_related("order_line"):
+            if il.order_line_id and il.order_line_id not in others:
+                groups.setdefault(il.order_line_id, []).append(il)
+        for ils in groups.values():
+            ol = ils[0].order_line
+            gross = sum((q4(il.qty * il.unit_price) for il in ils), Decimal("0"))
+            disc = sum((il.discount_amount for il in ils), Decimal("0"))
+            main = max(ils, key=lambda il: il.qty)   # batch lines share a price; the largest speaks for them
+            total_pct = (disc / gross * 100) if gross else Decimal("0")
+            ol.unit_price, ol.requested_price = main.unit_price, None
+            ol.product_discount_pct = main.product_discount_pct
+            ol.discount_pct = max(Decimal("0"), (total_pct - main.product_discount_pct).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+            ol.save(update_fields=["unit_price", "requested_price", "product_discount_pct", "discount_pct"])
+        order.discount_pct = inv.discount_pct
+        fields = ["discount_pct", "updated_at"]
+        if tax:
+            order.charge_tax = bool(inv.force_tax_type_id)
+            fields.append("charge_tax")
+        order.save(update_fields=fields)
+        OrderService.recompute(order, allow_override=True)   # prices as the invoice set them
+        AuditService.log("order.followed_invoice", order, after={"invoice": inv.number, "total": str(order.total)})
 
     @staticmethod
     @transaction.atomic
@@ -1084,6 +1296,7 @@ class InvoiceService:
             rate = rates.pop() if len(rates) == 1 else None
             tax_label = f"{inv.tax1_type.name}{f' ({rate.normalize()}%)' if rate else ''}"
         return {"customer_discount": q4(customer_part), "tax_shown": q4(tax_shown), "tax_on": tax_on, "tax_label": tax_label,
+                "gst_pct": gst_pct(l.tax1_rate for l in lines),
                 "gross_total": q4(gross_total), "taxable_total": q4(taxable_total),
                 "display_subtotal": q4((inv.total or Decimal("0")) + customer_part - tax_shown),
                 **InvoiceService.other_tax_context(inv, lines)}
@@ -1222,6 +1435,10 @@ class InvoiceService:
             raise DomainError("A manufacturer claim on this invoice has been settled; reverse that first.")
         for claim in open_claims:
             CompanyClaimService.cancel(claim, reason=f"Invoice {inv.number} cancelled")
+        # a reopened invoice's entries are HELD (drafts, off the books): cancelled, they have nothing to come back for
+        PostingService.purge_held(inv)
+        for claim in inv.company_claims.all():
+            PostingService.purge_held(claim)
         inv.status = "cancelled"
         inv.notes = (inv.notes + f"\nCancelled: {reason}").strip()
         # release the delivery note (a OneToOne): cancelling is how a wrong invoice gets reissued, and the
@@ -1418,6 +1635,8 @@ class RepCollectionService:
         if allocations:
             for a in allocations:
                 inv = SalesInvoice.objects.get(pk=a["invoice"], customer=customer)
+                if inv.status in ("draft", "cancelled"):
+                    raise DomainError(f"{inv.number} is {inv.status} — post it before receiving money against it.", code="not_posted")
                 amt = q4(a["amount"])
                 if amt > inv.total - inv.paid_amount + Decimal("0.01"):
                     raise DomainError(f"Allocation exceeds balance of {inv.number}.")

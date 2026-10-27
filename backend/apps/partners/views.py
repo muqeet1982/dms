@@ -359,7 +359,10 @@ class CustomerViewSet(TenantModelViewSet):
         from apps.sales.models import SalesOrder
         from apps.sales.serializers import SalesOrderListSerializer
 
-        return Response(SalesOrderListSerializer(SalesOrder.objects.filter(customer_id=pk).order_by("-order_date")[:100], many=True).data)
+        from apps.sales.views import with_location_check
+
+        qs = with_location_check(SalesOrder.objects.filter(customer_id=pk).select_related("customer", "location", "rep", "supplier", "warehouse", "trip"))
+        return Response(SalesOrderListSerializer(qs.order_by("-order_date")[:100], many=True).data)
 
     @action(detail=True, methods=["get"], url_path="credit-check")
     def credit_check(self, request, pk=None):

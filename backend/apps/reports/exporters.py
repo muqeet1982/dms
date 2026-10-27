@@ -44,6 +44,17 @@ def cell(v):
     return v
 
 
+# a column of units or counts — its figures keep their own shape (12, 1.5), never an amount's "12.00"
+QTY_COL = re.compile(r"(^|_)(qty|quantity|per_box|packing|count|units|boxes|pieces|days|lines|stops|orders|invoices)(_|$)", re.I)
+
+
+def _qty_shape(col, v):
+    """A whole figure in a quantity column goes to the PDF as an int (the `cell` filter prints ints bare)."""
+    if QTY_COL.search(str(col)) and isinstance(v, str) and re.fullmatch(r"-?\d+(\.0+)?", v.strip()):
+        return int(v.split(".")[0])
+    return v
+
+
 def _col_label(result, c):
     return (result.get("column_labels") or {}).get(c) or c.replace("_", " ").title()
 
@@ -141,7 +152,7 @@ def to_pdf(result, title="", tenant=None, params=None):
     from weasyprint import HTML
 
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
-    rows = [[cell(r.get(c, "")) for c in cols] for r in result["rows"]]
+    rows = [[_qty_shape(c, cell(r.get(c, ""))) for c in cols] for r in result["rows"]]
     from apps.core.documents import logo_url
 
     # Fit by MEASURING, not by counting columns: a few wide columns (dates, long names) overflow a portrait

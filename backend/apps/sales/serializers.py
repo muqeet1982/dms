@@ -28,9 +28,26 @@ class CompanyClaimSerializer(serializers.ModelSerializer):
 
 
 class DiscountContributionSerializer(serializers.ModelSerializer):
+    # who funds each share, for labels like "15% — Keune Pakistan 12% + Trafco Distribution Network 3%"
+    distributor_name = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+
+    def _parties(self):
+        if "_parties" not in self.context:
+            from .services import discount_parties
+
+            self.context["_parties"] = discount_parties()
+        return self.context["_parties"]
+
+    def get_distributor_name(self, obj):
+        return self._parties()[0]
+
+    def get_company_name(self, obj):
+        return self._parties()[1]
+
     class Meta:
         model = DiscountContribution
-        fields = ["id", "total_pct", "distributor_pct", "company_pct", "is_active"]
+        fields = ["id", "total_pct", "distributor_pct", "company_pct", "distributor_name", "company_name", "is_active"]
 
     def validate(self, attrs):
         inst = self.instance
@@ -158,6 +175,13 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
 
 
 class SalesOrderSerializer(SalesOrderListSerializer):
+    gst_pct = serializers.SerializerMethodField()   # "18%" — the GST % beside GST (owner, 27 Oct 2026)
+
+    def get_gst_pct(self, obj):
+        from .services import gst_pct
+
+        return gst_pct(l.tax1_rate for l in obj.lines.all())
+
     lines = OrderLineSerializer(many=True)
     gps = serializers.SerializerMethodField()   # where the rep was standing when they took it
     confirmed_by_name = serializers.CharField(source="confirmed_by.full_name", read_only=True, default="")
@@ -176,7 +200,7 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         return f"{days} days credit" if days else "Cash on delivery"
 
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["gst_pct", "payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
         read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
@@ -248,6 +272,13 @@ class SalesInvoiceEditSerializer(serializers.ModelSerializer):
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
+    gst_pct = serializers.SerializerMethodField()   # "18%" — the GST % beside GST (owner, 27 Oct 2026)
+
+    def get_gst_pct(self, obj):
+        from .services import gst_pct
+
+        return gst_pct(l.tax1_rate for l in obj.lines.all())
+
     fbr = serializers.SerializerMethodField()
 
     fbr_setup = serializers.SerializerMethodField()
@@ -256,10 +287,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         """Whether this company can file with FBR right now, and where — never the tokens themselves."""
         from apps.fbr.models import FBRSettings
 
-        s = FBRSettings.objects.first()
-        if s is None:
-            return {"configured": False, "sandbox": True}
-        return {"configured": bool(s.sandbox_token if s.use_sandbox else s.production_token), "sandbox": bool(s.use_sandbox)}
+        if "_fbr_setup" not in self.context:   # one read per list, not one per invoice
+            s = FBRSettings.objects.first()
+            self.context["_fbr_setup"] = ({"configured": False, "sandbox": True} if s is None else
+                                          {"configured": bool(s.sandbox_token if s.use_sandbox else s.production_token), "sandbox": bool(s.use_sandbox)})
+        return self.context["_fbr_setup"]
 
     def get_fbr(self, inv):
         f = getattr(inv, "fbr_filing", None)
@@ -319,7 +351,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
@@ -335,6 +367,13 @@ class CreditNoteLineSerializer(serializers.ModelSerializer):
 
 
 class CreditNoteSerializer(serializers.ModelSerializer):
+    gst_pct = serializers.SerializerMethodField()   # "18%" — the GST % beside GST (owner, 27 Oct 2026)
+
+    def get_gst_pct(self, obj):
+        from .services import gst_pct
+
+        return gst_pct(l.tax1_rate for l in obj.lines.all())
+
     lines = CreditNoteLineSerializer(many=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default="")
@@ -342,7 +381,7 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNote
-        fields = ["id", "number", "version", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at"]
         read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "created_at"]
 
 

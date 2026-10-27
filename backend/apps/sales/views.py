@@ -42,7 +42,8 @@ def with_location_check(qs):
 
 class SalesOrderViewSet(DocumentViewSet):
     export_fields = ["number", "order_date", "customer_code", "customer_name", "rep_name", "warehouse_name",
-                     "status", "lines_count", "subtotal", "discount", "tax1_total", "total", "requested_delivery_date", "external_ref"]
+                     "status", "lines_count", "subtotal", "discount", "gst_pct", "tax1_total", "total", "requested_delivery_date", "external_ref"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
     perm_map = page_perms(
         "sales_orders",
         {
@@ -261,6 +262,11 @@ class SalesOrderViewSet(DocumentViewSet):
             # the % was shown on the create page, seeded from the order — apply a change before posting
             if pct is not None and Decimal(str(pct)) != inv.discount_pct:
                 InvoiceService.set_discount(inv, action="apply" if Decimal(str(pct)) > 0 else "remove", percent=pct)
+            # a % or a tax choice made on the create page is the order's too (owner, 27 Oct 2026)
+            tax_changed = charge is not None and bool(inv.force_tax_type_id) != order.charge_tax
+            if inv.discount_pct != OrderService.effective_discount_pct(order) or tax_changed:
+                InvoiceService.sync_order(inv, tax=tax_changed)
+                order.refresh_from_db()
             if should_post:
                 InvoiceService.post(inv)
         return Response(SalesInvoiceSerializer(invoices, many=True).data, status=status.HTTP_201_CREATED)
@@ -290,7 +296,8 @@ class SalesOrderViewSet(DocumentViewSet):
 
 class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
     export_fields = ["number", "date", "due_date", "customer_code", "customer_name", "order_number", "rep_name",
-                     "subtotal", "discount", "tax1_total", "tax2_total", "total", "paid_amount", "balance", "status"]
+                     "subtotal", "discount", "gst_pct", "tax1_total", "tax2_total", "total", "paid_amount", "balance", "status"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
     """
     Invoices are read, printed and corrected in the narrow sense — see `SalesInvoiceEditSerializer` for why the
     amounts are not among the things a PATCH may change.
@@ -393,6 +400,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         """POST { action: "remove" | "apply", percent? } — only on a draft invoice."""
         inv = self.get_object()
         InvoiceService.set_discount(inv, action=request.data.get("action", "remove"), percent=request.data.get("percent"), actor=request.user)
+        InvoiceService.sync_order(inv)   # the order follows its invoice (owner, 27 Oct 2026)
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["post"])
@@ -459,6 +467,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         tt = TaxType.objects.filter(pk=request.data["tax_type"]).first() if request.data.get("tax_type") else None
         InvoiceService.set_tax(inv, apply=request.data.get("apply") in (True, "true", "1", 1), tax_type=tt,
                                actor=request.user)
+        InvoiceService.sync_order(inv, tax=True)   # the order follows its invoice (owner, 27 Oct 2026)
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["get"])
@@ -481,7 +490,8 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
 
 class CreditNoteViewSet(DocumentViewSet):
-    export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "tax1_total", "total", "status"]
+    export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "gst_pct", "tax1_total", "total", "status"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
     serializer_class = CreditNoteSerializer
     perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note"})
     filterset_fields = ["status", "customer", "invoice"]

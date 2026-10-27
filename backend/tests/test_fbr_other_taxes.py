@@ -189,3 +189,38 @@ def test_a_document_without_tax_takes_the_discount_on_the_total(api, tenant, wor
     with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         api.get(f"/api/v1/invoices/{inv['id']}/pdf")
     assert footer(seen["html"]).startswith("Sub Total 600.00 Total Discount (5%) −30.00 Grand Total 570.00 Total Payable 570.00"), footer(seen["html"])
+
+
+def test_gst_reads_with_its_percent_on_screen_print_and_export(api, tenant, world):
+    """Owner, 27 Oct 2026: "under sub total and net total change GST to GST (N%) … everywhere — form, view,
+    print, pdf, excel"; and the invoice list's FBR column shows the tax %."""
+    wh, cust, v, tt = world
+    order = _issue(api, wh, cust, v)
+    inv = api.post(f"/api/v1/sales-orders/{order['id']}/invoice", {"apply_tax": True}, format="json").data
+    inv = inv[0] if isinstance(inv, list) else inv
+    assert api.get(f"/api/v1/invoices/{inv['id']}").data["gst_pct"] == "18%"
+    assert api.get(f"/api/v1/sales-orders/{order['id']}").data["gst_pct"] == "18%"
+    listed = next(i for i in api.get("/api/v1/invoices").data["results"] if i["id"] == inv["id"])
+    assert listed["gst_pct"] == "18%"
+
+    seen = {}
+
+    def capture(request, template, ctx, *a, **kw):
+        from django.http import HttpResponse
+        from django.template.loader import render_to_string
+
+        seen["html"] = render_to_string(template, {**ctx, "tenant": tenant, "logo_url": None, "printed_at": "",
+                                                   "doc_title": kw.get("title", ""), "doc_ref": ""})
+        return HttpResponse(b"")
+
+    for url in (f"/api/v1/invoices/{inv['id']}/pdf", f"/api/v1/sales-orders/{order['id']}/pdf"):
+        with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
+            assert api.get(url).status_code == 200
+        assert ">GST (18%)<" in seen["html"], url
+
+    csv = api.get("/api/v1/invoices/export", {"format": "csv"}).content.decode()
+    head, first = csv.splitlines()[:2]
+    assert "GST %" in head and ",GST," in head and "18%" in first
+
+    from apps.sales.services import gst_pct
+    assert gst_pct([D("18.000"), D("0"), D("17"), D("18")]) == "17%, 18%" and gst_pct([]) == ""

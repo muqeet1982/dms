@@ -299,7 +299,8 @@ class GeoFenceEvent(TenantModel):
 
     class Meta:
         ordering = ["-occurred_at"]
-        indexes = [models.Index(fields=["tenant", "occurred_at"]), models.Index(fields=["tenant", "verdict"])]
+        indexes = [models.Index(fields=["tenant", "occurred_at"]), models.Index(fields=["tenant", "verdict"]),
+                   models.Index(fields=["tenant", "document_id"])]   # each order's location check, looked up per row
 
 
 class LocationPing(TenantModel):

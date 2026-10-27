@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
-import { date, datetime, fbrRateLabel, money, otherTaxLabel, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, gstPct, money, otherTaxLabel, qty } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -218,7 +218,7 @@ export function RepOrderDetailPage() {
             <tbody>{o.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="fs-11 text-muted">{l.variant_sku}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.free_qty)}</td>{prices && <td className="num">{money(l.unit_price)}</td>}{taxed && <><td className="num">{money(Number(l.line_total) - t - otherOf(l))}</td><td className="num">{t ? <>{money(t)}{l.product_fbr_rate && <div className="text-muted fs-11">{fbrRateLabel(l.product_fbr_rate)}</div>}</> : "—"}</td></>}{showOther && <td className="num">{otherOf(l) ? <>{money(otherOf(l))}<div className="text-muted fs-11">{otherTaxLabel({ fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate })}</div></> : "—"}</td>}{prices && <td className="num">{money(taxed ? l.line_total : Number(l.qty_ordered) * Number(l.unit_price))}</td>}<td className="num">{qty(l.qty_delivered)}</td></tr>; })}</tbody>
             {prices && <tfoot>{taxed
               ? <TaxFooterRows span={span} trail={1} sub={Number(o.subtotal)} discount={Number(o.discount)} discountPct={o.discount_pct} scheme={Number(o.scheme_discount)}
-                  net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
+                  net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} gstPct={gstPct(o.lines.map((l: any) => l.tax1_rate))} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
                   further={Number(o.further_tax_total)} wht={Number(o.wht_total)} />
               : <PlainFooterRows span={span} trail={1} sub={Number(o.subtotal)} discount={Number(o.discount) + Number(o.scheme_discount)} discountPct={o.discount_pct} payable={Number(o.total)} />}</tfoot>}
           </table>;

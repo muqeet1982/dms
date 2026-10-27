@@ -5,6 +5,7 @@ Filing is opt-in per invoice — these run only when someone presses the button 
 """
 import json
 from datetime import date
+from decimal import Decimal
 
 import requests
 from django.utils import timezone
@@ -201,6 +202,16 @@ def build_payload(inv, filing, *, use_sandbox):
             fed_rate=p.fbr_fed_rate, extra_rate=p.fbr_extra_tax_rate,
             further_rate=p.fbr_further_tax_rate, withheld_rate=p.fbr_wht_rate,
         )
+        # FBR recomputes from the rates it is sent — today's product rates. If they moved since the invoice was
+        # charged, the filing would disagree with the posted invoice and its journal: refuse, and say how to fix
+        charged = {"GST": (line.tax1_amount, money["salesTaxApplicable"]), "FED": (line.fed_amount, money["fedPayable"]),
+                   "Extra Tax": (line.extra_tax_amount, money["extraTax"]), "Further Tax": (line.further_tax_amount, money["furtherTax"]),
+                   "WHT": (line.wht_amount, money["salesTaxWithheldAtSource"])}
+        moved = [f"{k} {Decimal(str(was or 0)):.2f} → {Decimal(str(now or 0)):.2f}" for k, (was, now) in charged.items()
+                 if abs(Decimal(str(was or 0)) - Decimal(str(now or 0))) > Decimal("0.01")]
+        if moved:
+            raise DomainError(f"{line.description}: the product's FBR rates changed since this invoice was charged ({', '.join(moved)}). "
+                              "Reopen the invoice and post it again to charge today's rates, then file.", code="fbr_rates_changed")
         items.append({
             "hsCode": p.fbr_hs_code,
             "productDescription": engine.fbr_text((p.name or "").strip() or line.description),  # §11.3

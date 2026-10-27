@@ -113,6 +113,9 @@ class PostingService:
     def post_draft(entry):
         if entry.status != "draft":
             raise DomainError("Only draft journals can be posted.")
+        if entry.source_type and entry.type == "auto":
+            # held while its document is being edited — posting it by hand would book the document twice
+            raise DomainError(f"This entry belongs to {entry.source_type} {getattr(entry, 'source_number', '') or ''} and is posted with that document.".replace("  ", " "), code="held_entry")
         lines = list(entry.lines.select_related("account"))
         d = sum((l.debit for l in lines), Decimal("0"))
         c = sum((l.credit for l in lines), Decimal("0"))
@@ -688,7 +691,7 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
-    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None, other_account=None):
+    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None, other_account=None, auto_allocate=True):
         amount = q4(amount)
         if amount <= 0:
             raise DomainError("Amount must be positive.")
@@ -738,7 +741,9 @@ class PaymentService:
             ChequeBookService.take(pay)
         remaining = amount + deduction_total  # deducted claims settle bills just like cash does
         allocations = allocations or []
-        if not allocations and partner_type in ("customer", "supplier") and partner_id:
+        # auto_allocate=False keeps the money on account — COD cash against a DRAFT invoice waits for that
+        # invoice's posting (InvoiceService.post applies it) instead of settling the customer's older ones
+        if not allocations and auto_allocate and partner_type in ("customer", "supplier") and partner_id:
             # FIFO by default (§6.1)
             for doc, balance, dtype in PaymentService._open_documents(partner_type, partner_id):
                 if remaining <= 0:
@@ -755,6 +760,8 @@ class PaymentService:
             if amt <= 0:
                 continue
             doc = PaymentService._load(a["document_type"], a["document_id"])
+            if getattr(doc, "status", "") in ("draft", "cancelled"):
+                raise DomainError(f"{doc.number} is {doc.status} — post it before receiving money against it.", code="not_posted")
             balance = doc.total - doc.paid_amount
             if amt > balance + Decimal("0.01"):
                 raise DomainError(f"Allocation {amt} exceeds balance {balance} of {doc.number}.")

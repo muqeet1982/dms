@@ -41,7 +41,7 @@ def _group(rows, key_fn, label_fn):
         r = out[k]
         r["label"] = label_fn(l)
         r["qty"] += l.qty
-        r["sales"] += l.line_total - l.tax1_amount - l.tax2_amount
+        r["sales"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
         r["cogs"] += l.qty * l.unit_cost
         r["invoices"].add(l.invoice_id)
     result = []

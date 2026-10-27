@@ -79,6 +79,17 @@ export function fbrRateLabel(rate: string): string {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * "18%" — the GST % the footer prints beside GST (owner, 27 Oct 2026: "change GST to GST (N%)"). From the lines'
+ * own rates; a document mixing rates lists each ("17%, 18%"). Empty when no line carries a % (fixed-rupee only).
+ */
+export function gstPct(rates: any[]): string {
+  const set = [...new Set(rates.map((r) => Number(r) || 0).filter((r) => r > 0))].sort((a, b) => a - b);
+  return set.map((r) => `${r}%`).join(", ");
+}
+/** The same from preview labels ("18% + Rs.60" → 18). */
+export const gstPctOfLabels = (labels: any[]): string => gstPct(labels.map((l) => (l ? fbrRateParts(String(l)).pct : 0)));
+
 /** The product's FED / Extra / Further / WHT rates (its FBR card), as any API row carries them. */
 export type OtherRates = { fed?: any; extra?: any; further?: any; wht?: any };
 export type LineTax = { label: string; amount: number; fed: number; extra: number; further: number; wht: number; other: number };

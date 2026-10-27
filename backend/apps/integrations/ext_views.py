@@ -475,6 +475,8 @@ class ExtCustomersView(ExtBase):
         if p.get("since"):
             qs = qs.filter(updated_at__gte=p["since"])
         show_outstanding = has_tenant_perm(request, "external.view_customer_outstanding") or has_tenant_perm(request, "customers.view_customer_ledger")
+        from apps.sales.services import discount_parties, discount_split
+        parties, splits = discount_parties(), {}
         rows = []
         for c in qs[:2000]:
             # FLATTENED (the app team's design, 21 Oct 2026): one row per SHOP. The account's own pin is its
@@ -488,6 +490,13 @@ class ExtCustomersView(ExtBase):
                     "credit_limit": str(c.credit_limit) if show_outstanding else None, "credit_days": c.credit_days,
                     "price_list": c.price_list.name if c.price_list_id else None,
                     "ntn": c.ntn, "strn": c.strn, "cnic": c.cnic, "updated_at": c.updated_at, "account": account}
+            # the shop's standing total discount and who funds it (owner, 27 Oct 2026) — the server already applies
+            # it to every order; these are for the rep to see, e.g. "15% — Keune Pakistan 12% + Trafco 3%"
+            pct = (c.default_discount_pct or Decimal("0")).normalize()
+            if pct not in splits:
+                splits[pct] = discount_split(pct, parties)
+            base["discount_pct"] = format(pct, "f")
+            base["discount_split"] = splits[pct]
             if show_outstanding:
                 base["outstanding"] = str(CustomerService.outstanding(c))
                 base["overdue"] = str(CustomerService.overdue(c))
