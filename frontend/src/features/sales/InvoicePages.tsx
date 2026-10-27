@@ -126,7 +126,7 @@ export function InvoiceDetailPage() {
             return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Disc</th><th className="num">Taxable</th><th className="num">GST</th>{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">Line Total</th></tr></thead>
               <tbody>{inv.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); const disc = Number(l.discount_amount) || 0; return <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}{(l as any).hs_code ? ` · HS ${(l as any).hs_code}` : ""}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num">{disc > 0.004 ? money(disc) : "—"}</td><td className="num">{money(Number(l.line_total) - taxAmt - otherOf(l))}</td><td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.tax_pct_override == null && (l as any).fbr_rate ? fbrRateLabel((l as any).fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>{showOther && <td className="num">{otherOf(l) ? <>{money(otherOf(l))}<div className="text-muted fs-11">{otherTaxLabel({ fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate })}</div></> : "—"}</td>}<td className="num fw-medium">{money(l.line_total)}</td></tr>; })}</tbody>
               <tfoot>
-                <TaxFooterRows span={span} sub={taxableSum + discTotal} discount={discTotal} discountLabel={Number(inv.discount_pct) > 0 ? `Discount (${Number(inv.discount_pct)}%)` : "Discount"} net={taxableSum} gst={taxTotal} gstLabel={inv.tax1_name || ""}
+                <TaxFooterRows span={span} sub={taxableSum + discTotal} discount={discTotal} discountPct={inv.discount_pct} net={taxableSum} gst={taxTotal} gstLabel={inv.tax1_name || ""}
                   fed={Number(inv.fed_total)} extra={Number(inv.extra_tax_total)} further={Number(inv.further_tax_total)} wht={Number(inv.wht_total)} />
                 {Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={span} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}
               </tfoot></table>;
@@ -138,7 +138,7 @@ export function InvoiceDetailPage() {
           return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Amount</th></tr></thead>
             <tbody>{inv.lines.map((l: any, i: number) => <tr key={l.id}><td>{i + 1}</td><td>{l.description}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td className="num fw-medium">{money(grossOf(l))}</td></tr>)}</tbody>
             <tfoot>
-              <PlainFooterRows span={4} sub={sub} discount={Number(inv.discount)} payable={Number(inv.total)} />
+              <PlainFooterRows span={4} sub={sub} discount={Number(inv.discount)} discountPct={inv.discount_pct} payable={Number(inv.total)} />
               {Number(inv.company_claims_total) > 0 && <tr className="text-success"><td colSpan={4} className="text-end">Claimed from manufacturers</td><td className="num"><Link to="/app/sales/company-claims">{money(inv.company_claims_total)}</Link></td></tr>}
             </tfoot></table>;
         })()}
@@ -212,8 +212,8 @@ export function InvoiceDetailPage() {
                       {showOther && <td className="num fs-12">{fig[i].gst?.other ? <>{money(fig[i].gst.other)}<div className="text-muted fs-11">{otherTaxLabel(l.others || {})}</div></> : "—"}</td>}
                       <td className="num fs-12 fw-medium">{money(taxed ? fig[i].total : fig[i].gross)}</td>
                     </tr>))}</tbody>
-                  <tfoot>{taxed ? <TaxFooterRows span={span} className="fs-12" sub={gross} discount={disc} net={net} gst={tax}
-                      fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} /> : <PlainFooterRows span={span} className="fs-12" sub={gross} discount={disc} payable={net} />}</tfoot>
+                  <tfoot>{taxed ? <TaxFooterRows span={span} className="fs-12" sub={gross} discount={disc} discountPct={inv.discount_pct} net={net} gst={tax}
+                      fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} /> : <PlainFooterRows span={span} className="fs-12" sub={gross} discount={disc} discountPct={inv.discount_pct} payable={net} />}</tfoot>
                 </table></div>;
               })()}
               <div className="form-text">Quantities are what the warehouse issued and are set by the delivery note. The figures update as you type; the server recalculates them exactly when you save.</div>
@@ -304,8 +304,8 @@ export function InvoiceCreatePage() {
                       <td className="num fw-medium">{money(applyTax ? b.total : b.gross)}</td>
                     </tr>)}</tbody>
                     <tfoot>
-                      {applyTax ? <TaxFooterRows span={span} sub={gross} discount={disc} net={net} gst={tax}
-                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} /> : <PlainFooterRows span={span} sub={gross} discount={disc} payable={net} />}
+                      {applyTax ? <TaxFooterRows span={span} sub={gross} discount={disc} discountPct={effDisc} net={net} gst={tax}
+                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} /> : <PlainFooterRows span={span} sub={gross} discount={disc} discountPct={effDisc} payable={net} />}
                     </tfoot></table>;
                 })()}
                 <div className="text-muted fs-11 mt-1">The invoice bills the issued quantities of the deliveries above. Saving keeps it as a <strong>draft</strong> — you can still see and edit every price, discount and the tax there, and nothing reaches the books until you press <strong>Post to ledger</strong>.</div>

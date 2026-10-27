@@ -174,7 +174,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "opening_balance_date", label: "As at", type: "date", col: "col-md-3", hint: "the date this balance is from" },
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "credit_days", label: "Credit days", type: "number", col: "col-md-2", default: 0, suffix: "days", readOnly: !can("customers.set_credit_limit"), hint: "0 days = a cash customer" },
     { ...sec("Opening balance", "ti-scale", undefined, true), name: "credit_limit", label: "Credit limit", type: "money", col: "col-md-2", default: 0, prefix: "PKR", readOnly: !can("customers.set_credit_limit") },
-    { ...sec("Opening balance", "ti-scale", undefined, true), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
+    { ...sec("Opening balance", "ti-scale", undefined, true), name: "default_discount_pct", label: "Discount %", type: "number", col: "col-md-2", default: 0, suffix: "%", hint: "changing it also updates this customer's orders not yet delivered and their invoices (posted ones are re-posted, ledger included); delivered, paid or FBR-filed invoices keep the old % and are listed for you", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
 
   ];
 }

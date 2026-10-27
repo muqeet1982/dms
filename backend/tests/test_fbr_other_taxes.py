@@ -179,7 +179,7 @@ def test_a_document_without_tax_takes_the_discount_on_the_total(api, tenant, wor
 
     with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         api.get(f"/api/v1/sales-orders/{r.data['id']}/pdf")
-    assert footer(seen["html"]) == "Sub Total 600.00 Total Discount −30.00 Grand Total 570.00 Total Payable 570.00", footer(seen["html"])
+    assert footer(seen["html"]) == "Sub Total 600.00 Total Discount (5%) −30.00 Grand Total 570.00 Total Payable 570.00", footer(seen["html"])
     assert ">Discount<" not in seen["html"] and ">Amount<" in seen["html"], "the discount is on the total, not in the lines"
 
     pl = api.post(f"/api/v1/sales-orders/{r.data['id']}/load-form", {}, format="json")
@@ -188,4 +188,4 @@ def test_a_document_without_tax_takes_the_discount_on_the_total(api, tenant, wor
     inv = made.data[0] if isinstance(made.data, list) else made.data
     with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         api.get(f"/api/v1/invoices/{inv['id']}/pdf")
-    assert footer(seen["html"]).startswith("Sub Total 600.00 Total Discount −30.00 Grand Total 570.00 Total Payable 570.00"), footer(seen["html"])
+    assert footer(seen["html"]).startswith("Sub Total 600.00 Total Discount (5%) −30.00 Grand Total 570.00 Total Payable 570.00"), footer(seen["html"])

@@ -132,7 +132,7 @@ carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount
   <tr class="sum"><td>Total Payable</td><td class="r">{{ inv.total|num }}</td></tr>
   {% else %}
   <tr><td class="l">Sub Total</td><td class="r">{{ gross_total|num }}</td></tr>
-  <tr><td class="l">Total Discount</td><td class="r">{% if inv.discount %}&minus;{{ inv.discount|num }}{% else %}0.00{% endif %}</td></tr>
+  <tr><td class="l">Total Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">{% if inv.discount %}&minus;{{ inv.discount|num }}{% else %}0.00{% endif %}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ taxable_total|num }}</td></tr>
   <tr class="sum"><td>Total Payable</td><td class="r">{{ inv.total|num }}</td></tr>
   {% endif %}

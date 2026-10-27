@@ -119,7 +119,7 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
 <table class="totals">
   {% if tax_on %}
   <tr><td class="l">Sub Total</td><td class="r">{{ o.subtotal|num }}</td></tr>
-  {% if o.discount %}<tr><td class="l">Discount</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
+  {% if o.discount %}<tr><td class="l">Discount{% if o.discount_pct %} ({{ o.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">−{{ o.discount|num }}</td></tr>{% endif %}
   {% if o.scheme_discount %}<tr><td class="l">Scheme</td><td class="r">−{{ o.scheme_discount|num }}</td></tr>{% endif %}
   <tr><td class="l">Net Total</td><td class="r">{{ taxable_total|num }}</td></tr>
   <tr><td class="l">GST{% if tax1_name %} — {{ tax1_name }}{% endif %}</td><td class="r">{{ tax_shown|num }}</td></tr>
@@ -133,7 +133,7 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
   {% else %}
   {% comment %}No tax (owner, 27 Oct 2026): Sub Total − Total Discount (customer, product and scheme alike) = Grand Total = Total Payable.{% endcomment %}
   <tr><td class="l">Sub Total</td><td class="r">{{ o.subtotal|num }}</td></tr>
-  <tr><td class="l">Total Discount</td><td class="r">{% if total_discount %}−{{ total_discount|num }}{% else %}0.00{% endif %}</td></tr>
+  <tr><td class="l">Total Discount{% if o.discount_pct %} ({{ o.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">{% if total_discount %}−{{ total_discount|num }}{% else %}0.00{% endif %}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ taxable_total|num }}</td></tr>
   <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% endif %}

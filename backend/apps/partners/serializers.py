@@ -144,9 +144,16 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         rows = validated_data.pop("locations_write", None)
+        old_pct = getattr(instance, "default_discount_pct", None)
         obj = super().update(instance, validated_data)
         if rows is not None:
             self._save_locations(obj, rows)
+        # a new standing discount reaches the customer's documents that are not on the books yet (owner, 27 Oct 2026)
+        if "default_discount_pct" in validated_data and old_pct is not None and obj.default_discount_pct != old_pct:
+            from apps.sales.services import OrderService
+
+            request = self.context.get("request")
+            OrderService.follow_customer_discount(obj, old_pct, obj.default_discount_pct, actor=getattr(request, "user", None))
         return obj
 
     def validate(self, attrs):

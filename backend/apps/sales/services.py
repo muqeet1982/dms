@@ -107,6 +107,74 @@ class OrderService:
         return order
 
     @staticmethod
+    @transaction.atomic
+    def follow_customer_discount(customer, old_pct, new_pct, actor=None):
+        """
+        A customer's standing discount changed: their business still in flight follows it, books included (owner,
+        27 Oct 2026 — TDN-SO-00055 kept 0% after House Of Charbel was set to 15%: "fix for the project as well …
+        also update accounting as well"). An order takes the % once, at creation; this carries a change through.
+
+        * Orders still on the old standing rate whose goods have NOT reached the customer (up to dispatched) take
+          the new %, lines and all. Their draft invoices are re-discounted; an unpaid, unfiled POSTED invoice is
+          reopened (its posting, COGS, claims and net-offs reversed), re-discounted and posted again — so the
+          ledger, the discount split and the manufacturer's claim all follow.
+        * Draft invoices anywhere on the old rate follow too: they are not on the books.
+        * Delivered, paid or FBR-filed business is settled and is never rewritten behind anyone's back: those
+          invoices are listed in a notification for the office to reopen on purpose.
+        * A % set by hand on an order or invoice is that document's own and stays.
+        """
+        old_pct, new_pct = Decimal(str(old_pct or 0)), Decimal(str(new_pct or 0))
+        done = {"orders": [], "draft_invoices": [], "reposted_invoices": [], "posted_invoices": []}
+        if old_pct == new_pct:
+            return done
+        old_s, new_s = (format(x.normalize(), "f") for x in (old_pct, new_pct))   # 15.000 → "15"
+        reason = f"customer's standing discount changed {old_s}% → {new_s}%"
+        action = "apply" if new_pct > 0 else "remove"
+        in_flight = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
+
+        def settled(inv):
+            filing = getattr(inv, "fbr_filing", None)
+            return inv.paid_amount > 0 or inv.status not in ("posted", "overdue") or (filing is not None and filing.status == "submitted")
+
+        for o in SalesOrder.objects.filter(customer=customer, status__in=in_flight, apply_customer_discount=True):
+            if o.discount_pct is not None and Decimal(str(o.discount_pct)) != old_pct:
+                continue  # a % set by hand for this order
+            billed = list(o.invoices.exclude(status__in=["draft", "cancelled"]))
+            if any(settled(i) for i in billed):
+                continue  # money or a filing already rests on it — listed below
+            o.discount_pct = new_pct
+            o.save(update_fields=["discount_pct", "updated_at"])
+            o.lines.filter(discount_pct=old_pct).update(discount_pct=new_pct)
+            OrderService.recompute(o, allow_override=True)  # prices stay as they stand; only the discount moves
+            AuditService.log("order.discount_followed_customer", o, before={"discount_pct": str(old_pct)}, after={"discount_pct": str(new_pct), "total": str(o.total)}, actor=actor)
+            done["orders"].append(o.number)
+            for inv in billed:
+                if inv.discount_pct != old_pct:
+                    continue
+                InvoiceService.reopen(inv, reason=reason, actor=actor)
+                InvoiceService.set_discount(inv, action=action, percent=new_pct, actor=actor)
+                InvoiceService.post(inv)
+                done["reposted_invoices"].append(inv.number)
+        for inv in SalesInvoice.objects.filter(customer=customer, status="draft", discount_pct=old_pct):
+            InvoiceService.set_discount(inv, action=action, percent=new_pct, actor=actor)
+            done["draft_invoices"].append(inv.number)
+        done["posted_invoices"] = list(SalesInvoice.objects.filter(customer=customer, status__in=["posted", "overdue", "partially_paid"], discount_pct=old_pct)
+                                       .exclude(number__in=done["reposted_invoices"]).values_list("number", flat=True))
+        if any(done.values()):
+            from apps.core.notifications import notify_permission
+
+            body = [f"{customer.name}: standing discount {old_s}% → {new_s}%."]
+            if done["orders"] or done["draft_invoices"]:
+                body.append("Updated: " + ", ".join(done["orders"] + done["draft_invoices"]) + ".")
+            if done["reposted_invoices"]:
+                body.append("Re-posted with the new discount (ledger and claims updated): " + ", ".join(done["reposted_invoices"]) + ".")
+            if done["posted_invoices"]:
+                body.append("Delivered, paid or filed — kept at the old % (reopen to change): " + ", ".join(done["posted_invoices"]) + ".")
+            notify_permission("sales.change_invoice", "customer.discount_changed", f"{customer.name} discount changed to {new_s}%", " ".join(body),
+                              {"customer_id": str(customer.pk)})
+        return done
+
+    @staticmethod
     def effective_discount_pct(order):
         """The order's own % when one was set; the customer's standing rate otherwise (legacy orders)."""
         if order.discount_pct is not None:
@@ -117,6 +185,11 @@ class OrderService:
 
     @staticmethod
     def write_lines(order, lines, allow_override=False):
+        # an edit form sends every line's price back. A price that is only the stored one echoed, on a line nobody
+        # ever priced by hand (no requested_price — the server set it from the list), is NOT a request: treating it
+        # as one raised false "price differences" whenever the list moved after the order was taken (TDN-SO-00055,
+        # 27 Oct 2026). Such a line simply takes today's list price; a price somebody typed is still a request.
+        echoed = {(ol.variant_id, ol.packaging_id): ol.unit_price for ol in order.lines.all() if ol.requested_price is None}
         order.lines.all().delete()
         # the order's discount % applies to lines that carry no discount of their own
         default_pct = OrderService.effective_discount_pct(order)
@@ -134,6 +207,8 @@ class OrderService:
             req = l.get("unit_price")
             if req is not None and l.get("price_per_packaging") and packaging:
                 req = Decimal(req) / packaging.qty_in_base
+            if req is not None and echoed.get((l["variant"].pk, packaging.pk if packaging else None)) == q4(req):
+                req = None
             prod_pct = l.get("product_discount_pct")
             if prod_pct is None:
                 # the product's own rule decides: dated offer first, else the standard % from its minimum qty

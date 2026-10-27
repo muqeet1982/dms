@@ -184,9 +184,9 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
             {!lines.length && <tr><td colSpan={9} className="text-center text-muted py-4">No lines — scan a barcode or add a line.</td></tr>}
           </tbody>
           {showPrice && lines.length > 0 && <tfoot>
-            {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} net={total} gst={taxTotal}
+            {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} net={total} gst={taxTotal}
                 fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} payableLabel={payableLabel} />
-              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} payable={total} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
+              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} payable={total} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>
       </div>
