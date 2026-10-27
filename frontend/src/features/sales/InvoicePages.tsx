@@ -86,9 +86,14 @@ export function InvoiceDetailPage() {
                   toast.success(inv.force_tax_type ? "Tax removed — review, then press Post to ledger" : "Tax on — review the figures, then press Post to ledger");
                 } catch (e: any) { toast.error(e.message); } finally { setSaving(false); qc.invalidateQueries(); }
               }}><i className="ti ti-percentage me-1" />{inv.force_tax_type ? "Tax off" : "Tax on"}</button>)}
+          {/* a posted tax invoice files with FBR in ONE click (owner, 27 Oct 2026: "after submit also give button to post
+              to fbr"): the server validates and only on a pass files it — FBR's number and QR then print on the invoice */}
           {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && page.can("fbr_file") && inv.fbr?.status !== "submitted" && <>
-            <button className="btn btn-outline-info" disabled={!!busy} onClick={() => run("fbr-validate", {}, { success: "FBR accepted the dry run — ready to submit" })}><i className="ti ti-building-bank me-1" />Validate with FBR</button>
-            {inv.fbr?.status === "validated" && <button className="btn btn-info" disabled={!!busy} onClick={() => run("fbr-submit", {}, { success: "Filed — FBR number issued" })}><i className="ti ti-send me-1" />Submit to FBR</button>}
+            <button className="btn btn-info" disabled={!!busy || !inv.fbr_setup?.configured}
+              title={inv.fbr_setup?.configured ? "Checks the invoice with FBR and, if it passes, files it" : "Set up FBR first under Settings → FBR e-invoicing"}
+              onClick={() => run("fbr-post", {}, { success: inv.fbr_setup?.sandbox ? "Filed with FBR's SANDBOX — a test filing, not a legal one" : "Filed with FBR — number issued" })}>
+              <i className="ti ti-send me-1" />Post to FBR{inv.fbr_setup?.sandbox ? " (sandbox)" : ""}</button>
+            <button className="btn btn-outline-info" disabled={!!busy || !inv.fbr_setup?.configured} onClick={() => run("fbr-validate", {}, { success: "FBR accepted the dry run — ready to post" })}><i className="ti ti-building-bank me-1" />Validate only</button>
           </>}
           {inv.status === "draft" && page.can("discount") && (inv.force_tax_type
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
@@ -99,6 +104,7 @@ export function InvoiceDetailPage() {
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
       {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.edit ? <>, press <strong>Edit</strong> to change prices or discounts</> : null}{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
+      {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && !inv.fbr && <Alert kind="info"><strong>Tax invoice — not filed with FBR yet.</strong> {inv.fbr_setup?.configured ? <>Press <strong>Post to FBR</strong>{inv.fbr_setup.sandbox ? " (FBR is set to its sandbox — a test filing)" : ""}; FBR's number and QR then print on the invoice.</> : <>Set up FBR under Settings → FBR e-invoicing to file it.</>}</Alert>}
       {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
         <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
       </Alert>}

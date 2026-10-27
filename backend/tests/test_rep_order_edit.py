@@ -659,3 +659,31 @@ def test_a_tax_customers_order_prints_as_a_tax_document_from_the_rep_app_too(rep
     assert r.status_code == 200, r.content
     assert seen["template"] == "sales/order.html" and seen["tax_on"] is True
     assert seen["tax_shown"] > 0, "the rep's order carries the customer's FBR tax"
+
+
+def test_a_basket_is_priced_before_it_is_sent_and_nothing_is_saved(api, tenant, rep_app):
+    """POST /ext/v1/orders/preview (mobile AI, 27 Oct 2026): the figures the order would get — the customer's %,
+    taxes, total — with no order, number or stock hold created. Same scope as placing an order."""
+    from apps.partners.models import Customer
+    from apps.sales.models import SalesOrder
+
+    t = rep_app["tenant"]
+    with tenant_context(t, t.owner):
+        Customer.objects.filter(pk=rep_app["customer"].pk).update(default_discount_pct=Decimal("10"))
+        before = SalesOrder.objects.count()
+    body = {"customer": {"id": str(rep_app["customer"].id)}, "lines": [{"variant_id": str(rep_app["variant"].id), "qty": 4}]}
+    r = api.post("/ext/v1/orders/preview", body, format="json")      # office login through the app endpoints
+    assert r.status_code == 200, r.content
+    assert Decimal(r.data["subtotal"]) == Decimal("600") and Decimal(r.data["discount"]) == Decimal("60")
+    assert Decimal(r.data["discount_pct"]) == Decimal("10") and Decimal(r.data["total"]) == Decimal("540")
+    assert r.data["lines"][0]["line_total"].startswith("540")
+    with tenant_context(t, t.owner):
+        assert SalesOrder.objects.count() == before, "a preview saves nothing"
+
+    bad = api.post("/ext/v1/orders/preview", {**body, "lines": [{"sku": "NO-SUCH-SKU", "qty": 1}]}, format="json")
+    assert bad.status_code == 400
+    # a rep cannot price a shop that is not theirs — the same 404 as placing the order
+    with tenant_context(t, t.owner):
+        stranger = Customer.objects.create(code="C-OTHER", name="Not Yours")
+    nope = rep_app["phone"].post("/ext/v1/orders/preview", {**body, "customer": {"id": str(stranger.id)}}, format="json")
+    assert nope.status_code in (403, 404), nope.content

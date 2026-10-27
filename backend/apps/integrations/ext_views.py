@@ -304,6 +304,45 @@ class ExtOrdersView(ExtBase):
         return Response(body, status=code)
 
 
+class ExtOrderPreviewView(ExtBase):
+    """
+    `POST /ext/v1/orders/preview` — what a basket would cost, before it is sent (mobile AI's ask, 27 Oct 2026: the
+    owner wants subtotal, discount, taxes and total on the new-order and change-the-order screens). Takes the body
+    of `POST /ext/v1/orders` ({customer: {id|code}, lines, order?}); saves nothing — no number, no stock hold, no
+    notification, no idempotency record. Same scope and refusals as placing the order (a shop that is not the
+    rep's → 404, an unknown product → 400); the location gate, the shift rule and stock do not apply: it is a
+    price, not an order. `order` (the rep's own) prices it as that order's edit would.
+    """
+
+    def post(self, request):
+        self.perm(request, "external.submit_order")
+        self.perm(request, "external.view_prices")
+        supplier, rep = self.context(request)
+        d = request.data
+        c = d.get("customer") or {}
+        customer = None
+        if c.get("id"):
+            customer, _location = self.resolve_shop(request, c["id"])
+        elif c.get("code"):
+            customer = self.customers_qs(request).filter(code=c["code"]).first()
+        if customer is None:
+            raise DomainError("Customer not found or not assigned to you.", status_code=404)
+        order = None
+        if d.get("order"):
+            qs = SalesOrder.objects.filter(pk=d["order"], customer=customer) if _is_uuid(str(d["order"])) else SalesOrder.objects.none()
+            if rep is not None:
+                qs = qs.filter(rep=rep)
+            elif supplier is not None:
+                qs = qs.filter(supplier=supplier)
+            order = qs.first()
+            if order is None:
+                raise DomainError("Not your order.", status_code=404)
+        lines = self._resolve_lines(d.get("lines"))
+        if not lines:
+            raise DomainError("No lines.", status_code=400)
+        return Response(OrderService.preview(customer, lines, order=order))
+
+
 class ExtOrderDetailView(ExtBase):
     """
     `GET /ext/v1/orders/{id}` — one of the rep's own orders.

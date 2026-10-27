@@ -81,6 +81,21 @@ class PostingService:
         if total_d != total_c:
             raise DomainError(f"Journal does not balance: debit {total_d} ≠ credit {total_c}.", code="unbalanced")
         period = period_for(date_) if status == "posted" else None
+        held = PostingService._held_for(source, memo) if status == "posted" and number is None else None
+        if held is not None:
+            # the document was reopened and is posting again: its own entry is REWRITTEN under the same number
+            # (owner, 27 Oct 2026: "it should update the existing" — not a fresh entry per edit)
+            held.lines.all().delete()
+            held.date, held.memo, held.type, held.status, held.period = date_, memo[:300], type_, "posted", period
+            held.posted_by = get_current_user() if getattr(get_current_user(), "is_authenticated", False) else None
+            held.posted_at, held.total_debit, held.total_credit = timezone.now(), total_d, total_c
+            held.save()
+            for i, l in enumerate(lines):
+                if l.account.is_group:
+                    raise DomainError(f"Cannot post to group account {l.account}.")
+                JournalLine.objects.create(entry=held, account=l.account, debit=l.debit, credit=l.credit, description=l.description, partner_type=l.partner_type, partner_id=l.partner_id, cost_centre=l.cost_centre, tax_type=l.tax_type, sequence=i)
+            AuditService.log("journal.updated", held, after={"debit": str(total_d), "memo": memo[:120]})
+            return held
         entry = JournalEntry.objects.create(
             number=number or next_number("journal"), date=date_, type=type_, memo=memo[:300], status=status, period=period,
             source_type=source.__class__.__name__ if source is not None else "", source_id=str(source.pk) if source is not None else "", source_number=str(getattr(source, "number", "") or ""),
@@ -114,6 +129,54 @@ class PostingService:
         entry.save()
         AuditService.log("journal.posted", entry, after={"debit": str(d), "credit": str(c)})
         return entry
+
+    @staticmethod
+    def _kind(memo, source_number):
+        """What an entry is FOR on its document — "Sales invoice", "COGS for", "Discount claim", "Claim" — so a held
+        entry is reused only by the posting of the same kind (an invoice owns a sales entry AND a COGS entry)."""
+        memo = memo or ""
+        return memo.split(source_number, 1)[0].strip() if source_number and source_number in memo else memo[:24]
+
+    @staticmethod
+    def _held_for(source, memo):
+        if source is None or getattr(source, "pk", None) is None:
+            return None
+        number = str(getattr(source, "number", "") or "")
+        kind = PostingService._kind(memo, number)
+        for e in JournalEntry.objects.filter(source_type=source.__class__.__name__, source_id=str(source.pk), status="draft", type="auto").order_by("created_at"):
+            if PostingService._kind(e.memo, number) == kind:
+                return e
+        return None
+
+    @staticmethod
+    @transaction.atomic
+    def hold(entry, memo=None):
+        """
+        Take a posted entry OFF the books while its document is being edited (owner, 27 Oct 2026): back to draft,
+        same number, out of every balance — the document's next posting rewrites it in place (see post()). A
+        closed period's books cannot change, so there the entry is reversed instead, as before.
+        """
+        if entry.status != "posted":
+            raise DomainError("Only posted journals can be held for an edit.")
+        period = entry.period
+        if period is not None and (period.status == "closed" or period.fiscal_year.status == "closed"):
+            return PostingService.reverse(entry, memo=memo)
+        entry.status, entry.period, entry.posted_at = "draft", None, None
+        entry.save(update_fields=["status", "period", "posted_at", "updated_at"])
+        AuditService.log("journal.held", entry, after={"reason": memo or "document reopened for editing"})
+        return entry
+
+    @staticmethod
+    def purge_held(source):
+        """Held entries the corrected posting no longer needed (a COGS or a claim that fell away) — drafts, off the books."""
+        if source is None:
+            return 0
+        n = 0
+        for e in JournalEntry.objects.filter(source_type=source.__class__.__name__, source_id=str(source.pk), status="draft", type="auto"):
+            AuditService.log("journal.dropped", e, after={"memo": e.memo[:120]})
+            e.delete()
+            n += 1
+        return n
 
     @staticmethod
     @transaction.atomic

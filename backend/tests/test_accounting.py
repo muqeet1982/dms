@@ -99,3 +99,44 @@ def test_the_standard_chart_of_accounts_cannot_be_renamed_through_the_api(api, t
     # a level-3+ account's subtype and active flag stay editable
     ok2 = api.patch(f"/api/v1/accounting/accounts/{leaf.pk}", {"subtype": "bank"}, format="json")
     assert ok2.status_code == 200, ok2.content
+
+
+def test_editing_a_posted_invoice_rewrites_its_own_entries_instead_of_adding_more(api, tenant):
+    """Owner, 27 Oct 2026: "when edit invoice and save again, it create multiple journal entries, instead it should
+    update the existing". Reopen holds the entries off the books (same numbers); posting rewrites them in place."""
+    from decimal import Decimal
+
+    from apps.accounting.models import GL_LIVE, JournalEntry, JournalLine
+    from apps.accounting.services import account_for
+    from apps.core.tenancy import tenant_context
+    from django.db.models import Sum
+
+    from .conftest import seed_basic
+
+    wh, _sup, v, cust = seed_basic(tenant)
+    o = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json").data
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {}, format="json").data[0]
+    assert inv["status"] == "posted"
+
+    def entries():
+        with tenant_context(tenant, tenant.owner):
+            return sorted(JournalEntry.objects.filter(source_type="SalesInvoice", source_id=inv["id"]).values_list("number", "status"))
+
+    first = entries()
+    assert len(first) == 2 and all(s == "posted" for _, s in first), first   # sales + COGS
+
+    for price in ("140", "130"):                       # edit and post twice over
+        assert api.post(f"/api/v1/invoices/{inv['id']}/reopen", {"reason": "price fix"}, format="json").data["status"] == "draft"
+        held = entries()
+        assert [n for n, _ in held] == [n for n, _ in first] and all(s == "draft" for _, s in held), "held off the books, same numbers"
+        line = api.get(f"/api/v1/invoices/{inv['id']}").data["lines"][0]
+        assert api.patch(f"/api/v1/invoices/{inv['id']}", {"lines": [{"id": line["id"], "unit_price": price}]}, format="json").status_code == 200
+        assert api.post(f"/api/v1/invoices/{inv['id']}/post", {}, format="json").data["status"] == "posted"
+
+    assert entries() == first, "still exactly the original two entries, posted"
+    with tenant_context(tenant, tenant.owner):
+        assert not JournalEntry.objects.filter(memo__contains=f"{inv['number']} reopened").exists(), "no reversal entries"
+        ar = JournalLine.objects.filter(entry__source_id=inv["id"], entry__status__in=GL_LIVE, account=account_for("ar")).aggregate(d=Sum("debit"), c=Sum("credit"))
+        assert ar["d"] - ar["c"] == Decimal("520"), "the books hold the last edit: 4 × 130"

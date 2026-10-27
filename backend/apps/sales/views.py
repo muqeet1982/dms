@@ -294,6 +294,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "reopen": "sales.view_invoice",  # the real gate is inside: owner, or the matrix's edit-posted switch
         "fbr_validate": extra_perm("invoices", "fbr_file"),
         "fbr_submit": extra_perm("invoices", "fbr_file"),
+        "fbr_post": extra_perm("invoices", "fbr_file"),
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
@@ -405,6 +406,23 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         filing = fbr.submit(self.get_object(), actor=request.user)
         return Response({"status": filing.status, "fbr_invoice_number": filing.fbr_invoice_number,
                          "sandbox": filing.sandbox})
+
+    @action(detail=True, methods=["post"], url_path="fbr-post")
+    def fbr_post(self, request, pk=None):
+        """ONE button for a posted tax invoice (owner, 27 Oct 2026: "after submit also give button to post to fbr"):
+        validate, and only if FBR passes it, post it for real — the guide's validate-before-post rule, in one click."""
+        from apps.fbr import services as fbr
+
+        inv = self.get_object()
+        if inv.status in ("draft", "cancelled"):
+            raise DomainError("Post the invoice to the ledger first — FBR files final invoices, not drafts.")
+        if inv.force_tax_type_id is None:
+            raise DomainError("Only a tax invoice goes to FBR — switch the tax on first.", code="not_tax_invoice")
+        filing = getattr(inv, "fbr_filing", None)
+        if filing is None or filing.status != "submitted":
+            fbr.validate(inv, actor=request.user)
+            filing = fbr.submit(inv, actor=request.user)
+        return Response({"status": filing.status, "fbr_invoice_number": filing.fbr_invoice_number, "sandbox": filing.sandbox})
 
     @action(detail=True, methods=["post"])
     def tax(self, request, pk=None):

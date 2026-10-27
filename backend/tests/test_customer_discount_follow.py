@@ -57,7 +57,7 @@ def test_a_new_standing_discount_follows_business_in_flight_books_included(api, 
     # in flight: reopened, re-discounted and posted again — the ledger follows
     f = api.get(f"/api/v1/invoices/{in_flight['id']}").data
     assert f["status"] == "posted" and D(f["discount_pct"]) == D("10") and D(f["total"]) == D("270"), f
-    assert f["journal"] != in_flight["journal"], "a fresh posting"
+    assert f["journal"] == in_flight["journal"], "the invoice's own entry is rewritten, not a new one (27 Oct 2026)"
     assert D(api.get(f"/api/v1/sales-orders/{in_flight_order['id']}").data["total"]) == D("270")
     with tenant_context(tenant, tenant.owner):
         from apps.accounting.models import GL_LIVE, JournalLine

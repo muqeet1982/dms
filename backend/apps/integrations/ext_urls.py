@@ -6,6 +6,7 @@ urlpatterns = [
     path("me", v.ExtMeView.as_view()),
     path("me/sales-summary", v.ExtSalesSummaryView.as_view()),
     path("orders", v.ExtOrdersView.as_view()),
+    path("orders/preview", v.ExtOrderPreviewView.as_view()),  # before <pk>: "preview" is not an order id
     path("orders/<str:pk>", v.ExtOrderDetailView.as_view()),
     path("orders/<str:pk>/pdf", v.ExtOrderPdfView.as_view()),
     path("orders/<str:pk>/invoice-pdf", v.ExtOrderPdfView.as_view(), {"kind": "invoice"}),

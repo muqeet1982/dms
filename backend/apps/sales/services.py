@@ -175,6 +175,61 @@ class OrderService:
         return done
 
     @staticmethod
+    def preview(customer, lines, order=None):
+        """
+        Price a basket WITHOUT saving anything (the rep app shows subtotal / discount / taxes / total before Submit,
+        27 Oct 2026). The lines go through the same price_line a real order uses — price list, salon R.P, the
+        customer's or the order's %, product discounts, schemes, the tax-invoice taxes — but on unsaved objects:
+        no number is taken, no stock is checked or held, no event, notification or webhook fires. `order` prices
+        the basket as an edit of that order would (its date, %, price list and tax switch). Lines are in the
+        shape write_lines takes: [{variant, packaging, qty, unit_price?, discount_pct?, price_per_packaging?}].
+        """
+        from apps.catalog.models import product_discount_for
+
+        if order is not None:
+            o = SalesOrder(customer=customer, order_date=order.order_date, price_list=order.price_list, source=order.source,
+                           discount_pct=order.discount_pct, apply_customer_discount=order.apply_customer_discount, charge_tax=order.charge_tax)
+            echoed = {(ol.variant_id, ol.packaging_id): ol.unit_price for ol in order.lines.all() if ol.requested_price is None}
+        else:
+            o = SalesOrder(customer=customer, order_date=timezone.localdate(), price_list=customer.price_list, source="rep_app",
+                           discount_pct=Decimal(str(customer.default_discount_pct or 0)), apply_customer_discount=True, charge_tax=bool(customer.charge_tax))
+            echoed = {}
+        default_pct = OrderService.effective_discount_pct(o)
+        totals = {k: Decimal("0") for k in ("subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total")}
+        rows = []
+        for l in lines:
+            packaging = l.get("packaging")
+            qty = _base_qty(l["qty"], packaging)
+            if qty <= 0:
+                continue
+            req = l.get("unit_price")
+            if req is not None and l.get("price_per_packaging") and packaging:
+                req = Decimal(req) / packaging.qty_in_base
+            if req is not None and echoed.get((l["variant"].pk, packaging.pk if packaging else None)) == q4(req):
+                req = None
+            line = SalesOrderLine(order=o, variant=l["variant"], packaging=packaging, qty_ordered=qty,
+                                  requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"),
+                                  discount_pct=l.get("discount_pct") or default_pct,
+                                  product_discount_pct=product_discount_for(l["variant"].product, qty, o.order_date) or 0)
+            gross, _flags = OrderService.price_line(o, line)
+            for k, v in (("subtotal", gross), ("discount", line.discount_amount), ("scheme_discount", line.scheme_discount), ("tax1_total", line.tax1_amount),
+                         ("tax2_total", line.tax2_amount), ("fed_total", line.fed_amount), ("extra_tax_total", line.extra_tax_amount),
+                         ("further_tax_total", line.further_tax_amount), ("wht_total", line.wht_amount)):
+                totals[k] += v
+            rows.append({"variant": str(line.variant_id), "variant_name": line.variant.name, "variant_sku": line.variant.sku,
+                         "packaging": str(packaging.pk) if packaging else None, "qty_ordered": str(qty), "unit_price": str(line.unit_price),
+                         "discount_pct": str(line.discount_pct), "product_discount_pct": str(line.product_discount_pct),
+                         "discount_amount": str(line.discount_amount), "scheme_discount": str(line.scheme_discount), "scheme_names": line.scheme_names,
+                         "free_qty": str(line.free_qty), "tax1_name": line.tax1_type.name if line.tax1_type_id else "", "tax1_rate": str(line.tax1_rate),
+                         "tax1_amount": str(line.tax1_amount), "tax2_name": line.tax2_type.name if line.tax2_type_id else "", "tax2_rate": str(line.tax2_rate),
+                         "tax2_amount": str(line.tax2_amount), "fed_amount": str(line.fed_amount), "extra_tax_amount": str(line.extra_tax_amount),
+                         "further_tax_amount": str(line.further_tax_amount), "wht_amount": str(line.wht_amount), "line_total": str(line.line_total)})
+        t = totals
+        total = t["subtotal"] - t["discount"] - t["scheme_discount"] + t["tax1_total"] + t["tax2_total"] + t["fed_total"] + t["extra_tax_total"] + t["further_tax_total"] - t["wht_total"]
+        return {**{k: str(v) for k, v in t.items()}, "discount_pct": str(o.discount_pct if o.discount_pct is not None else default_pct),
+                "charge_tax": bool(o.charge_tax), "total": str(total), "lines": rows}
+
+    @staticmethod
     def effective_discount_pct(order):
         """The order's own % when one was set; the customer's standing rate otherwise (legacy orders)."""
         if order.discount_pct is not None:
@@ -1085,6 +1140,10 @@ class InvoiceService:
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])
         InvoiceService._raise_company_claims(inv)
+        # entries held by a reopen that the corrected invoice no longer needs (a claim or COGS that fell away)
+        PostingService.purge_held(inv)
+        for claim in inv.company_claims.all():
+            PostingService.purge_held(claim)
         # cash collected on delivery while this invoice was still a draft sits on the customer's account,
         # tagged with the delivery note — it settles the invoice now that the invoice is on the books
         if inv.delivery_note_id:
@@ -1108,11 +1167,12 @@ class InvoiceService:
     @transaction.atomic
     def reopen(inv, *, reason="", actor=None):
         """
-        Edit a POSTED invoice the way books allow it (owner, 24 Oct 2026): nothing is mutated behind the
-        ledger. Every journal this invoice put on the books — its posting, its COGS, its manufacturer
-        claims and their net-offs — is reversed; the claims are cancelled; the invoice stands at draft
-        again with its figures free to correct; posting it re-books everything from the corrected numbers,
-        claims included. Money already received blocks it: remove the receipts first, or use a credit note.
+        Edit a POSTED invoice (owner, 24 Oct 2026). Every journal this invoice put on the books — its posting, its
+        COGS, its manufacturer claims and their net-offs — is HELD: taken off the books as a draft under its own
+        number, and posting the corrected invoice rewrites those same entries in place (owner, 27 Oct 2026: "when
+        edit invoice and save again it create multiple journal entries, instead it should update the existing").
+        Only an entry in a closed period is reversed instead. The claims are cancelled until the re-post revives
+        them. Money already received blocks it: remove the receipts first, or use a credit note.
         """
         from apps.accounting.models import JournalEntry
         from apps.accounting.services import PostingService
@@ -1129,11 +1189,11 @@ class InvoiceService:
         memo = f"Invoice {inv.number} reopened for editing"
         for claim in inv.company_claims.exclude(status="cancelled"):
             for je in JournalEntry.objects.filter(source_type="CompanyClaim", source_id=str(claim.pk), status="posted"):
-                PostingService.reverse(je, memo=memo)
+                PostingService.hold(je, memo=memo)
             claim.status, claim.paid_amount = "cancelled", Decimal("0")
             claim.save(update_fields=["status", "paid_amount", "updated_at"])
         for je in JournalEntry.objects.filter(source_type="SalesInvoice", source_id=str(inv.pk), status="posted"):
-            PostingService.reverse(je, memo=memo)
+            PostingService.hold(je, memo=memo)
         inv.journal = None
         inv.status = "draft"
         inv.save(update_fields=["journal", "status", "updated_at"])

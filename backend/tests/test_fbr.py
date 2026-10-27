@@ -294,3 +294,30 @@ def test_sro_items_narrow_to_the_schedule_and_fall_back_when_fbr_cannot_answer(a
         assert len(rows) == 1 and rows[0].description == "Only item", "duplicates collapse, the row caches"
     r = api.get("/api/v1/fbr/lookups", {"kind": "sroitem", "parent": "369"})
     assert [x["description"] for x in r.data["results"]] == ["Only item"]
+
+
+def test_post_to_fbr_validates_and_files_in_one_click(api, tenant):
+    """Owner, 27 Oct 2026: "after submit also give button to post to fbr". One call: validate, and only on a
+    pass, file — two gateway calls, the number on the invoice, the setup flag tells the screen where it files."""
+    inv = _taxed_invoice(api, tenant)
+    detail = api.get(f"/api/v1/invoices/{inv['id']}").data
+    assert detail["fbr_setup"] == {"configured": True, "sandbox": True} and detail["fbr"] is None
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)) as post:
+        r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
+    assert r.status_code == 200, r.content
+    assert r.data["status"] == "submitted" and r.data["fbr_invoice_number"].endswith("857820") and r.data["sandbox"] is True
+    assert post.call_count == 2, "a validation, then the filing"
+    assert "validate" in post.call_args_list[0].args[0].lower() and "validate" not in post.call_args_list[1].args[0].lower()
+
+
+def test_post_to_fbr_stops_at_a_failed_validation_and_refuses_drafts(api, tenant):
+    inv = _taxed_invoice(api, tenant)
+    reject = {"validationResponse": {"statusCode": "01", "status": "Invalid", "error": "Invalid HS Code", "invoiceStatuses": []}}
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(reject)) as post:
+        r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
+    assert r.status_code in (400, 422) and post.call_count == 1, "nothing is filed after a refused validation"
+    assert "Invalid HS Code" in str(r.content), "FBR's own reason reaches the person"
+    reopened = api.post(f"/api/v1/invoices/{inv['id']}/reopen", {}, format="json")
+    assert reopened.status_code == 200 and reopened.data["status"] == "draft"
+    draft = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
+    assert draft.status_code in (400, 422) and "ledger first" in str(draft.content)

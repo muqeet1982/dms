@@ -221,6 +221,17 @@ class SalesInvoiceEditSerializer(serializers.ModelSerializer):
 class SalesInvoiceSerializer(serializers.ModelSerializer):
     fbr = serializers.SerializerMethodField()
 
+    fbr_setup = serializers.SerializerMethodField()
+
+    def get_fbr_setup(self, inv):
+        """Whether this company can file with FBR right now, and where — never the tokens themselves."""
+        from apps.fbr.models import FBRSettings
+
+        s = FBRSettings.objects.first()
+        if s is None:
+            return {"configured": False, "sandbox": True}
+        return {"configured": bool(s.sandbox_token if s.use_sandbox else s.production_token), "sandbox": bool(s.use_sandbox)}
+
     def get_fbr(self, inv):
         f = getattr(inv, "fbr_filing", None)
         if f is None:
@@ -279,7 +290,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
