@@ -187,3 +187,26 @@ def test_a_new_customer_discount_rewrites_posted_invoices_only_for_who_may_and_d
         assert posted["number"] in done["posted_invoices"] and not done["reposted_invoices"]
         assert SalesInvoice.objects.get(pk=posted["id"]).discount_pct == 0, "no right to re-post: listed, not rewritten"
         assert SalesInvoice.objects.get(pk=own_draft["id"]).discount_pct == 0, "its order took no customer discount"
+
+
+def test_whoever_builds_a_trip_can_pick_its_delivery_person_without_the_users_page(api, tenant):
+    """TDN, 28 Oct 2026: supervisor@… (Manager role: trips yes, users no) saw an empty Delivery person dropdown."""
+    from rest_framework.test import APIClient
+
+    from apps.accounts.models import User
+    from apps.accounts.services import RoleService, UserService
+
+    with tenant_context(tenant, tenant.owner):
+        role = RoleService.create_role(tenant, "Dispatch supervisor", ["delivery.add_trip", "delivery.view_trip"])
+        UserService.create_tenant_user(tenant, "Sup Visor", email="sup@probe.pk", password="Abcd-1234", roles=[role], warehouses=[])
+        User.objects.filter(email="sup@probe.pk").update(must_change_password=False)
+    c = APIClient()
+    login = c.post("/api/v1/auth/login", {"identifier": "sup@probe.pk", "password": "Abcd-1234"}, format="json")
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}", HTTP_X_TENANT_ID=str(tenant.id))
+    assert c.get("/api/v1/users").status_code == 403, "the Users page stays theirs who hold its right"
+    r = c.get("/api/v1/people", {"search": "Sup"})
+    assert r.status_code == 200, r.content
+    rows = r.data["results"] if isinstance(r.data, dict) else r.data
+    me = next(x for x in rows if x["email"] == "sup@probe.pk")
+    assert set(me) == {"id", "user_id", "full_name", "email", "role_names"}, "names only — no access details"
+    assert c.get(f"/api/v1/people/{me['user_id']}").data["full_name"] == "Sup Visor"

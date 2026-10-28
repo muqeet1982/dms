@@ -476,6 +476,39 @@ class RoleViewSet(viewsets.ModelViewSet):
         return Response(RoleSerializer(profile).data, status=201)
 
 
+class PeoplePickViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    `GET /api/v1/people` — names only, for the people pickers on a trip or a dispatch (delivery person, loader,
+    helper). The full user list is the Users page's and needs its right; whoever builds a trip only needs to pick a
+    colleague, so this answers anyone who can (TDN supervisor, 28 Oct 2026: the delivery-person dropdown was empty).
+    Looked up by the USER id — what a trip stores.
+    """
+
+    permission_classes = [IsTenantUser]
+    perm_map = {"list": ["users.view_user", "delivery.add_trip", "delivery.change_trip"],
+                "retrieve": ["users.view_user", "delivery.add_trip", "delivery.change_trip", "delivery.view_trip"]}
+    search_fields = ["user__full_name", "user__email", "user__phone"]
+    lookup_field = "user_id"
+
+    def get_queryset(self):
+        return (TenantMembership.objects.filter(tenant=self.request.tenant, status="active").select_related("user")
+                .prefetch_related("groups__profile").order_by("user__full_name"))
+
+    def _row(self, m):
+        return {"id": str(m.user_id), "user_id": str(m.user_id), "full_name": m.user.full_name, "email": m.user.email,
+                "role_names": [g.profile.name for g in m.groups.all() if hasattr(g, "profile")]}
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response([self._row(m) for m in page])
+        return Response([self._row(m) for m in qs[:50]])
+
+    def retrieve(self, request, *args, **kwargs):
+        return Response(self._row(self.get_object()))
+
+
 class TenantUserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsTenantUser]
     serializer_class = TenantUserSerializer

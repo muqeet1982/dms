@@ -7,6 +7,7 @@ router = OptionalSlashRouter()
 router.register("me/sessions", views.SessionViewSet, basename="me-sessions")
 router.register("roles", views.RoleViewSet, basename="roles")
 router.register("users", views.TenantUserViewSet, basename="users")
+router.register("people", views.PeoplePickViewSet, basename="people")
 
 urlpatterns = [
     path("auth/login", views.LoginView.as_view(), name="auth-login"),
