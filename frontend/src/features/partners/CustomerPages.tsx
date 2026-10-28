@@ -153,6 +153,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("The shop", "ti-building-store"), name: "gps_lat", label: "Shop pin", type: "custom", col: "col-md-12",
       render: (v, _set, values, setField) => <StorePinPicker compact lat={v} lng={values.gps_lng} name={values.name}
         onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }}
+        onAddress={(a) => { if (!String(values.address || "").trim()) setField("address", a); }}
         radius={values.order_radius_m} onRadiusChange={(m) => setField("order_radius_m", m)} /> },
     { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
 

@@ -41,6 +41,7 @@ const GROUPS: Group[] = [
     fields: [
       { name: "map_tiles", label: "Map style", type: "select", col: "col-md-4",
         options: [
+          { value: "google", label: "Google Maps — map and place search (key in the server's .env)" },
           { value: "osm", label: "OpenStreetMap — local language (no key)" },
           { value: "esri_en", label: "Esri World Street Map — English labels (no key)" },
           { value: "maptiler", label: "MapTiler — your own style (free key)" },

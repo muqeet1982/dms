@@ -10,6 +10,7 @@ import { Column } from "@/components/ui/DataTable";
 import { ListPage } from "@/components/ui/ListPage";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { asBox, boxPoints, DEFAULT_CENTRE, FenceMap, MapFence, MapPin, Shape } from "@/components/map/FenceMap";
+import { searchPlaces } from "@/lib/googleMaps";
 import { AssignStoresModal } from "./StorePages";
 
 /** The stored fence turned into something the map can draw. */
@@ -297,7 +298,7 @@ function PlaceSearch({ onPick }: { onPick: (p: any, typed: string) => void }) {
   const run = async () => {
     if (q.trim().length < 3) return;
     setBusy(true);
-    try { setRows((await api.get("/api/v1/geofences/search", { q })).results); }
+    try { setRows(await searchPlaces(q)); }
     catch { toast.error("Could not reach the place lookup — drop a pin instead."); }
     finally { setBusy(false); }
   };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { googleFailed, loadGoogleMaps, MapConfig, onGoogleFailure, setGoogleConfig, watchForRefusal } from "@/lib/googleMaps";
 
 /**
  * The map behind working areas. One component covers both jobs:
@@ -46,17 +47,55 @@ export type MapPin = { id: string; name: string; lat: number; lng: number; cover
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 
-let tileConfig: { url: string; attribution: string } = { url: TILES, attribution: ATTRIBUTION };
+let tileConfig: MapConfig = { url: TILES, attribution: ATTRIBUTION };
 const tileListeners = new Set<(c: typeof tileConfig) => void>();
 
 /**
  * Called when the public branding loads. Maps already on screen swap their tiles there and then — the branding
  * usually answers a moment after the first map has been built, and a map that ignored it would keep the fallback.
  */
-export function setMapTiles(cfg?: { url?: string; attribution?: string } | null) {
-  if (!cfg?.url || cfg.url === tileConfig.url) return;
-  tileConfig = { url: cfg.url, attribution: cfg.attribution || ATTRIBUTION };
+export function setMapTiles(cfg?: Partial<MapConfig> | null) {
+  if (!cfg?.url) return;
+  const next: MapConfig = { url: cfg.url, attribution: cfg.attribution || ATTRIBUTION, source: cfg.source, google_key: cfg.google_key };
+  setGoogleConfig(next);
+  if (next.url === tileConfig.url && next.source === tileConfig.source && next.google_key === tileConfig.google_key) return;
+  tileConfig = next;
   tileListeners.forEach((fn) => fn(tileConfig));
+}
+
+/**
+ * The base map under the areas and pins. Google's own map when the platform chose it and the key works — drawn by
+ * GoogleMutant, which runs the official Google Maps JavaScript map beneath Leaflet so every editing tool here keeps
+ * working. The ordinary tiles show while Google loads, and come back for good if Google refuses the key.
+ * Returns the way to take it all off again.
+ */
+function attachBase(m: L.Map, cfg: MapConfig): () => void {
+  let tiles: L.TileLayer | null = null;
+  let google: L.Layer | null = null;
+  let gone = false;
+  let unwatch = () => {};
+  const showTiles = () => {
+    if (tiles || gone) return;
+    tiles = L.tileLayer(cfg.url, { maxZoom: 19, attribution: cfg.attribution }).addTo(m);
+    tiles.bringToBack();
+  };
+  showTiles();
+  const off = onGoogleFailure(() => { google?.remove(); google = null; showTiles(); });
+  if (cfg.source === "google" && cfg.google_key && !googleFailed()) {
+    loadGoogleMaps(cfg.google_key).then(async () => {
+      if (gone || googleFailed()) return;
+      // the plugin registers itself on the global Leaflet, which a bundled import does not always set
+      (window as any).L = (window as any).L || L;
+      const { default: GoogleMutant } = await import("leaflet.gridlayer.googlemutant");
+      if (gone || googleFailed()) return;
+      google = new (GoogleMutant as any)({ type: "roadmap", maxZoom: 21 }).addTo(m);
+      (google as any).bringToBack?.();
+      unwatch = watchForRefusal(m.getContainer());
+      tiles?.remove();
+      tiles = null;
+    }).catch(() => showTiles());
+  }
+  return () => { gone = true; off(); unwatch(); google?.remove(); tiles?.remove(); };
 }
 const LAHORE: [number, number] = [31.5204, 74.3587];
 
@@ -120,12 +159,8 @@ export function FenceMap({
   useEffect(() => {
     if (!host.current || map.current) return;
     const m = L.map(host.current, { center: LAHORE, zoom: 11, zoomControl: true, attributionControl: true });
-    let tiles = L.tileLayer(tileConfig.url, { maxZoom: 19, attribution: tileConfig.attribution }).addTo(m);
-    const swap = (cfg: typeof tileConfig) => {
-      tiles.remove();
-      tiles = L.tileLayer(cfg.url, { maxZoom: 19, attribution: cfg.attribution }).addTo(m);
-      tiles.bringToBack();
-    };
+    let detach = attachBase(m, tileConfig);
+    const swap = (cfg: MapConfig) => { detach(); detach = attachBase(m, cfg); };
     tileListeners.add(swap);
     shown.current = L.layerGroup().addTo(m);
     edit.current = L.layerGroup().addTo(m);
@@ -134,7 +169,7 @@ export function FenceMap({
     setReady(true);
     // the container is often laid out after this runs (a card, a tab), so take a second look
     setTimeout(() => m.invalidateSize(), 120);
-    return () => { tileListeners.delete(swap); m.remove(); map.current = null; };
+    return () => { tileListeners.delete(swap); detach(); m.remove(); map.current = null; };
   }, []);
 
   // the areas and pins to show

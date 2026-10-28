@@ -718,6 +718,11 @@ class PublicBrandingView(APIView):
         "esri_en": {"url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
                     "attribution": 'Tiles &copy; Esri — Esri, DeLorme, NAVTEQ, OpenStreetMap contributors',
                     "label": "Esri World Street Map — English labels (no key; check Esri's terms for commercial use)"},
+        # Google's own map, drawn under the same editing tools; the key is the server's (GOOGLE_MAPS_API_KEY).
+        # Its fallback tiles stand in while Google loads, and for good if Google refuses the key.
+        "google": {"url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+                   "attribution": 'Tiles &copy; Esri — Esri, DeLorme, NAVTEQ, OpenStreetMap contributors',
+                   "label": "Google Maps — map and place search (key in the server's .env)"},
         "maptiler": {"url": "https://api.maptiler.com/maps/{style}/256/{z}/{x}/{y}.png?key={key}",
                      "attribution": '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
                      "label": "MapTiler — your own style, English labels (free key)"},
@@ -731,6 +736,10 @@ class PublicBrandingView(APIView):
         if choice == "custom" or not spec:
             url = cur.get("map_tiles_url") or cls.TILES["osm"]["url"]
             return {"url": url, "attribution": cur.get("map_attribution") or cls.TILES["osm"]["attribution"], "source": "custom"}
+        if choice == "google":
+            # owner, 28 Oct 2026: "use google map and google search now instead of other map"
+            key = getattr(django_settings, "GOOGLE_MAPS_API_KEY", "")
+            return {"url": spec["url"], "attribution": spec["attribution"], "source": "google" if key else "esri_en", "google_key": key}
         url = spec["url"].replace("{key}", cur.get("map_tiles_key") or "").replace("{style}", cur.get("map_tiles_style") or "streets-v2")
         if choice == "maptiler" and not cur.get("map_tiles_key"):
             spec, url = cls.TILES["osm"], cls.TILES["osm"]["url"]  # no key yet: a working map beats a blank one

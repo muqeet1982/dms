@@ -99,3 +99,19 @@ def test_me_serves_effective_settings_not_just_the_stored_overrides(api, tenant)
         tenant.settings = {**(tenant.settings or {}), "rep_order_photo": "required"}
         tenant.save(update_fields=["settings"])
     assert api.get("/api/v1/me").data["tenant"]["settings"]["rep_order_photo"] == "required"
+
+
+def test_google_maps_is_a_map_choice_and_falls_back_without_a_key(admin_api, settings):
+    """Owner, 28 Oct 2026: "use google map and google search now instead of other map" — the browser key comes
+    from the server's settings (never stored in the repository); without one the map stays on English tiles."""
+    from django.core.cache import cache
+
+    settings.GOOGLE_MAPS_API_KEY = "test-browser-key"
+    assert admin_api.patch("/api/v1/platform/settings", {"map_tiles": "google"}, format="json").status_code == 200
+    cache.clear()
+    m = APIClient().get("/api/v1/branding").data["map"]
+    assert m["source"] == "google" and m["google_key"] == "test-browser-key" and m["url"].startswith("https://")
+    settings.GOOGLE_MAPS_API_KEY = ""
+    cache.clear()
+    m = APIClient().get("/api/v1/branding").data["map"]
+    assert m["source"] == "esri_en" and not m["google_key"], "no key: a working map beats a blank one"
