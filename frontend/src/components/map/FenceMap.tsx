@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { googleFailed, loadGoogleMaps, MapConfig, onGoogleFailure, setGoogleConfig, watchForRefusal } from "@/lib/googleMaps";
+import { googleFailed, googleMapUsable, MapConfig, onGoogleFailure, setGoogleConfig, watchForRefusal } from "@/lib/googleMaps";
 
 /**
  * The map behind working areas. One component covers both jobs:
@@ -82,8 +82,8 @@ function attachBase(m: L.Map, cfg: MapConfig): () => void {
   showTiles();
   const off = onGoogleFailure(() => { google?.remove(); google = null; showTiles(); });
   if (cfg.source === "google" && cfg.google_key && !googleFailed()) {
-    loadGoogleMaps(cfg.google_key).then(async () => {
-      if (gone || googleFailed()) return;
+    googleMapUsable(cfg.google_key).then(async (usable) => {
+      if (gone || !usable || googleFailed()) return;
       // the plugin registers itself on the global Leaflet, which a bundled import does not always set
       (window as any).L = (window as any).L || L;
       const { default: GoogleMutant } = await import("leaflet.gridlayer.googlemutant");

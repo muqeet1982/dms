@@ -3,26 +3,31 @@ import { api } from "@/api/client";
 /**
  * Google Maps for the map screens and the place search (owner, 28 Oct 2026: "use google map and google search now
  * instead of other map"). The platform setting chooses Google and the server hands over the browser key; the
- * script is loaded once, on the first map that needs it.
+ * script is loaded once, on the first map or search that needs it.
  *
- * Google answers a refused key (an API not switched on, a site not allowed, billing off) by calling
- * `gm_authFailure` — the maps then go back to the ordinary tiles and the search to the OpenStreetMap lookup, so a
- * key problem never leaves a screen without a map.
+ * The MAP and the SEARCH are separate Google services (Maps JavaScript API, Places API (New)) and a key can hold one
+ * without the other — on 29 Oct the search worked while the map answered ApiNotActivatedMapError. So each falls back
+ * on its own: a refused map goes back to the ordinary tiles (the search stays on Google), a refused search goes to
+ * the OpenStreetMap lookup. Only a script that will not load at all turns both off.
  */
 let loading: Promise<any> | null = null;
-let failed = false;
+let scriptFailed = false;    // the script itself did not load — nothing Google can work
+let mapFailed = false;       // Google refused to draw a map with this key
+let mapCheck: Promise<boolean> | null = null;
 const failures = new Set<() => void>();
 
-export const googleFailed = () => failed;
+/** Has Google refused the MAP (the search may still be fine)? */
+export const googleFailed = () => mapFailed || scriptFailed;
 
+/** Called when Google refuses the map — every map on screen goes back to the ordinary tiles. */
 export function onGoogleFailure(fn: () => void) {
   failures.add(fn);
   return () => { failures.delete(fn); };
 }
 
-function fail() {
-  if (failed) return;
-  failed = true;
+function failMap() {
+  if (mapFailed) return;
+  mapFailed = true;
   failures.forEach((fn) => fn());
 }
 
@@ -34,58 +39,70 @@ const refusedIn = (el: HTMLElement) => /load Google Maps correctly/i.test(el.tex
  * every map back to the ordinary tiles. Returns the way to stop watching.
  */
 export function watchForRefusal(el: HTMLElement, ms = 20000): () => void {
-  const obs = new MutationObserver(() => { if (refusedIn(el)) { fail(); obs.disconnect(); } });
+  const obs = new MutationObserver(() => { if (refusedIn(el)) { failMap(); obs.disconnect(); } });
   obs.observe(el, { childList: true, subtree: true, characterData: true });
   const t = setTimeout(() => obs.disconnect(), ms);
   return () => { clearTimeout(t); obs.disconnect(); };
 }
 
+/** The Google script, loaded once. Resolves even when the map is refused — the search does not need the map. */
 export function loadGoogleMaps(key: string): Promise<any> {
   const w = window as any;
-  if (failed) return Promise.reject(new Error("Google Maps refused the key"));
-  if (w.google?.maps?.Map) return Promise.resolve(w.google);
+  if (scriptFailed) return Promise.reject(new Error("Google Maps did not load"));
+  if (w.google?.maps?.importLibrary) return Promise.resolve(w.google);
   if (loading) return loading;
-  w.gm_authFailure = fail;
+  w.gm_authFailure = failMap;   // Google's own word that the key may not draw maps
   loading = new Promise((resolve, reject) => {
     w.__dmsGoogleReady = async () => {
-      try {
-        await w.google.maps.importLibrary("maps");
-        // a project without billing gets a dimmed map and an error box, never `gm_authFailure` (seen 28 Oct
-        // 2026: BillingNotEnabledMapError) — so a small map is drawn first and the box looked for. It must be on
-        // screen (an off-screen map is never checked), so it is see-through and ignores the mouse.
-        const div = document.createElement("div");
-        div.style.cssText = "position:fixed;left:0;bottom:0;width:240px;height:240px;opacity:0;pointer-events:none;z-index:-1";
-        document.body.appendChild(div);
-        const probe = new w.google.maps.Map(div, { center: { lat: 31.52, lng: 74.35 }, zoom: 10, disableDefaultUI: true });
-        let tilesAt = 0;
-        w.google.maps.event.addListenerOnce(probe, "tilesloaded", () => { tilesAt = Date.now(); });
-        const ok = await new Promise<boolean>((done) => {
-          let n = 0;
-          const t = setInterval(() => {
-            const refused = failed || refusedIn(div);
-            // a refusal shows within half a second; a second after the tiles with none, Google is good
-            const settled = (tilesAt && Date.now() - tilesAt > 1000) || ++n >= 24;
-            if (refused || settled) { clearInterval(t); div.remove(); done(!refused); }
-          }, 250);
-        });
-        if (!ok) { fail(); reject(new Error("Google Maps refused the key")); return; }
-        resolve(w.google);
-      } catch (e) { fail(); reject(e); }
+      try { await w.google.maps.importLibrary("maps"); resolve(w.google); }
+      catch (e) { scriptFailed = true; failMap(); reject(e); }
     };
     const s = document.createElement("script");
     s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&loading=async&libraries=places&region=PK&callback=__dmsGoogleReady`;
     s.async = true;
-    s.onerror = () => { loading = null; fail(); reject(new Error("Google Maps did not load")); };
+    s.onerror = () => { loading = null; scriptFailed = true; failMap(); reject(new Error("Google Maps did not load")); };
     document.head.appendChild(s);
   });
   return loading;
+}
+
+/**
+ * May this key draw Google's map? Asked once per page. A project without billing gets a dimmed map and an error
+ * box, never `gm_authFailure` (seen 28 Oct 2026: BillingNotEnabledMapError) — so a small map is drawn first and the
+ * box looked for. It must be on screen (an off-screen map is never checked), so it is see-through and ignores the
+ * mouse. A refusal shows within half a second; a second after the tiles with none, the map is good.
+ */
+export function googleMapUsable(key: string): Promise<boolean> {
+  if (mapFailed || scriptFailed) return Promise.resolve(false);
+  if (mapCheck) return mapCheck;
+  mapCheck = loadGoogleMaps(key).then((g) => new Promise<boolean>((done) => {
+    const div = document.createElement("div");
+    div.style.cssText = "position:fixed;left:0;bottom:0;width:240px;height:240px;opacity:0;pointer-events:none;z-index:-1";
+    document.body.appendChild(div);
+    const probe = new g.maps.Map(div, { center: { lat: 31.52, lng: 74.35 }, zoom: 10, disableDefaultUI: true });
+    let tilesAt = 0;
+    g.maps.event.addListenerOnce(probe, "tilesloaded", () => { tilesAt = Date.now(); });
+    let n = 0;
+    const t = setInterval(() => {
+      const refused = mapFailed || refusedIn(div);
+      const settled = (tilesAt && Date.now() - tilesAt > 1000) || ++n >= 24;
+      if (refused || settled) {
+        clearInterval(t);
+        div.remove();
+        if (refused) failMap();
+        done(!refused);
+      }
+    }, 250);
+  }), () => false);
+  return mapCheck;
 }
 
 /** What the map screens draw on, as the platform branding hands it over. */
 export type MapConfig = { url: string; attribution: string; source?: string; google_key?: string };
 let config: MapConfig | null = null;
 export const setGoogleConfig = (cfg: MapConfig | null) => { config = cfg; };
-export const googleKey = () => (config?.source === "google" && config.google_key && !failed ? config.google_key : "");
+/** The key for Google's SEARCH — independent of whether the map was refused. */
+export const googleKey = () => (config?.source === "google" && config.google_key && !scriptFailed ? config.google_key : "");
 
 /** A place as both lookups answer it: a centre always, a box when the place has an extent. */
 export type Place = { name: string; label: string; kind: string; lat: number; lng: number; points: { lat: number; lng: number }[];
