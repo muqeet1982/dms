@@ -74,6 +74,10 @@ class GroupProfile(models.Model):
     is_system = models.BooleanField(default=False)
     role_type = models.CharField(max_length=10, choices=ROLE_TYPES, default="internal")
     approval_limits = models.JSONField(default=dict, blank=True)  # {"stock_adjustment": "50000", "expense": "20000"}
+    # every right the Owner has, including pages added later — without being the owner (ownership transfer and
+    # "log in as" stay the owner's). TDN, 29 Oct 2026: a "superadmin" role ticked by hand was 16 pages and 34
+    # pages' buttons short of the owner, and no new page ever reached it.
+    full_access = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -108,10 +112,18 @@ class TenantMembership(models.Model):
     def __str__(self):
         return f"{self.user} @ {self.tenant}"
 
+    def has_full_access(self):
+        """The owner, or a holder of an internal role marked Full access — the same rights, page for page."""
+        if self.is_owner:
+            return True
+        if not hasattr(self, "_full_access"):
+            self._full_access = self.groups.filter(profile__full_access=True, profile__role_type="internal").exists()
+        return self._full_access
+
     def permission_codenames(self):
         from .page_permissions import all_page_codenames, expand
 
-        if self.is_owner:
+        if self.has_full_access():
             from .permissions_catalog import all_codenames
 
             return set(all_codenames(include_external=False)) | set(all_page_codenames())
@@ -122,13 +134,13 @@ class TenantMembership(models.Model):
     def has_perm(self, codename):
         if self.status != "active":
             return False
-        if self.is_owner:
+        if self.has_full_access():
             return not codename.startswith("external.") and not codename.startswith("platform.")
         return codename in self.permission_codenames()
 
     def approval_limit(self, key):
-        """Highest approval limit across roles; None = unlimited (owner)."""
-        if self.is_owner:
+        """Highest approval limit across roles; None = unlimited (owner, full access)."""
+        if self.has_full_access():
             return None
         best = None
         for g in self.groups.select_related("profile"):

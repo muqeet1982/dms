@@ -369,7 +369,7 @@ export function RolesPage() {
       <PageHeader title="Roles" crumbs={[{ label: "Users Management" }, { label: "Roles" }]} actions={page.add && <><Link to="/app/users/roles/new?type=internal" className="btn btn-primary"><i className="ti ti-plus me-1" />Add internal role</Link><Link to="/app/users/roles/new?type=external" className="btn btn-outline-primary"><i className="ti ti-plus me-1" />Add external role</Link></>} />
       {(["internal", "external"] as const).map((t) => (
         <div className="card mb-3" key={t}><div className="card-header"><strong>{t === "internal" ? "Internal roles (staff)" : "External roles (manufacturer reps)"}</strong><span className="text-muted fs-12 ms-2">{t === "internal" ? "Clone a default template or build your own from the permission catalogue." : "Controls exactly what each rep sees: stock (exact / bands / none), prices, customer outstanding, collections."}</span></div>
-          <div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Role</th><th>Description</th><th className="num">Permissions</th><th className="num">Users</th><th /></tr></thead><tbody>{groups[t].map((r: any) => <tr key={r.id}><td className="fw-medium"><Link to={`/app/users/roles/${r.id}`}>{r.name}</Link>{r.is_system && <span className="badge bg-secondary-light text-secondary ms-2">system</span>}</td><td className="text-muted">{r.description}</td><td className="num">{r.permissions.length}</td><td className="num">{r.users_count}</td><td className="text-end">{page.add && <button className="btn btn-sm btn-outline-secondary me-1" onClick={async () => { const name = prompt("Name for the copy", `${r.name} (copy)`); if (!name) return; await api.post(`/api/v1/roles/${r.id}/clone`, { name }); qc.invalidateQueries({ queryKey: ["roles-all"] }); }}>Clone</button>}{page.delete && !r.is_system && <button className="btn btn-sm btn-outline-danger" onClick={() => setDel(r)}><i className="ti ti-trash" /></button>}</td></tr>)}</tbody></table></div></div>
+          <div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Role</th><th>Description</th><th className="num">Permissions</th><th className="num">Users</th><th /></tr></thead><tbody>{groups[t].map((r: any) => <tr key={r.id}><td className="fw-medium"><Link to={`/app/users/roles/${r.id}`}>{r.name}</Link>{r.is_system && <span className="badge bg-secondary-light text-secondary ms-2">system</span>}{r.full_access && <span className="badge bg-success-light text-success ms-2">full access</span>}</td><td className="text-muted">{r.description}</td><td className="num">{r.full_access ? "all" : r.permissions.length}</td><td className="num">{r.users_count}</td><td className="text-end">{page.add && <button className="btn btn-sm btn-outline-secondary me-1" onClick={async () => { const name = prompt("Name for the copy", `${r.name} (copy)`); if (!name) return; await api.post(`/api/v1/roles/${r.id}/clone`, { name }); qc.invalidateQueries({ queryKey: ["roles-all"] }); }}>Clone</button>}{page.delete && !r.is_system && <button className="btn btn-sm btn-outline-danger" onClick={() => setDel(r)}><i className="ti ti-trash" /></button>}</td></tr>)}</tbody></table></div></div>
       ))}
       <ConfirmDialog open={Boolean(del)} title="Delete role" message={<>Delete <strong>{del?.name}</strong>? Users must be unassigned first.</>} danger onClose={() => setDel(null)} onConfirm={async () => { try { await api.delete(`/api/v1/roles/${del.id}`); toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["roles-all"] }); } catch (e: any) { toast.error(e.message); } setDel(null); }} />
     </>
@@ -393,7 +393,7 @@ export function RoleFormPage() {
   // Once the form is seeded, background refetches are ignored so they can never wipe the user's editing.
   if ((id && (q.isLoading || (q.isFetching && !form))) || (roleType === "external" && catalog.isLoading)) return <Spinner />;
   // `permissions_effective` expands any coarse codenames an older role still holds, so the switches show reality
-  if (!form) { setForm(q.data ? { name: q.data.name, description: q.data.description, permissions: q.data.permissions_effective || q.data.permissions, approval_limits: q.data.approval_limits || {} } : { name: "", description: "", permissions: [], approval_limits: {} }); return <Spinner />; }
+  if (!form) { setForm(q.data ? { name: q.data.name, description: q.data.description, permissions: q.data.permissions_effective || q.data.permissions, approval_limits: q.data.approval_limits || {}, full_access: Boolean(q.data.full_access) } : { name: "", description: "", permissions: [], approval_limits: {} }); return <Spinner />; }
   const readOnly = Boolean(q.data?.is_system) || (id ? !page.edit : !page.add);
   const toggle = (c: string) => setForm({ ...form, permissions: form.permissions.includes(c) ? form.permissions.filter((x: string) => x !== c) : [...form.permissions, c] });
   const toggleModule = (mod: any, on: boolean) => { const codes = mod.permissions.map((p: any) => p.codename); setForm({ ...form, permissions: on ? Array.from(new Set([...form.permissions, ...codes])) : form.permissions.filter((x: string) => !codes.includes(x)) }); };
@@ -444,7 +444,13 @@ export function RoleFormPage() {
         </>
       ) : (
         <div className={readOnly ? "pe-none opacity-75" : ""}>
-          <PermissionMatrix value={form.permissions} onChange={(permissions) => setForm({ ...form, permissions })} />
+          <div className="card mb-3"><div className="card-body py-2">
+            <div className="form-check form-switch mb-0">
+              <input className="form-check-input" type="checkbox" id="full-access" checked={Boolean(form.full_access)} onChange={(e) => setForm({ ...form, full_access: e.target.checked })} />
+              <label className="form-check-label fw-semibold" htmlFor="full-access">Full access — same as the Owner, every page and button, including new ones</label>
+            </div>
+          </div></div>
+          {!form.full_access && <PermissionMatrix value={form.permissions} onChange={(permissions) => setForm({ ...form, permissions })} />}
         </div>
       )}
       <div className="d-flex gap-2 justify-content-end mt-3"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>{!readOnly && <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save role"}</button>}</div>

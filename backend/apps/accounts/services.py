@@ -54,7 +54,7 @@ def _perm_objects(codenames):
 class RoleService:
     @staticmethod
     @transaction.atomic
-    def create_role(tenant, name, permissions, role_type="internal", description="", is_system=False, approval_limits=None):
+    def create_role(tenant, name, permissions, role_type="internal", description="", is_system=False, approval_limits=None, full_access=False):
         if GroupProfile.objects.filter(tenant=tenant, name=name).exists():
             raise DomainError(f"A role named '{name}' already exists.")
         if tenant is not None and not is_system:
@@ -65,15 +65,16 @@ class RoleService:
         group = Group.objects.create(name=f"{tenant.slug if tenant else 'platform'}:{name}"[:150])
         group.permissions.set(_perm_objects(permissions))
         profile = GroupProfile.objects.create(
-            group=group, tenant=tenant, name=name, description=description, is_system=is_system, role_type=role_type, approval_limits=approval_limits or {}
+            group=group, tenant=tenant, name=name, description=description, is_system=is_system, role_type=role_type, approval_limits=approval_limits or {},
+            full_access=bool(full_access) and role_type == "internal",
         )
         AuditService.log("role.created", profile, after={"name": name, "permissions": list(permissions)}, tenant_id=tenant.id if tenant else None)
         return profile
 
     @staticmethod
     @transaction.atomic
-    def update_role(profile, name=None, permissions=None, description=None, approval_limits=None, role_type=None):
-        before = {"name": profile.name, "permissions": profile.permission_codenames}
+    def update_role(profile, name=None, permissions=None, description=None, approval_limits=None, role_type=None, full_access=None):
+        before = {"name": profile.name, "permissions": profile.permission_codenames, "full_access": profile.full_access}
         if name and name != profile.name:
             if profile.is_system:
                 raise DomainError("System roles cannot be renamed.")
@@ -88,7 +89,14 @@ class RoleService:
             if profile.group.memberships.exists():
                 raise DomainError("Cannot change role type while users are assigned.")
             profile.role_type = role_type
+        access_changed = full_access is not None and bool(full_access) != profile.full_access
+        if full_access is not None:
+            profile.full_access = bool(full_access) and profile.role_type == "internal"
         profile.save()
+        if access_changed:
+            # the rights moved as surely as a ticked box — every holder signs in again to pick them up (§2.5)
+            for m in profile.group.memberships.all():
+                SessionService.revoke_all(m.user, reason="role_changed")
         if permissions is not None:
             from .page_permissions import expand, narrow
 
@@ -106,7 +114,7 @@ class RoleService:
             if changed:
                 for m in profile.group.memberships.all():
                     SessionService.revoke_all(m.user, reason="role_changed")
-        AuditService.log("role.updated", profile, before=before, after={"name": profile.name, "permissions": profile.permission_codenames})
+        AuditService.log("role.updated", profile, before=before, after={"name": profile.name, "permissions": profile.permission_codenames, "full_access": profile.full_access})
         return profile
 
     @staticmethod

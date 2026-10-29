@@ -160,7 +160,7 @@ class RoleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GroupProfile
-        fields = ["id", "name", "description", "is_system", "role_type", "approval_limits", "permissions", "permissions_effective", "users_count", "created_at"]
+        fields = ["id", "name", "description", "is_system", "role_type", "approval_limits", "full_access", "permissions", "permissions_effective", "users_count", "created_at"]
         read_only_fields = ["id", "is_system", "created_at", "permissions_effective"]
 
     def get_users_count(self, obj):

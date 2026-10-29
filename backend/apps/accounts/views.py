@@ -71,6 +71,15 @@ class LoginView(TokenObtainPairView):
                     other = "the mobile app" if "app" in surfaces else "the web portal"
                     return Response({"type": "wrong_surface", "detail": f"This login is for {other} only. Ask the office to allow {'web' if kind == 'web' else 'app'} access."}, status=403)
             AuditService.log("auth.login", model="User", object_id=response.data["user"]["id"], request=request)
+            # A company user signing in fresh is themselves again: an owner's "log in as" session left open on
+            # another tab or device would otherwise keep serving that user's rights (and menu) to the owner's new
+            # login for up to its sliding hours — "the owner does not see what the owner should" (29 Oct 2026).
+            # Platform admins keep theirs: those sessions are how they work inside a company.
+            from .models import ImpersonationSession, User
+
+            u = User.objects.filter(pk=response.data["user"]["id"]).first()
+            if u is not None and not u.is_platform_admin:
+                ImpersonationSession.objects.filter(admin=u, ended_at__isnull=True).update(ended_at=timezone.now())
         return response
 
 
@@ -364,7 +373,7 @@ class MeView(APIView):
                 data["role_types"] = sorted({g.profile.role_type for g in membership.groups.select_related("profile")})
                 data["has_office_role"] = membership.is_owner or "internal" in data["role_types"]
                 # what this user may do page by page — the UI hides anything that is off (see page_permissions.py)
-                data["pages"] = resolve_pages(data["permissions"], is_owner=membership.is_owner)
+                data["pages"] = resolve_pages(data["permissions"], is_owner=membership.has_full_access())
                 data["warehouses"] = [str(w.warehouse_id) for w in membership.warehouse_access.all()]
                 if membership.supplier_rep_id:
                     rep = membership.supplier_rep
@@ -455,14 +464,28 @@ class RoleViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return GroupProfile.objects.filter(tenant=self.request.tenant).select_related("group").order_by("name")
 
+    def _may_grant_full_access(self, d, instance=None):
+        """Full access can only be handed out by someone who has it — else editing roles would be a way to raise
+        one's own rights to the owner's."""
+        wanted = d.get("full_access")
+        if wanted is None or bool(wanted) == bool(getattr(instance, "full_access", False)):
+            return
+        m = getattr(self.request, "membership", None)
+        if not (getattr(self.request, "impersonating", False) or (m is not None and m.has_full_access())):
+            raise PermissionDenied("Only the owner, or someone with full access, can turn Full access on or off for a role.")
+
     def perform_create(self, serializer):
         d = serializer.validated_data
-        profile = RoleService.create_role(self.request.tenant, d["name"], d.get("permissions", []), d.get("role_type", "internal"), d.get("description", ""), approval_limits=d.get("approval_limits"))
+        self._may_grant_full_access(d)
+        profile = RoleService.create_role(self.request.tenant, d["name"], d.get("permissions", []), d.get("role_type", "internal"), d.get("description", ""), approval_limits=d.get("approval_limits"),
+                                          full_access=d.get("full_access", False))
         serializer.instance = profile
 
     def perform_update(self, serializer):
         d = serializer.validated_data
-        RoleService.update_role(serializer.instance, name=d.get("name"), permissions=d.get("permissions"), description=d.get("description"), approval_limits=d.get("approval_limits"), role_type=d.get("role_type"))
+        self._may_grant_full_access(d, serializer.instance)
+        RoleService.update_role(serializer.instance, name=d.get("name"), permissions=d.get("permissions"), description=d.get("description"), approval_limits=d.get("approval_limits"), role_type=d.get("role_type"),
+                                full_access=d.get("full_access"))
 
     def perform_destroy(self, instance):
         RoleService.delete_role(instance)
@@ -472,7 +495,10 @@ class RoleViewSet(viewsets.ModelViewSet):
     def clone(self, request, pk=None):
         src = self.get_object()
         name = request.data.get("name") or f"{src.name} (copy)"
-        profile = RoleService.create_role(request.tenant, name, src.permission_codenames, src.role_type, src.description, approval_limits=src.approval_limits)
+        m = getattr(request, "membership", None)
+        keep_full = src.full_access and (getattr(request, "impersonating", False) or (m is not None and m.has_full_access()))
+        profile = RoleService.create_role(request.tenant, name, src.permission_codenames, src.role_type, src.description, approval_limits=src.approval_limits,
+                                          full_access=keep_full)
         return Response(RoleSerializer(profile).data, status=201)
 
 
@@ -743,7 +769,7 @@ class TenantUserViewSet(viewsets.ModelViewSet):
 
         membership = self.get_object()
         perms = sorted(membership.permission_codenames())
-        pages = resolve_pages(perms, is_owner=membership.is_owner)
+        pages = resolve_pages(perms, is_owner=membership.has_full_access())
         labels = {p["key"]: {"label": p["label"], "group": p["group"], "path": p["path"]} for p in PAGES}
         visible = [{
             **labels.get(key, {"label": key, "group": "", "path": ""}),
