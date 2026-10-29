@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 
+/** The active total %s — from `/rates`, which whoever fills in a customer, order or invoice may read (the Settings
+ * list itself is the Settings page's: a TDN supervisor's Discount dropdown was empty, 29 Oct 2026). */
 export function useDiscountRows() {
-  const q = useQuery({ queryKey: ["crud", "/api/v1/settings/discount-contributions"], queryFn: () => api.get("/api/v1/settings/discount-contributions", { page_size: 100 }) });
-  return ((q.data as any[]) || []).filter((r: any) => r.is_active) as { id: string; total_pct: string }[];
+  const q = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates") });
+  return ((q.data as any[]) || []) as { id: string; total_pct: string }[];
 }
 
 /** The co-funded discount % picker: the configured totals plus "No discount"; "" = follow the customer's rate. A value

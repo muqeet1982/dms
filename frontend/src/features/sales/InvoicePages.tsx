@@ -49,7 +49,7 @@ export function InvoiceDetailPage() {
   const { run, busy } = useAction("/api/v1/invoices", id);
   const [cancel, setCancel] = useState(false);
   const [reopen, setReopen] = useState(false);
-  const contribs = useQuery({ queryKey: ["crud", "/api/v1/settings/discount-contributions"], queryFn: () => api.get("/api/v1/settings/discount-contributions", { page_size: 100 }), enabled: Boolean(id) });
+  const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
   const [edit, setEdit] = useState<{ due_date: string; notes: string; date: string; lines: any[] } | null>(null);
@@ -67,7 +67,7 @@ export function InvoiceDetailPage() {
           {inv.status === "draft" && page.can("discount") && <div className="btn-group">
             <select className="form-select form-select-sm" style={{ width: 150 }} value={String(Number(inv.discount_pct || 0))} onChange={(e) => run("discount", { action: e.target.value === "0" ? "remove" : "apply", percent: e.target.value }, { success: "Discount updated" })} title="Co-funded total discount">
               <option value="0">No discount</option>
-              {(contribs.data || []).filter((r: any) => r.is_active).map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}%</option>)}
+              {(contribs.data || []).map((r: any) => <option key={r.id} value={String(Number(r.total_pct))}>{Number(r.total_pct)}%</option>)}
             </select>
           </div>}
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}

@@ -130,3 +130,30 @@ def test_who_funds_a_discount_shows_only_where_the_splits_are_set(api, tenant):
     rows = rows["results"] if isinstance(rows, dict) else rows
     split = next(x for x in rows if D(x["total_pct"]) == D("15"))
     assert (D(split["company_pct"]), D(split["distributor_pct"])) == (D("12"), D("3")), "the split lives where it is set"
+
+
+def test_whoever_edits_a_customer_gets_the_discount_choices_without_the_settings_page(api, tenant):
+    """TDN, 29 Oct 2026: supervisor@… (Manager: customers yes, Settings no) saw an empty Discount dropdown on the
+    customer form — its % list was the Settings page's. The totals are now readable by whoever fills one in."""
+    from rest_framework.test import APIClient
+
+    from apps.accounts.models import User
+    from apps.sales.models import DiscountContribution
+
+    with tenant_context(tenant):
+        DiscountContribution.objects.get_or_create(total_pct=D("15"), defaults={"distributor_pct": D("3"), "company_pct": D("12")})
+    role = api.post("/api/v1/roles", {"name": "Customer desk", "role_type": "internal",
+                                      "permissions": ["customers.view_customer", "customers.change_customer"]}, format="json")
+    assert role.status_code == 201, role.content
+    made = api.post("/api/v1/users", {"full_name": "Desk", "email": "desk@probe.pk", "password": "Abcd-1234!", "roles": [role.data["id"]]}, format="json")
+    assert made.status_code == 201, made.content
+    User.objects.filter(email="desk@probe.pk").update(must_change_password=False)
+    c = APIClient()
+    tok = c.post("/api/v1/auth/login", {"identifier": "desk@probe.pk", "password": "Abcd-1234!"}, format="json").data["access"]
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}", HTTP_X_TENANT_ID=str(tenant.id))
+
+    r = c.get("/api/v1/settings/discount-contributions/rates")
+    assert r.status_code == 200, r.content
+    assert "15" in {str(Decimal(x["total_pct"]).normalize()) for x in r.data}
+    assert all(set(x) == {"id", "total_pct"} for x in r.data), "totals only — who funds them stays in Settings"
+    assert c.get("/api/v1/settings/discount-contributions").status_code == 403, "the Settings list stays the Settings page's"

@@ -575,9 +575,19 @@ class RepSettlementViewSet(DocumentViewSet):
 class DiscountContributionViewSet(TenantModelViewSet):
     """The co-funded discount table (Settings): add/edit/delete/list the total % → distributor/company split."""
     serializer_class = DiscountContributionSerializer
-    perm_map = page_perms("settings_discount_contributions")
+    # the % list behind every discount dropdown (customer, order, invoice) is readable by whoever fills one in —
+    # not only by Settings (TDN supervisor, 29 Oct 2026: the customer form's Discount dropdown was empty). Totals
+    # only: who funds each % stays on the Settings page (owner, 29 Oct 2026).
+    perm_map = page_perms("settings_discount_contributions", {"rates": [
+        "settings.view_discount_contribution", "customers.add_customer", "customers.change_customer",
+        "sales.add_sales_order", "sales.change_sales_order", "sales.add_invoice", "sales.change_invoice"]})
     pagination_class = None
     queryset = DiscountContribution.objects.all()
+
+    @action(detail=False, methods=["get"])
+    def rates(self, request):
+        """`GET /api/v1/settings/discount-contributions/rates` — the active total %s, nothing else."""
+        return Response([{"id": str(r.id), "total_pct": str(r.total_pct)} for r in self.get_queryset().filter(is_active=True).order_by("total_pct")])
 
 
 class CompanyClaimViewSet(DocumentViewSet):
