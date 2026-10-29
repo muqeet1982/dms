@@ -91,24 +91,6 @@ class SupplierSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
 class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
     fbr_problems = serializers.SerializerMethodField()
-    # the standing discount and who funds it — the same co-funded table invoices claim from (owner, 27 Oct 2026)
-    discount_split = serializers.SerializerMethodField()
-
-    def get_discount_split(self, c):
-        from decimal import Decimal
-
-        from apps.sales.models import DiscountContribution
-        from apps.sales.services import discount_parties
-
-        if "_splits" not in self.context:
-            self.context["_splits"] = {r.total_pct.normalize(): (r.distributor_pct, r.company_pct) for r in DiscountContribution.objects.filter(is_active=True)}
-            self.context["_parties"] = discount_parties()
-        total = Decimal(str(c.default_discount_pct or 0))
-        d, co = self.context["_splits"].get(total.normalize(), (total, Decimal("0")))
-        fmt = lambda x: format(Decimal(x).normalize(), "f")
-        return {"total_pct": fmt(total), "distributor_pct": fmt(d), "company_pct": fmt(co),
-                "in_table": total == 0 or total.normalize() in self.context["_splits"],
-                "distributor": self.context["_parties"][0], "company": self.context["_parties"][1]}
 
     def get_fbr_problems(self, c):
         from apps.fbr.engine import party_fbr_problems
@@ -198,7 +180,7 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Customer
-        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "province", "fbr_registration_type", "fbr_reg_checked_at", "fbr_problems", "advance_income_tax_rate", "charge_tax", "discount_split", "gps_lat", "gps_lng", "map_url", "order_radius_m", "locations", "locations_write", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "added_inside_area", "added_distance_m", "pin_source", "pin_rep_distance_m", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "province", "fbr_registration_type", "fbr_reg_checked_at", "fbr_problems", "advance_income_tax_rate", "charge_tax", "gps_lat", "gps_lng", "map_url", "order_radius_m", "locations", "locations_write", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "added_inside_area", "added_distance_m", "pin_source", "pin_rep_distance_m", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
         read_only_fields = ["id", "requested_by_rep", "added_inside_area", "added_distance_m", "pin_source", "pin_rep_distance_m", "fbr_reg_checked_at", "created_at", "updated_at"]
         extra_kwargs = {"code": {"required": False, "allow_blank": True}}
 

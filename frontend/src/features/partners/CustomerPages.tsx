@@ -14,7 +14,7 @@ import { ConfirmDialog } from "@/components/ui/Modal";
 import { CitySelect } from "@/components/ui/CitySelect";
 import { FieldDef, ResourceForm } from "@/components/ui/ResourceForm";
 import { AttachmentsTab, HistoryTab } from "@/components/documents/DocTabs";
-import { DiscountPctSelect, DiscountSplitLine, splitText } from "@/components/documents/DiscountPick";
+import { DiscountPctSelect } from "@/components/documents/DiscountPick";
 import { StorePinPicker } from "./StorePinPicker";
 
 const TYPES = [{ value: "retailer", label: "Retailer" }, { value: "salon", label: "Salon" }, { value: "wholesaler", label: "Wholesaler" }, { value: "lmt", label: "LMT" }, { value: "other", label: "Other" }];
@@ -56,8 +56,7 @@ export function CustomersPage() {
   const { can } = usePerms();
   const cols: Column<any>[] = [
     { key: "name", header: "Customer", sortKey: "name", render: (c) => (
-      <><span className="fw-semibold text-dark">{c.name}</span>{Number(c.default_discount_pct) > 0 && <span className="badge bg-success-light text-success ms-2" title={splitText(c.discount_split)}>{Number(c.default_discount_pct)}% off</span>}
-        {Number(c.discount_split?.company_pct) > 0 && <div className="text-muted fs-11">{splitText(c.discount_split)}</div>}
+      <><span className="fw-semibold text-dark">{c.name}</span>{Number(c.default_discount_pct) > 0 && <span className="badge bg-success-light text-success ms-2">{Number(c.default_discount_pct)}% off</span>}
         <div className="text-muted fs-11 font-monospace">{c.code}</div>
         {c.business_name && c.business_name !== c.name && <div className="text-muted fs-11">{c.business_name}</div>}</>
     ) },
@@ -168,15 +167,13 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-4", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
     { ...sec("Tax & FBR", "ti-receipt"), name: "charge_tax", label: "Tax invoice — charge FBR sales tax on this customer's invoices (each item at the GST rate of its HS classification)", type: "checkbox", col: "col-md-8", default: false },
 
-    // the customer's total discount and who funds it (owner, 27 Oct 2026: "give me option as well total discount to customer
-    // and show how much will be from Keune and how much from Trafco") — the split invoices claim from the manufacturer
-    { ...sec("Discount", "ti-percentage", "The total discount on every order and invoice of this customer. The split comes from Settings → Discount contributions — the same table each invoice uses to claim the manufacturer's share."),
+    // the customer's total discount (owner, 27 Oct 2026); who funds each % is shown only in Settings → Discount
+    // contributions, where the splits are set (owner, 29 Oct 2026: "do not want to show anywhere other then the form
+    // where they are created")
+    { ...sec("Discount", "ti-percentage"),
       name: "default_discount_pct", label: "Total discount", type: "custom", col: "col-md-12", default: 0,
       render: (v: any, set: any) => (
-        <div className="row g-2 align-items-center">
-          <div className="col-md-5"><DiscountPctSelect value={String(Number(v || 0))} onChange={set} /></div>
-          <div className="col-md-7"><DiscountSplitLine pct={v} /></div>
-        </div>
+        <div className="row g-2"><div className="col-md-5"><DiscountPctSelect value={String(Number(v || 0))} onChange={set} /></div></div>
       ),
       hint: "changing it also updates this customer's orders not yet delivered and their invoices (posted ones are re-posted, ledger included); delivered, paid or FBR-filed invoices keep the old % and are listed for you", validate: (v) => (Number(v) > 100 ? "A discount cannot be more than 100%" : Number(v) < 0 ? "Cannot be negative" : null) },
 
@@ -247,7 +244,7 @@ export function CustomerDetailPage() {
       </div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3">
         <InfoItem label="Code">{c.code}</InfoItem><InfoItem label="Type">{titleCase(c.type)}</InfoItem><InfoItem label="Contact">{c.contact_person || "—"}<div className="fs-12 text-muted">{c.phone} {c.phone2} {c.email}</div></InfoItem><InfoItem label="Address">{c.address || "—"}<div className="fs-12 text-muted">{c.city}</div></InfoItem>
-        <InfoItem label="Discount">{Number(c.default_discount_pct) > 0 ? <>{Number(c.default_discount_pct)}%<div className="fs-12 text-muted">{splitText(c.discount_split) || "—"}</div>{c.discount_split && !c.discount_split.in_table && <div className="fs-12 text-warning">not in the discount table — no manufacturer claim</div>}</> : "None"}</InfoItem>
+        <InfoItem label="Discount">{Number(c.default_discount_pct) > 0 ? `${Number(c.default_discount_pct)}%` : "None"}</InfoItem>
         <InfoItem label="Reps">{c.rep_names?.join(", ") || "—"}</InfoItem><InfoItem label="GPS">{c.gps_lat ? <><a href={`https://maps.google.com/?q=${c.gps_lat},${c.gps_lng}`} target="_blank" rel="noreferrer">{c.gps_lat}, {c.gps_lng}</a><div className="fs-12 text-muted">{pinStory(c)}</div></> : <span className="text-warning">No location yet — the rep can set it at the first visit</span>}</InfoItem><InfoItem label="Tax numbers">{Object.entries(c.tax_numbers || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}{c.tax_class_override_name && <div className="fs-12 text-muted">tax class {c.tax_class_override_name}</div>}</InfoItem><InfoItem label="FBR">{(c.fbr_problems || []).length === 0 ? <span className="text-success"><i className="ti ti-check me-1" />Ready for tax invoices{c.fbr_registration_type ? ` · ${c.fbr_registration_type}` : ""}{c.fbr_reg_checked_at ? <div className="fs-12 text-muted">checked {date(c.fbr_reg_checked_at)}</div> : null}</span> : <span className="text-warning" title={(c.fbr_problems || []).join(" ")}>{c.fbr_problems.length} issue(s) before a tax invoice can file<div className="fs-12 text-muted">{c.fbr_problems[0]}</div></span>}</InfoItem><InfoItem label="Notes">{c.notes || "—"}</InfoItem>
       </div></div></div>
       <div className="card"><div className="card-body">

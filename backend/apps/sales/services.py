@@ -35,35 +35,6 @@ def gst_pct(rates):
     return ", ".join(f"{format(v, 'f')}%" for v in vals)
 
 
-def discount_parties(tenant=None):
-    """(distributor, manufacturer) names for the co-funded split. The distributor is the company itself; the
-    manufacturer is named when every product comes from one (TDN: Keune Pakistan), else "Manufacturer"."""
-    from apps.catalog.models import Product
-
-    tenant = tenant or get_current_tenant()
-    distributor = (getattr(tenant, "display_name", "") or getattr(tenant, "legal_name", "") or "Distributor") if tenant else "Distributor"
-    makers = list(Product.objects.exclude(supplier=None).order_by().values_list("supplier__name", flat=True).distinct()[:2])
-    return distributor, (makers[0] if len(makers) == 1 else "Manufacturer")
-
-
-def discount_split(total_pct, parties=None):
-    """
-    How a customer's total discount is funded (owner, 27 Oct 2026: "total discount to customer and show how much
-    will be from Keune and how much from Trafco") — read from the SAME DiscountContribution table invoices use when
-    they raise the manufacturer's claim. A % not in the table is given by the distributor alone (no claim is raised
-    for it on posting), and says so with in_table false.
-    """
-    from .models import DiscountContribution
-
-    total = Decimal(str(total_pct or 0))
-    distributor, company = parties or discount_parties()
-    row = DiscountContribution.objects.filter(total_pct=total, is_active=True).first() if total > 0 else None
-    d, c = (row.distributor_pct, row.company_pct) if row is not None else (total, Decimal("0"))
-    fmt = lambda x: format(Decimal(x).normalize(), "f")   # 12.000 → "12"
-    return {"total_pct": fmt(total), "distributor_pct": fmt(d), "company_pct": fmt(c), "in_table": row is not None or total == 0,
-            "distributor": distributor, "company": company}
-
-
 class OrderService:
     # ---------------------------------------------------------------- pricing
     @staticmethod

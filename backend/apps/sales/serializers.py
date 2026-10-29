@@ -28,26 +28,9 @@ class CompanyClaimSerializer(serializers.ModelSerializer):
 
 
 class DiscountContributionSerializer(serializers.ModelSerializer):
-    # who funds each share, for labels like "15% — Keune Pakistan 12% + Trafco Distribution Network 3%"
-    distributor_name = serializers.SerializerMethodField()
-    company_name = serializers.SerializerMethodField()
-
-    def _parties(self):
-        if "_parties" not in self.context:
-            from .services import discount_parties
-
-            self.context["_parties"] = discount_parties()
-        return self.context["_parties"]
-
-    def get_distributor_name(self, obj):
-        return self._parties()[0]
-
-    def get_company_name(self, obj):
-        return self._parties()[1]
-
     class Meta:
         model = DiscountContribution
-        fields = ["id", "total_pct", "distributor_pct", "company_pct", "distributor_name", "company_name", "is_active"]
+        fields = ["id", "total_pct", "distributor_pct", "company_pct", "is_active"]
 
     def validate(self, attrs):
         inst = self.instance

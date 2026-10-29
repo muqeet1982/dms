@@ -105,45 +105,28 @@ def test_an_echoed_stored_price_is_not_a_price_request(api, tenant):
     assert len(r.data["price_flags"]) == 1 and r.data["price_flags"][0]["requested"].startswith("140")
 
 
-def test_a_customer_shows_who_funds_their_total_discount(api, tenant):
-    """Owner, 27 Oct 2026: "in customer give me option as well total discount to customer and show how much will be
-    from Keune and how much from Trafco" — the customer's % is split by the same Discount contributions table an
-    invoice uses to claim the manufacturer's share."""
+def test_who_funds_a_discount_shows_only_where_the_splits_are_set(api, tenant):
+    """Owner, 29 Oct 2026: the Keune / Trafco split "not needed in customer add and edit form also in app — do not
+    want to show anywhere other then the form where they are created". The customer and the rep app carry the
+    total % only; Settings → Discount contributions keeps the split."""
     from apps.sales.models import DiscountContribution
     from .conftest import seed_basic
 
-    _wh, sup, _v, cust = seed_basic(tenant)
+    _wh, _sup, _v, cust = seed_basic(tenant)
     with tenant_context(tenant):
         DiscountContribution.objects.get_or_create(total_pct=D("15"), defaults={"distributor_pct": D("3"), "company_pct": D("12")})
-    distributor = tenant.display_name or tenant.legal_name
-
     r = api.patch(f"/api/v1/customers/{cust.id}", {"default_discount_pct": "15"}, format="json")
     assert r.status_code == 200, r.content
-    assert r.data["discount_split"] == {"total_pct": "15", "distributor_pct": "3", "company_pct": "12", "in_table": True,
-                                        "distributor": distributor, "company": sup.name}, "one maker → named"
+    assert D(r.data["default_discount_pct"]) == D("15") and "discount_split" not in r.data
     listed = next(c for c in api.get("/api/v1/customers").data["results"] if c["id"] == str(cust.id))
-    assert listed["discount_split"]["company_pct"] == "12"
+    assert "discount_split" not in listed
+
+    app = api.get("/ext/v1/customers")
+    assert app.status_code == 200, app.content
+    row = next(x for x in app.data["results"] if x["id"] == str(cust.id))
+    assert row["discount_pct"] == "15" and "discount_split" not in row
+
     rows = api.get("/api/v1/settings/discount-contributions").data
     rows = rows["results"] if isinstance(rows, dict) else rows
-    assert {(r["company_name"], r["distributor_name"]) for r in rows} == {(sup.name, distributor)}
-
-    # a % the table does not know: the distributor gives all of it and no claim is raised
-    s = api.patch(f"/api/v1/customers/{cust.id}", {"default_discount_pct": "8.25"}, format="json").data["discount_split"]
-    assert (s["distributor_pct"], s["company_pct"], s["in_table"]) == ("8.25", "0", False)
-    s = api.patch(f"/api/v1/customers/{cust.id}", {"default_discount_pct": "0"}, format="json").data["discount_split"]
-    assert (s["distributor_pct"], s["company_pct"], s["in_table"]) == ("0", "0", True)
-
-
-def test_the_rep_app_customer_rows_carry_the_discount_and_its_split(api, tenant):
-    from apps.sales.models import DiscountContribution
-    from .conftest import seed_basic
-
-    _wh, sup, _v, cust = seed_basic(tenant)
-    with tenant_context(tenant):
-        DiscountContribution.objects.get_or_create(total_pct=D("15"), defaults={"distributor_pct": D("3"), "company_pct": D("12")})
-    api.patch(f"/api/v1/customers/{cust.id}", {"default_discount_pct": "15"}, format="json")
-    r = api.get("/ext/v1/customers")
-    assert r.status_code == 200, r.content
-    row = next(x for x in r.data["results"] if x["id"] == str(cust.id))
-    assert row["discount_pct"] == "15"
-    assert (row["discount_split"]["company"], row["discount_split"]["company_pct"], row["discount_split"]["distributor_pct"]) == (sup.name, "12", "3")
+    split = next(x for x in rows if D(x["total_pct"]) == D("15"))
+    assert (D(split["company_pct"]), D(split["distributor_pct"])) == (D("12"), D("3")), "the split lives where it is set"
