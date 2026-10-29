@@ -108,6 +108,37 @@ export const googleKey = () => (config?.source === "google" && config.google_key
 export type Place = { name: string; label: string; kind: string; lat: number; lng: number; points: { lat: number; lng: number }[];
   bbox: { south: number; north: number; west: number; east: number } | null; radius_m: number };
 
+/*
+ * The search talks to Google's Places API (New) over plain HTTPS, not through the map script: once Google has
+ * refused the MAP on a page, the script's place objects come back without a location (seen 29 Oct 2026 —
+ * "Could not open that place"), while the web service answers normally. The browser sends the page as the
+ * referrer, so a key restricted to this site still works.
+ */
+const PLACES = "https://places.googleapis.com/v1";
+const DETAIL_FIELDS = "displayName,formattedAddress,location,viewport,types";
+
+async function places(path: string, key: string, fieldMask: string, body?: any): Promise<any> {
+  const r = await fetch(`${PLACES}${path}`, {
+    method: body ? "POST" : "GET",
+    headers: { "X-Goog-Api-Key": key, "X-Goog-FieldMask": fieldMask, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`Places ${r.status}`);
+  return r.json();
+}
+
+/** A Places (New) place, as both lookups answer it. */
+function toPlace(p: any): Place | null {
+  if (!p?.location) return null;
+  const lo = p.viewport?.low, hi = p.viewport?.high;
+  return {
+    name: p.displayName?.text || "", label: p.formattedAddress || p.displayName?.text || "",
+    kind: String((p.types || [])[0] || "place").replace(/_/g, " "),
+    lat: p.location.latitude, lng: p.location.longitude, points: [],
+    bbox: lo && hi ? { south: lo.latitude, north: hi.latitude, west: lo.longitude, east: hi.longitude } : null, radius_m: 0,
+  };
+}
+
 /**
  * Search a place by name or address — Google Places when Google is on, else (or when Google refuses) the
  * server's OpenStreetMap lookup, which also knows published area outlines.
@@ -116,20 +147,9 @@ export async function searchPlaces(q: string): Promise<Place[]> {
   const key = googleKey();
   if (key) {
     try {
-      const g = await loadGoogleMaps(key);
-      const { Place: GPlace } = await g.maps.importLibrary("places");
-      const { places } = await GPlace.searchByText({
-        textQuery: q, fields: ["displayName", "formattedAddress", "location", "viewport", "types"], region: "pk", maxResultCount: 6,
-      });
-      return (places || []).filter((p: any) => p.location).map((p: any) => {
-        const vp = p.viewport, ne = vp?.getNorthEast(), sw = vp?.getSouthWest();
-        return {
-          name: p.displayName || "", label: p.formattedAddress || p.displayName || "",
-          kind: String((p.types || [])[0] || "place").replace(/_/g, " "),
-          lat: p.location.lat(), lng: p.location.lng(), points: [],
-          bbox: vp ? { south: sw.lat(), north: ne.lat(), west: sw.lng(), east: ne.lng() } : null, radius_m: 0,
-        };
-      });
+      const d = await places("/places:searchText", key, DETAIL_FIELDS.split(",").map((f) => `places.${f}`).join(","),
+        { textQuery: q, regionCode: "PK", languageCode: "en", maxResultCount: 6 });
+      return (d.places || []).map(toPlace).filter(Boolean) as Place[];
     } catch { /* the Places API not switched on for the key, or a quota — the OpenStreetMap lookup still answers */ }
   }
   return (await api.get("/api/v1/geofences/search", { q })).results;
@@ -143,32 +163,21 @@ export type Suggestion = { id: string; main: string; secondary: string; pick: ()
  * or refuses — the box then searches on Enter instead (the OpenStreetMap lookup does not allow type-ahead use).
  * One session token per search box ties the keystrokes and the final pick into one billed session.
  */
-export async function suggestPlaces(input: string, session: { token?: any }): Promise<Suggestion[] | null> {
+export async function suggestPlaces(input: string, session: { token?: string }): Promise<Suggestion[] | null> {
   const key = googleKey();
   if (!key) return null;
   try {
-    const g = await loadGoogleMaps(key);
-    const { AutocompleteSuggestion, AutocompleteSessionToken } = await g.maps.importLibrary("places");
-    session.token = session.token || new AutocompleteSessionToken();
-    const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
-      input, sessionToken: session.token, includedRegionCodes: ["pk"], region: "pk",
-    });
-    return (suggestions || []).filter((s: any) => s.placePrediction).map((s: any) => {
-      const p = s.placePrediction;
+    session.token = session.token || crypto.randomUUID();
+    const token = session.token;
+    const d = await places("/places:autocomplete", key, "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
+      { input, includedRegionCodes: ["pk"], regionCode: "pk", languageCode: "en", sessionToken: token });
+    return (d.suggestions || []).filter((x: any) => x.placePrediction?.placeId).map((x: any) => {
+      const p = x.placePrediction;
       return {
-        id: p.placeId, main: p.mainText?.text || p.text?.text || "", secondary: p.secondaryText?.text || "",
+        id: p.placeId, main: p.structuredFormat?.mainText?.text || p.text?.text || "", secondary: p.structuredFormat?.secondaryText?.text || "",
         pick: async () => {
-          const place = p.toPlace();
-          await place.fetchFields({ fields: ["displayName", "formattedAddress", "location", "viewport", "types"] });
           session.token = undefined;   // a pick closes the session
-          if (!place.location) return null;
-          const vp = place.viewport, ne = vp?.getNorthEast(), sw = vp?.getSouthWest();
-          return {
-            name: place.displayName || "", label: place.formattedAddress || place.displayName || "",
-            kind: String((place.types || [])[0] || "place").replace(/_/g, " "),
-            lat: place.location.lat(), lng: place.location.lng(), points: [],
-            bbox: vp ? { south: sw.lat(), north: ne.lat(), west: sw.lng(), east: ne.lng() } : null, radius_m: 0,
-          };
+          return toPlace(await places(`/places/${encodeURIComponent(p.placeId)}?languageCode=en&regionCode=PK&sessionToken=${encodeURIComponent(token)}`, key, DETAIL_FIELDS));
         },
       };
     });
