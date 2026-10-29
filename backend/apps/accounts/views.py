@@ -471,7 +471,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         if wanted is None or bool(wanted) == bool(getattr(instance, "full_access", False)):
             return
         m = getattr(self.request, "membership", None)
-        if not (getattr(self.request, "impersonating", False) or (m is not None and m.has_full_access())):
+        if not (m is not None and m.has_full_access()):
             raise PermissionDenied("Only the owner, or someone with full access, can turn Full access on or off for a role.")
 
     def perform_create(self, serializer):
@@ -496,7 +496,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         src = self.get_object()
         name = request.data.get("name") or f"{src.name} (copy)"
         m = getattr(request, "membership", None)
-        keep_full = src.full_access and (getattr(request, "impersonating", False) or (m is not None and m.has_full_access()))
+        keep_full = src.full_access and m is not None and m.has_full_access()
         profile = RoleService.create_role(request.tenant, name, src.permission_codenames, src.role_type, src.description, approval_limits=src.approval_limits,
                                           full_access=keep_full)
         return Response(RoleSerializer(profile).data, status=201)

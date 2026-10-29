@@ -182,7 +182,17 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
         model = Customer
         fields = ["id", "code", "name", "business_name", "ntn", "strn", "cnic", "filer_status", "type", "contact_person", "phone", "alt_mobile", "landline", "email", "address", "city", "province", "fbr_registration_type", "fbr_reg_checked_at", "fbr_problems", "advance_income_tax_rate", "charge_tax", "gps_lat", "gps_lng", "map_url", "order_radius_m", "locations", "locations_write", "territory", "territory_name", "route", "route_name", "price_list", "price_list_name", "credit_limit", "credit_days", "tax_class_override", "tax_class_override_name", "tax_numbers", "default_discount_pct", "opening_balance_date", "account", "assigned_reps", "rep_names", "status", "is_blocked", "blocked_reason", "opening_balance", "contacts", "requested_by_rep", "added_inside_area", "added_distance_m", "pin_source", "pin_rep_distance_m", "min_shelf_life_days", "notes", "outstanding", "created_at", "updated_at"]
         read_only_fields = ["id", "requested_by_rep", "added_inside_area", "added_distance_m", "pin_source", "pin_rep_distance_m", "fbr_reg_checked_at", "created_at", "updated_at"]
-        extra_kwargs = {"code": {"required": False, "allow_blank": True}}
+        extra_kwargs = {"code": {"required": False, "allow_blank": True},
+                        "order_radius_m": {"error_messages": {"invalid": "Order radius must be a whole number of metres (e.g. 50) — or leave it empty."}}}
+
+    def to_internal_value(self, data):
+        # an empty radius is "no radius of its own" (the company's default applies), not a mistake — a customer
+        # with none came back from the form as "" and every save was refused (TDN, 29 Oct 2026); a decimal is rounded
+        r = data.get("order_radius_m", None) if hasattr(data, "get") else None
+        if (isinstance(r, str) and r.strip() == "") or isinstance(r, float):
+            data = data.copy() if hasattr(data, "copy") else dict(data)
+            data["order_radius_m"] = None if isinstance(r, str) else int(round(r))
+        return super().to_internal_value(data)
 
     def get_outstanding(self, obj):
         if hasattr(obj, "outstanding_amount"):

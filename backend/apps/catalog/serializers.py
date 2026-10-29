@@ -7,6 +7,13 @@ from apps.inventory.models import Warehouse
 from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductOffer, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
 
 
+
+def _clash(product, code):
+    """Why a code cannot be used — and, when the holder is a deleted product, the way back (restore it)."""
+    if product.status == "archived":
+        return f"{code} belongs to a deleted product, {product.name} — restore it from Products → Deleted products instead."
+    return f"{code} is already used by another product, {product.name}."
+
 class ProductOfferSerializer(serializers.ModelSerializer):
     """One dated discount, addressed on its own — the Date-wise discounts page edits these across all products."""
 
@@ -252,7 +259,7 @@ class ProductSerializer(serializers.ModelSerializer):
         if self.instance is not None:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError("A product with this code already exists.")
+            raise serializers.ValidationError(_clash(qs.first(), value.strip()))
         return value.strip()
 
     def validate(self, attrs):
@@ -262,8 +269,9 @@ class ProductSerializer(serializers.ModelSerializer):
             fallback = (attrs.get("upc") or attrs.get("item_code") or "").strip()
             if not fallback:
                 raise serializers.ValidationError({"upc": ["Give the product a UPC or an item code."]})
-            if Product.objects.filter(sku__iexact=fallback).exists():
-                raise serializers.ValidationError({"upc": [f"{fallback} is already used by another product."]})
+            clash = Product.objects.filter(sku__iexact=fallback).first()
+            if clash is not None:
+                raise serializers.ValidationError({"upc": [_clash(clash, fallback)]})
             attrs["sku"] = fallback
         for field in ("upc", "box_upc", "item_code"):
             if attrs.get(field):

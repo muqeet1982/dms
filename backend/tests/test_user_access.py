@@ -256,3 +256,26 @@ def test_a_platform_admin_viewing_a_tenant_can_also_log_in_as_a_user(api, tenant
     assert admin.post("/api/v1/users/exit-impersonation", {}, format="json").status_code == 200
     back = admin.get("/api/v1/me").data
     assert back["is_owner"] is True and back["impersonating_as"] is None and back["impersonating"] is True
+
+
+def test_a_platform_admin_viewing_as_a_user_has_exactly_that_users_rights(api, tenant, roles, admin_user):
+    """TDN, 29 Oct 2026: the supervisor's discount list showed when the super admin viewed as him, but not on his
+    own login — viewing as anyone answered "yes" to every permission. The view now has the viewed person's rights:
+    the owner's when the company is opened, the user's after "log in as"."""
+    from rest_framework.test import APIClient
+
+    from apps.platform.services import TenantService
+
+    made = api.post("/api/v1/users", {"full_name": "Desk Staff", "email": "desk.staff@probe.pk",
+                                      "password": "Abcd-1234!", "roles": [str(roles["office"].id)]}, format="json")
+    assert made.status_code == 201, made.content
+    with tenant_context(tenant, tenant.owner):
+        TenantService.start_impersonation(admin_user, tenant)
+    admin = APIClient()
+    r = admin.post("/api/v1/auth/login", {"identifier": "admin-test", "password": "pak1stan"}, format="json")
+    admin.credentials(HTTP_AUTHORIZATION=f"Bearer {r.data['access']}", HTTP_X_TENANT_ID=str(tenant.id))
+
+    assert admin.get("/api/v1/settings/discount-contributions").status_code == 200, "as the owner: everything"
+    assert admin.post(f"/api/v1/users/{made.data['id']}/login-as", {}, format="json").status_code == 200
+    assert admin.get("/api/v1/settings/discount-contributions").status_code == 403, "as the user: only the user's rights"
+    assert admin.get("/api/v1/sales-orders").status_code == 200, "what the user may do still works"

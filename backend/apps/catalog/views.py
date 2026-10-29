@@ -1,5 +1,6 @@
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -120,7 +121,8 @@ class ProductOfferViewSet(TenantModelViewSet):
 
 
 class ProductViewSet(TenantModelViewSet):
-    perm_map = page_perms("products", {"variants": "catalog.change_product", "stats": "catalog.view_product"})
+    # whoever may delete a product may bring it back (owner, 29 Oct 2026: "option to undelete from a table")
+    perm_map = page_perms("products", {"variants": "catalog.change_product", "stats": "catalog.view_product", "restore": "catalog.delete_product"})
     search_fields = ["name", "sku", "upc", "box_upc", "item_code", "variants__sku", "variants__name", "variants__barcodes__code"]
     filterset_fields = ["brand", "category", "supplier", "status", "is_batch_tracked", "tax_class", "location", "location__warehouse"]
     ordering_fields = ["name", "sku", "created_at", "sale_price", "cost_price", "retail_price", "packing", "category__name", "brand__name", "unit_size", "location__name", "status", "stock_on_hand"]
@@ -142,6 +144,9 @@ class ProductViewSet(TenantModelViewSet):
             from django.db.models import F
 
             qs = qs.annotate(stock_on_hand=Sum("variants__stock_levels__qty_on_hand")).filter(stock_on_hand__lt=F("min_stock"))
+        # a deleted product leaves the list (its documents keep it); Products → Deleted products asks for it by name
+        if self.action in ("list", "export") and not self.request.query_params.get("status"):
+            qs = qs.exclude(status="archived")
         return qs.distinct()
 
     def perform_create(self, serializer):
@@ -162,11 +167,31 @@ class ProductViewSet(TenantModelViewSet):
         AuditService.log("created", product, after={"sku": product.sku, "name": product.name}, request=self.request)
 
     def perform_destroy(self, instance):
+        """
+        Delete = soft delete (owner, 29 Oct 2026: "so its related records should not delete"): the product is
+        archived and its variants switched off, so it leaves every list, picker and the rep app — while every
+        order, invoice, stock movement and report that names it keeps it. Restore brings it back as it was.
+        """
+        from apps.core.audit import AuditService
+
         instance.status = "archived"
-        instance.save(update_fields=["status"])
-        for v in instance.variants.all():
-            v.is_active = False
-            v.save(update_fields=["is_active"])
+        instance.save(update_fields=["status", "updated_at"])
+        instance.variants.update(is_active=False, updated_at=timezone.now())   # bumped: the rep app syncs by it
+        AuditService.log("product.deleted", instance, after={"sku": instance.sku, "name": instance.name}, request=self.request)
+
+    @action(detail=True, methods=["post"])
+    def restore(self, request, pk=None):
+        """`POST /products/{id}/restore` — a deleted product back in the lists, active, with its variants."""
+        from apps.core.audit import AuditService
+
+        product = self.get_object()
+        if product.status != "archived":
+            raise DomainError(f"{product.name} is not deleted.", status_code=400)
+        product.status = "active"
+        product.save(update_fields=["status", "updated_at"])
+        product.variants.update(is_active=True, updated_at=timezone.now())
+        AuditService.log("product.restored", product, after={"sku": product.sku, "name": product.name}, request=request)
+        return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"])
     @require_perm("catalog.change_product")
@@ -181,8 +206,8 @@ class ProductViewSet(TenantModelViewSet):
     def stats(self, request):
         from django.db.models import F
 
-        qs = Product.objects.all()
-        low = Product.objects.annotate(s=Sum("variants__stock_levels__qty_on_hand")).filter(s__lt=F("min_stock")).count()
+        qs = Product.objects.exclude(status="archived")   # deleted products are not counted
+        low = qs.annotate(s=Sum("variants__stock_levels__qty_on_hand")).filter(s__lt=F("min_stock")).count()
         return Response({"total": qs.count(), "active": qs.filter(status="active").count(), "inactive": qs.exclude(status="active").count(), "low_stock": low, "variants": ProductVariant.objects.count()})
 
 

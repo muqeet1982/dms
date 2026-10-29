@@ -19,6 +19,8 @@ export type FieldDef = {
   mask?: "cnic" | "ntn" | "strn" | "phone";
   /** Extra client-side check; return a message to block saving. */
   validate?: (value: any, values: Record<string, any>) => string | null;
+  /** How an error on this field is named when the field has no visible label of its own (a hidden companion). */
+  errorLabel?: string;
   /** Run `validate` even when the field is empty — for cross-field rules like "NTN or CNIC". */
   alwaysValidate?: boolean;
 };
@@ -103,11 +105,25 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
         if ((f.type === "entity" || f.type === "select" || f.type === "date") && v === "") v = null;
         // an emptied number falls back to the field's default (0 / 1); only truly optional inputs are sent as null
         if ((f.type === "number" || f.type === "money") && v === "") v = f.default ?? null;
+        // a custom field that loaded empty (null) goes back empty — the form shows null as "", and sending that ""
+        // made the API refuse a customer with no order radius on every save (TDN, 29 Oct 2026)
+        if (f.type === "custom" && v === "" && (initial?.[f.name] === null || initial?.[f.name] === undefined)) v = null;
         out[f.name] = v;
       }
       await onSubmit(out);
     } catch (err: any) {
-      if (err instanceof ApiError) { const fe = err.fieldErrors(); setErrors(fe); reveal(fe); setFormError(err.message); toast.error(err.message); } else { setFormError(String(err?.message || err)); toast.error(String(err?.message || err)); }
+      if (err instanceof ApiError) {
+        const fe = err.fieldErrors(); setErrors(fe); reveal(fe);
+        // name each field the way the form shows it — its section and label — so even a hidden one is findable
+        // (owner, 29 Oct 2026: "mention which field issue, current error not clear")
+        const named = Object.entries(fe).map(([k, m]) => {
+          const f = fields.find((x) => x.name === k);
+          const name = labelCase(f?.errorLabel || f?.label || k.replace(/_/g, " "));
+          return `${f?.section ? `${f.section} → ` : ""}${name}: ${m}`;
+        });
+        const msg = named.length && (err.problem as any).type === "validation_error" ? named.join(" · ") : err.message;
+        setFormError(msg); toast.error(msg);
+      } else { setFormError(String(err?.message || err)); toast.error(String(err?.message || err)); }
     } finally { setSaving(false); }
   };
   const shownNames = new Set(fields.map((f) => f.name));

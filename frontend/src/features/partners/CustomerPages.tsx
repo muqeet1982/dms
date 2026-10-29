@@ -145,7 +145,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
         </div>
       ) },
     { ...sec("The shop", "ti-building-store"), name: "min_shelf_life_days", label: "", type: "number", col: "d-none" },
-    { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", type: "custom", col: "d-none", default: 50, render: () => null },
+    { ...sec("The shop", "ti-building-store"), name: "order_radius_m", label: "", errorLabel: "Order radius (m)", type: "custom", col: "d-none", default: 50, render: () => null },
     { ...sec("The shop", "ti-building-store"), name: "assigned_reps", label: "Sale person(s) *", type: "custom", col: "col-md-12", default: [],
       validate: (v) => (Array.isArray(v) && v.length ? null : "Link at least one sale person — a shop without one reaches no rep."),
       render: (v, set) => <RepPicker value={Array.isArray(v) ? v : []} onChange={set} /> },
@@ -154,7 +154,7 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
         onChange={(lat, lng) => { setField("gps_lat", lat); setField("gps_lng", lng); }}
         onAddress={(a) => { if (!String(values.address || "").trim()) setField("address", a); }}
         radius={values.order_radius_m} onRadiusChange={(m) => setField("order_radius_m", m)} /> },
-    { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", type: "custom", col: "d-none", render: () => null },
+    { ...sec("The shop", "ti-building-store"), name: "gps_lng", label: "", errorLabel: "Shop pin (longitude)", type: "custom", col: "d-none", render: () => null },
 
     { ...sec("Tax & FBR", "ti-receipt", "NTN or CNIC — one of the two is required. The FBR row matters only for customers who get tax invoices."), name: "ntn", label: "NTN", type: "custom", col: "col-md-4", alwaysValidate: true,
       validate: (_v, vals) => (String(vals.ntn || "").trim() || String(vals.cnic || "").trim() ? null : "Give NTN or CNIC — one of the two"),

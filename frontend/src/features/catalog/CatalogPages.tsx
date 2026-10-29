@@ -11,7 +11,7 @@ import { CrudPage } from "@/components/ui/CrudPage";
 import { Column } from "@/components/ui/DataTable";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ListPage } from "@/components/ui/ListPage";
-import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { FieldDef, ResourceForm, ResourceModal } from "@/components/ui/ResourceForm";
 import { AttachmentsTab, HistoryTab } from "@/components/documents/DocTabs";
 import { ImportButton } from "@/components/documents/ImportPanel";
@@ -97,8 +97,23 @@ function OffersEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) 
   );
 }
 
+/** Delete is a soft delete (owner, 29 Oct 2026): the product leaves the lists, pickers and the rep app, and every
+ * document that names it keeps it. Products → Deleted products lists them, with Restore. */
+function DeleteProductDialog({ product, onClose, onDone }: { product: any; onClose: () => void; onDone: () => void }) {
+  const stock = Number(product?.stock_on_hand ?? (product?.variants || []).reduce((a: number, v: any) => a + Number(v.stock_on_hand || 0), 0)) || 0;
+  return <ConfirmDialog open={Boolean(product)} title="Delete product" danger confirmText="Delete"
+    message={<>Delete <strong>{product?.name}</strong>? It leaves the product lists and order screens; orders, invoices and stock history keep it, and it can be restored from <strong>Deleted products</strong>.{stock > 0 && <div className="text-warning mt-2"><i className="ti ti-alert-triangle me-1" />{qty(stock)} still in stock.</div>}</>}
+    onClose={onClose}
+    onConfirm={async () => {
+      try { await api.delete(`/api/v1/products/${product.id}`); toast.success(`${product.name} deleted`); onDone(); }
+      catch (e: any) { toast.error(e.message); }
+    }} />;
+}
+
 export function ProductsPage() {
   const productsPage = usePage("products");
+  const qc = useQueryClient();
+  const [del, setDel] = useState<any>(null);
   const stats = useQuery({ queryKey: ["product-stats"], queryFn: () => api.get("/api/v1/products/stats") });
   const cols: Column<any>[] = [
     { key: "name", header: "Product", sortKey: "name", render: (p) => <><span className="fw-semibold text-dark">{p.name}</span><div className="text-muted fs-11 font-monospace">{[p.upc, p.item_code && p.item_code !== p.upc ? p.item_code : null].filter(Boolean).join(" · ") || p.sku}{Number(p.packing) > 1 ? ` · ${p.packing}/box` : ""}{p.variants_count > 1 ? ` · ${p.variants_count} variants` : ""}</div></> },
@@ -109,13 +124,38 @@ export function ProductsPage() {
     { key: "fbr_ready", header: "FBR", render: (p) => p.fbr_hs_code || p.fbr_rate_desc ? (p.fbr_ready ? <span className="badge bg-success-light text-success" title="Classified — can go on an FBR tax invoice">ready</span> : <span className="badge bg-warning-light text-warning" title="Classification started but incomplete">incomplete</span>) : <span className="text-muted fs-11">—</span> },
     { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
     { key: "status", header: "Status", sortKey: "status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
+    ...(productsPage.delete ? [{ key: "_delete", header: "", render: (p: any) => <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2" title="Delete product" onClick={() => setDel(p)}><i className="ti ti-trash" /></button> }] : []),
   ];
   return (
+    <>
+    <DeleteProductDialog product={del} onClose={() => setDel(null)} onDone={() => { setDel(null); qc.invalidateQueries({ queryKey: ["list", "/api/v1/products"] }); qc.invalidateQueries({ queryKey: ["product-stats"] }); }} />
     <ListPage title="Products" endpoint="/api/v1/products" exports={false} columns={cols} rowLink={(p) => `/app/catalog/products/${p.id}`} page="products" createTo="/app/catalog/products/new" createLabel="Add product" defaultOrdering="name" extraQuery={{ with_stock: 1 }} searchPlaceholder="Search name, SKU, barcode…"
       filters={[{ name: "brand", label: "Brand", type: "entity", endpoint: "/api/v1/brands", mapOption: (b) => ({ id: b.id, label: b.name }) }, { name: "category", label: "Category", type: "entity", endpoint: "/api/v1/categories", mapOption: (c) => ({ id: c.id, label: c.name }) }, { name: "supplier", label: "Supplier", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }) }, { name: "location", label: "Location", type: "entity", endpoint: "/api/v1/settings/bins", mapOption: (b) => ({ id: b.id, label: b.label || b.code, sub: b.warehouse_name }) }, { name: "status", label: "Status", type: "select", options: ["active", "inactive", "archived"].map((s) => ({ value: s, label: s })) }, { name: "low_stock", label: "Low stock", type: "toggle" }]}
-      actions={<>{productsPage.add && <ImportButton type="products" label="Import price list (Excel)" />}</>}
+      actions={<>{productsPage.add && <ImportButton type="products" label="Import price list (Excel)" />}{productsPage.delete && <Link to="/app/catalog/products/deleted" className="btn btn-outline-secondary"><i className="ti ti-trash me-1" />Deleted products</Link>}</>}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Products" value={stats.data.total} icon="ti-box" color="primary" sub={`${stats.data.variants} variants`} /></div><div className="col-6 col-md-3"><StatCard label="Active" value={stats.data.active} icon="ti-circle-check" color="success" /></div><div className="col-6 col-md-3"><StatCard label="Inactive / archived" value={stats.data.inactive} icon="ti-ban" color="secondary" /></div><div className="col-6 col-md-3"><StatCard label="Low stock" value={stats.data.low_stock} icon="ti-alert-triangle" color="warning" to="/app/inventory/alerts" /></div></div>} />
+    </>
   );
+}
+
+export function DeletedProductsPage() {
+  const page = usePage("products");
+  const qc = useQueryClient();
+  const restore = async (p: any) => {
+    try {
+      await api.post(`/api/v1/products/${p.id}/restore`, {});
+      toast.success(`${p.name} restored`);
+      for (const k of [["list", "/api/v1/products"], ["product-stats"], ["doc", "/api/v1/products", p.id]]) qc.invalidateQueries({ queryKey: k });
+    } catch (e: any) { toast.error(e.message); }
+  };
+  const cols: Column<any>[] = [
+    { key: "name", header: "Product", sortKey: "name", render: (p) => <><span className="fw-semibold text-dark">{p.name}</span><div className="text-muted fs-11 font-monospace">{p.upc || p.item_code || p.sku}</div></> },
+    { key: "brand_name", header: "Brand", render: (p) => p.brand_name || "—" },
+    { key: "stock_on_hand", header: "Stock", num: true, render: (p) => qty(p.stock_on_hand || 0) },
+    { key: "updated_at", header: "Deleted", sortKey: "updated_at", render: (p) => date(p.updated_at) },
+    { key: "_restore", header: "", render: (p) => page.delete && <button type="button" className="btn btn-sm btn-outline-success py-0" onClick={() => restore(p)}><i className="ti ti-arrow-back-up me-1" />Restore</button> },
+  ];
+  return <ListPage title="Deleted products" crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: "Deleted products" }]} endpoint="/api/v1/products" exports={false}
+    columns={cols} rowLink={(p) => `/app/catalog/products/${p.id}`} page="products" defaultOrdering="-updated_at" extraQuery={{ status: "archived", with_stock: 1 }} searchPlaceholder="Search name, SKU, barcode…" />;
 }
 
 export function ProductFormPage() {
@@ -143,6 +183,7 @@ export function ProductDetailPage() {
   const [variantModal, setVariantModal] = useState<{ open: boolean; row?: any }>({ open: false });
   const [packModal, setPackModal] = useState<{ open: boolean; variant?: any; row?: any }>({ open: false });
   const [bcModal, setBcModal] = useState<{ open: boolean; variant?: any; row?: any }>({ open: false });
+  const [deleting, setDeleting] = useState(false);
   const stock = useQuery({ queryKey: ["product-stock", id], queryFn: () => api.list("/api/v1/inventory/stock", { variant__product: id, page_size: 200 }), enabled: tab === "stock" });
   const movements = useQuery({ queryKey: ["product-movements", id], queryFn: () => api.get("/api/v1/inventory/movements", { variant__product: id, page_size: 100 }), enabled: tab === "movements" });
   const prices = useQuery({ queryKey: ["product-prices", id], queryFn: async () => { const pls = await api.get("/api/v1/price-lists"); const out: any[] = []; for (const pl of pls) { const items = await api.get(`/api/v1/price-lists/${pl.id}/items`); out.push(...items.filter((i: any) => q.data?.variants.some((v: any) => v.id === i.variant)).map((i: any) => ({ ...i, price_list_name: pl.name }))); } return out; }, enabled: tab === "prices" && Boolean(q.data) });
@@ -151,14 +192,19 @@ export function ProductDetailPage() {
   const p = q.data;
   if (!p) return null;
   const totalStock = p.variants.reduce((s: number, v: any) => s + Number(v.stock_on_hand || 0), 0);
+  const refreshAll = () => { for (const k of [["doc", "/api/v1/products", id], ["list", "/api/v1/products"], ["product-stats"]]) qc.invalidateQueries({ queryKey: k }); };
   return (
     <>
+      <DeleteProductDialog product={deleting ? p : null} onClose={() => setDeleting(false)} onDone={() => { setDeleting(false); refreshAll(); }} />
+      {p.status === "archived" && <Alert kind="warning">This product is deleted — it is hidden from the lists and order screens.</Alert>}
       <PageHeader title={p.name} badge={<StatusBadge status={p.status} />} crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: p.name }]}
         actions={<>{page.edit && p.status !== "archived" && <button className={`btn ${p.status === "active" ? "btn-outline-warning" : "btn-outline-success"}`} onClick={async () => {
           const next = p.status === "active" ? "inactive" : "active";
           try { await api.patch(`/api/v1/products/${p.id}`, { status: next }); toast.success(next === "active" ? "Product activated" : "Product set inactive"); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/products", id] }); qc.invalidateQueries({ queryKey: ["list", "/api/v1/products"] }); }
           catch (e: any) { toast.error(e.message); }
-        }}><i className={`ti ${p.status === "active" ? "ti-toggle-right" : "ti-toggle-left"} me-1`} />{p.status === "active" ? "Set inactive" : "Activate"}</button>}{page.can("print_barcode") && <Link to={`/app/catalog/labels?product=${p.id}`} className="btn btn-outline-secondary"><i className="ti ti-barcode me-1" />Labels</Link>}{pageRights("products").edit && <Link to={`/app/catalog/products/${p.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{pageRights("products").edit && <button className="btn btn-primary" onClick={() => setVariantModal({ open: true })}><i className="ti ti-plus me-1" />Add variant</button>}</>} />
+        }}><i className={`ti ${p.status === "active" ? "ti-toggle-right" : "ti-toggle-left"} me-1`} />{p.status === "active" ? "Set inactive" : "Activate"}</button>}{page.delete && p.status !== "archived" && <button className="btn btn-outline-danger" onClick={() => setDeleting(true)}><i className="ti ti-trash me-1" />Delete</button>}{page.delete && p.status === "archived" && <button className="btn btn-success" onClick={async () => {
+          try { await api.post(`/api/v1/products/${p.id}/restore`, {}); toast.success(`${p.name} restored`); refreshAll(); } catch (e: any) { toast.error(e.message); }
+        }}><i className="ti ti-arrow-back-up me-1" />Restore</button>}{page.can("print_barcode") && <Link to={`/app/catalog/labels?product=${p.id}`} className="btn btn-outline-secondary"><i className="ti ti-barcode me-1" />Labels</Link>}{pageRights("products").edit && <Link to={`/app/catalog/products/${p.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{pageRights("products").edit && <button className="btn btn-primary" onClick={() => setVariantModal({ open: true })}><i className="ti ti-plus me-1" />Add variant</button>}</>} />
       <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="T.P — trade price" value={money(p.sale_price)} icon="ti-tag" color="primary" sub={p.price_effective_date ? `price list of ${date(p.price_effective_date)}` : undefined} /></div><div className="col-6 col-md-3"><StatCard label="Stock on hand" value={qty(totalStock)} icon="ti-box" color={totalStock < Number(p.min_stock) ? "danger" : "success"} sub={`min ${qty(p.min_stock)} · max ${qty(p.max_stock)} ${p.base_uom_code}`} /></div><div className="col-6 col-md-3"><StatCard label="Variants" value={p.variants.length} icon="ti-color-swatch" color="info" /></div><div className="col-6 col-md-3"><StatCard label="Tracking" value={p.is_batch_tracked ? "Batch" + (p.is_expiry_tracked ? " + expiry" : "") : "None"} icon="ti-calendar-event" color="secondary" sub={p.shelf_life_days ? `${p.shelf_life_days} days shelf life` : ""} /></div></div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3"><InfoItem label="UPC (unit)">{p.upc || p.sku}</InfoItem><InfoItem label="Item code">{p.item_code || "—"}</InfoItem><InfoItem label="Box">{Number(p.packing) > 1 ? <>{p.packing} per box{p.box_upc ? <div className="fs-11 text-muted font-monospace">{p.box_upc}</div> : null}</> : "loose units"}</InfoItem><InfoItem label="Brand / category">{p.brand_name || "—"}<div className="fs-12 text-muted">{p.category_name}</div></InfoItem><InfoItem label="Unit · packing">{p.unit_size || p.base_uom_code}<div className="fs-12 text-muted">{p.packing > 1 ? `${p.packing} per carton` : "sold per unit"}</div></InfoItem><InfoItem label="Location">{p.location_name || "—"}</InfoItem><InfoItem label="Supplier">{p.supplier_name ? <Link to={`/app/suppliers/${p.supplier}`}>{p.supplier_name}</Link> : "—"}</InfoItem><InfoItem label="Tax class">{p.tax_class_name || "default"}</InfoItem></div>{p.description && <p className="fs-13 text-muted mt-3 mb-0">{p.description}</p>}</div></div>
       <div className="card"><div className="card-body">

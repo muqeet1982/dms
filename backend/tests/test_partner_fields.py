@@ -84,3 +84,17 @@ def test_customer_standing_discount_applies_and_can_be_dropped(api, tenant):
     # a line that carries its own discount keeps it
     own = api.post("/api/v1/sales-orders", {**body, "lines": [{"variant": str(variant.id), "qty": "10", "discount_pct": "12"}]}, format="json")
     assert Decimal(own.data["lines"][0]["discount_pct"]) == Decimal("12")
+
+
+def test_a_customer_with_no_order_radius_saves_and_a_bad_one_says_which_field(api, tenant):
+    """TDN, 29 Oct 2026: "order radius m: a valid integer is required" on every save of a customer with no radius
+    of its own — the form sends the empty value back as "". Empty now means none; a mistake names the field."""
+    from .conftest import seed_basic
+
+    _wh, _sup, _v, cust = seed_basic(tenant)
+    r = api.patch(f"/api/v1/customers/{cust.id}", {"order_radius_m": "", "gps_lat": "", "gps_lng": ""}, format="json")
+    assert r.status_code == 200, r.content
+    assert r.data["order_radius_m"] is None and r.data["gps_lat"] is None, "no pin and no radius are both fine"
+    assert api.patch(f"/api/v1/customers/{cust.id}", {"order_radius_m": 49.6}, format="json").data["order_radius_m"] == 50
+    bad = api.patch(f"/api/v1/customers/{cust.id}", {"order_radius_m": "abc"}, format="json")
+    assert bad.status_code == 400 and "Order radius must be a whole number" in str(bad.content)

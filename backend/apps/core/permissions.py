@@ -38,11 +38,15 @@ class IsTenantUser(BasePermission):
 
 def has_tenant_perm(request, codename: str) -> bool:
     user = request.user
-    if getattr(user, "is_platform_admin", False) and getattr(request, "impersonating", False):
-        return True
     membership = getattr(request, "membership", None)
+    # A platform admin viewing a company acts with the rights of whoever they are viewing as — the owner's when
+    # they open the company, that user's after "log in as". This used to answer yes to everything, so "view as a
+    # user" showed what the user's own login was refused (TDN, 29 Oct 2026: the supervisor's discount list showed
+    # through the super admin, not on his own login). Only a session with no membership behind it keeps the pass.
     if membership is not None:
         return membership.has_perm(codename)
+    if getattr(user, "is_platform_admin", False) and getattr(request, "impersonating", False):
+        return True
     api_key = getattr(request, "api_key", None)
     if api_key is not None:
         return api_key.has_scope(codename)
