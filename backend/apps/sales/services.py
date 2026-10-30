@@ -699,6 +699,7 @@ class OrderService:
 
         if order.status not in ("confirmed", "dispatched", "partially_delivered"):
             raise DomainError(f"Order in status {order.status} cannot be marked delivered.")
+        DeliveryService.refuse_second_delivery(order)
         dn = DeliveryService.create_note(order, trip=None, lines=lines)
         dn = DeliveryService.deliver(dn, delivered=None, receiver_name=receiver_name, cash_collected=cash_collected, delivered_at=delivered_at)
         return order

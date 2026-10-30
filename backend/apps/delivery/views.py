@@ -345,6 +345,7 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     perm_map = page_perms("delivery_notes", {
         "deliver": extra_perm("delivery_notes", "complete"),
+        "deliver_again": extra_perm("delivery_notes", "complete"),
         "pdf": "delivery.view_delivery_note",
     })
     filterset_fields = ["status", "trip", "order", "customer", "warehouse"]
@@ -359,6 +360,14 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
         if m is not None and m.supplier_rep_id:
             qs = qs.filter(order__rep_id=m.supplier_rep_id)
         return qs.distinct()
+
+    @action(detail=True, methods=["post"], url_path="deliver-again")
+    @require_perm("delivery.complete_delivery")
+    def deliver_again(self, request, pk=None):
+        """The stop failed but the customer still wants the goods: this same note and its invoice go out again."""
+        dn = DeliveryService.deliver_again(self.get_object(), reason=request.data.get("reason", ""))
+        dn = self.get_queryset().get(pk=dn.pk)   # its lines as they now stand, not the copy read before
+        return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     @require_perm("delivery.complete_delivery")

@@ -200,12 +200,13 @@ export function DeliveryNoteDetailPage() {
   const { can } = usePerms();
   const q = useDoc("/api/v1/delivery-notes", id);
   const [open, setOpen] = useState(false);
+  const [again, setAgain] = useState(false);
   if (q.isLoading) return <Spinner />;
   const n = q.data;
   if (!n) return null;
   return (
     <>
-      <PageHeader title={n.number} badge={<StatusBadge status={n.status} label={n.status_label} />} crumbs={[{ label: "Delivery notes", to: "/app/delivery/notes" }, { label: n.number }]} actions={<>{["pending", "loaded", "dispatched"].includes(n.status) && n.stock_out_done && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setOpen(true)}>Deliver</button>}<button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/delivery-notes/${n.id}/pdf`)}><i className="ti ti-printer me-1" />Print challan</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/delivery-notes/${n.id}/pdf`, `${n.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button></>} />
+      <PageHeader title={n.number} badge={<StatusBadge status={n.status} label={n.status_label} />} crumbs={[{ label: "Delivery notes", to: "/app/delivery/notes" }, { label: n.number }]} actions={<>{["pending", "loaded", "dispatched"].includes(n.status) && n.stock_out_done && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setOpen(true)}>Deliver</button>}{["failed", "returned"].includes(n.status) && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setAgain(true)}><i className="ti ti-truck-return me-1" />Deliver again</button>}<button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/delivery-notes/${n.id}/pdf`)}><i className="ti ti-printer me-1" />Print challan</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/delivery-notes/${n.id}/pdf`, `${n.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button></>} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${n.customer}`}>{n.customer_name}</Link><div className="fs-12 text-muted">{n.customer_phone} · {n.customer_address}</div></InfoItem><InfoItem label="Order"><Link to={`/app/sales/orders/${n.order}`}>{n.order_number}</Link><div className="fs-12 text-muted">{money(n.order_total)}</div></InfoItem><InfoItem label="Load form">{n.picklist_number ? <Link to={`/app/delivery/pick-lists/${n.picklist}`}>{n.picklist_number}</Link> : "—"}</InfoItem><InfoItem label="Dispatch">{n.trip_number ? <Link to={`/app/delivery/trips/${n.trip}`}>{n.trip_number}</Link> : "direct delivery"}</InfoItem><InfoItem label="Delivered">{datetime(n.delivered_at)}<div className="fs-12 text-muted">{n.receiver_name} · by {n.delivered_by_name}</div></InfoItem>
           <InfoItem label="Invoice">{n.invoice_number ? <Link to={`/app/sales/invoices/${n.invoice_id}`}>{n.invoice_number}</Link> : "—"}</InfoItem><InfoItem label="Cash collected">{money(n.cash_collected)}</InfoItem><InfoItem label="GPS">{n.gps_lat ? <a href={`https://maps.google.com/?q=${n.gps_lat},${n.gps_lng}`} target="_blank" rel="noreferrer">{n.gps_lat}, {n.gps_lng}</a> : "—"}</InfoItem><InfoItem label="Failure reason">{n.failure_reason || "—"}</InfoItem><InfoItem label="Remarks" col="col-md-6">{n.remarks || "—"}</InfoItem></div>
@@ -215,6 +216,12 @@ export function DeliveryNoteDetailPage() {
       {n.order && <WorkflowStepper orderId={n.order} compact />}
       <DocTabs model="DeliveryNote" id={n.id} showMovements />
       {open && <DeliverModal note={n} onClose={() => setOpen(false)} onDone={() => { setOpen(false); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/delivery-notes", id] }); }} />}
+      <ConfirmDialog open={again} title={`Deliver ${n.number} again`} withReason confirmText="Deliver again"
+        message={`The same goods and the same invoice${n.invoice_number ? ` (${n.invoice_number})` : ""} go out again — on the next trip, or deliver it from here.`}
+        onClose={() => setAgain(false)} onConfirm={async (reason) => {
+          try { await api.post(`/api/v1/delivery-notes/${n.id}/deliver-again`, { reason: reason || "" }, true); toast.success(`${n.number} goes out again`); setAgain(false); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/delivery-notes", id] }); }
+          catch (e: any) { toast.error(e.message); }
+        }} />
     </>
   );
 }

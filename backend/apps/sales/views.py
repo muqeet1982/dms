@@ -232,13 +232,14 @@ class SalesOrderViewSet(DocumentViewSet):
         save it not auto created"): it opens for review and correction, and goes to the warehouse only when someone
         presses Send. `send: true` still hands it over in the same call, for callers that ask for it."""
         from apps.delivery.serializers import PickListSerializer
-        from apps.delivery.services import PickListService
+        from apps.delivery.services import DeliveryService, PickListService
 
         order = self.get_object()
         if order.status != "confirmed":
             raise DomainError("Confirm the order before sending it to the warehouse.")
         if order.warehouse_id is None:
             raise DomainError("Set the warehouse on the order first.")
+        DeliveryService.refuse_second_delivery(order)
         existing = order.pick_lists.exclude(status="cancelled").first()
         if existing is not None:
             raise DomainError(f"Load form {existing.number} already covers this order.", code="duplicate", errors={"picklist": [str(existing.pk)]})

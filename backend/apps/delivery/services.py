@@ -405,6 +405,73 @@ class DeliveryService:
             TripService.refresh_status(dn.trip)
         return dn
 
+    @staticmethod
+    def failed_note(order):
+        """The order's delivery that did not reach the customer and is not decided yet: sent again, or the order closed."""
+        if order.status not in ("issued", "dispatched", "confirmed"):
+            return None
+        return order.delivery_notes.filter(status__in=("failed", "returned")).order_by("-created_at").first()
+
+    @staticmethod
+    def refuse_second_delivery(order):
+        """A failed delivery is sent again as it is — its goods, its invoice. A second delivery note beside it would
+        bill the order twice (TDN-SO-00044 had two invoices, 28 Oct 2026)."""
+        dn = DeliveryService.failed_note(order)
+        if dn is not None:
+            raise DomainError(f"{dn.number} did not reach the customer — press Deliver again on {order.number} to send the same goods "
+                              "and invoice out again, or Customer rejected if the customer does not want them.", code="failed_delivery")
+
+    @staticmethod
+    @transaction.atomic
+    def deliver_again(dn, reason=""):
+        """
+        The stop failed but the customer still wants the goods — shop closed, nobody to receive them (owner, 30 Oct
+        2026: "what if out for delivery and not received by customer?"). The SAME delivery note goes out again with
+        the same invoice, paid or not: one order, one invoice. Goods the closed trip put back on the shelf leave it
+        again; goods still with the trip stay issued, and its close must not restock them.
+        """
+        from apps.sales.services import OrderService
+
+        order = dn.order
+        if dn.status not in ("failed", "returned"):
+            raise DomainError(f"{dn.number} is {dn.get_status_display().lower()} — only a delivery that did not reach the customer goes out again.", code="not_failed")
+        if order.status not in ("issued", "dispatched", "confirmed"):
+            raise DomainError(f"{order.number} is {order.get_status_display().lower()} — it does not go out again.", code="closed")
+        if order.delivery_notes.exclude(pk=dn.pk).exclude(status__in=("cancelled", "failed", "returned")).exists():
+            raise DomainError(f"{order.number} already has another delivery on its way.", code="duplicate")
+        trip = dn.trip
+        home = trip is not None and trip.status == "closed"
+        if home and get_current_tenant().setting("two_step_dispatch"):
+            raise DomainError("Sending a delivery out again is not supported with van stock (two-step dispatch).")
+        lines = list(dn.lines.select_related("variant", "batch", "order_line"))
+        if home and any(l.qty_returned > 0 and l.return_condition == "damaged" for l in lines):
+            raise DomainError(f"Part of {dn.number} came back damaged and cannot go out again as it was — use Customer rejected, "
+                              "and a new order for the replacement.", code="damaged")
+        for l in lines:
+            if home and l.qty_returned > 0:
+                # the trip's close put these back on the shelf: they leave it again, at the cost they went out at
+                StockService.move(warehouse=trip.warehouse, variant=l.variant, qty=-l.qty_returned, movement_type="sale_dispatch", batch=l.batch,
+                                  unit_cost=l.unit_cost, reference=dn, note=f"{dn.number} out again" + (f": {reason}" if reason else ""))
+                l.order_line.qty_dispatched += l.qty_returned
+                l.order_line.save(update_fields=["qty_dispatched"])
+            l.qty_returned = l.qty_delivered = Decimal("0")
+            l.return_reason, l.return_condition = "", "good"
+            l.save(update_fields=["qty_returned", "qty_delivered", "return_reason", "return_condition"])
+        out = trip is not None and not home and trip.status in ("out_for_delivery", "completed")
+        dn.status = "dispatched" if out else "loaded"
+        dn.failure_reason = ""
+        dn.delivered_at = dn.delivered_by = None
+        if home:
+            dn.trip = None   # the closed trip let it go; the next trip (Add to trip) takes this same note
+        dn.save()
+        if out and trip.status == "completed":
+            trip.status = "out_for_delivery"   # a stop is open again
+            trip.save(update_fields=["status", "updated_at"])
+        if order.status == "confirmed":   # the trip's close had sent it back to the warehouse
+            OrderService._set(order, "dispatched" if out else "issued", "deliver_again", {"delivery_note": dn.number, "reason": reason})
+        AuditService.log("delivery.deliver_again", dn, after={"reason": reason, "out_of_stock_again": home})
+        return dn
+
 
 class TripService:
     @staticmethod
@@ -445,6 +512,7 @@ class TripService:
                 raise DomainError(f"Order {o.number} belongs to another warehouse.")
             if o.trip_id and o.trip_id != trip.pk:
                 raise DomainError(f"Order {o.number} is already on trip {o.trip.number}.")
+            DeliveryService.refuse_second_delivery(o)
             if trip.delivery_notes.filter(order=o).exists():
                 continue
             seq += 1

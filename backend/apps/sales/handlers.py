@@ -75,15 +75,17 @@ def _delivery_failed(delivery_note, reason="", **_):
     u = _rep_user(order)
     if u:
         notify(u, "delivery.failed", f"Delivery failed: {order.number}", reason or delivery_note.remarks or "", {"order_id": str(order.id), "screen": "order"})
-    # the customer refused goods already invoiced: the office reverses the sale with Customer rejected — not a
-    # return, which would count the goods (coming home with the trip) in stock twice (owner, 30 Oct 2026)
+    # goods already invoiced did not reach the customer: the office decides on the order (owner, 30 Oct 2026) —
+    # Deliver again (same goods, same invoice) or Customer rejected (the sale reversed). Never a return, which would
+    # count the goods coming home with the trip in stock twice; never a second delivery, which would bill twice
     inv = getattr(delivery_note, "invoice", None)
     if inv is not None and inv.status not in ("cancelled", "draft"):
         from apps.core.notifications import notify_permission
 
-        notify_permission("sales.delete_invoice", "invoice.customer_refused", f"{inv.number}: the customer refused the goods",
-                          f"{order.customer.name} refused {delivery_note.number}. Open the invoice and press Customer rejected — not a return.",
-                          {"invoice_id": str(inv.id)})
+        notify_permission("sales.delete_invoice", "invoice.customer_refused", f"{order.number}: {delivery_note.number} not delivered",
+                          f"{order.customer.name}{' — ' + reason if reason else ''}. Open {order.number}: Deliver again sends the same goods and "
+                          f"invoice {inv.number} out again; Customer rejected reverses the sale.",
+                          {"invoice_id": str(inv.id), "order_id": str(order.id), "screen": "order"})
 
 
 @on("delivery.completed")
