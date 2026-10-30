@@ -208,3 +208,39 @@ def test_reset_to_draft_removes_the_posting_without_an_extra_entry(api, tenant):
     if doc_je is not None:
         blocked = api.post(f"/api/v1/accounting/journals/{doc_je.id}/reset-to-draft", {}, format="json")
         assert blocked.status_code in (400, 422), blocked.content
+
+
+def test_a_journal_carries_a_narration_and_prints_it_under_the_table(api, tenant):
+    """Owner, 30 Oct 2026: a narration field on the journal, and the voucher laid out as Account Code · Account Name
+    · Description (the memo where a line has none) · Debit · Credit, the total closing the table and the narration
+    right under it — on the view, the PDF and the print."""
+    from unittest import mock
+
+    from apps.accounting.services import account_for
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        cash, sales = str(account_for("cash").id), str(account_for("sales").id)
+    r = api.post("/api/v1/accounting/journals", {"date": "2026-10-30", "voucher_type": "jv", "memo": "Cash sale booked late",
+                                                "notes": "Cash received at the counter on 29 Oct;\\nbooked today after the count.",
+                                                "lines": [{"account": cash, "debit": "500", "credit": 0, "description": ""},
+                                                          {"account": sales, "debit": 0, "credit": "500", "description": "Counter sale"}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert "booked today" in api.get(f"/api/v1/accounting/journals/{r.data['id']}").data["notes"], "the narration is kept"
+
+    seen = {}
+
+    def capture(request, template, ctx, *a, **kw):
+        from django.http import HttpResponse
+        from django.template.loader import render_to_string
+
+        seen["html"] = render_to_string(template, {**ctx, "tenant": tenant, "logo_url": None, "printed_at": "", "doc_title": kw.get("title", ""), "doc_ref": ""})
+        return HttpResponse(b"")
+
+    with mock.patch("apps.core.documents.render_doc", side_effect=capture):
+        assert api.get(f"/api/v1/accounting/journals/{r.data['id']}/print").status_code == 200
+    html = seen["html"]
+    assert ">Account code<" in html and ">Account name<" in html and ">Description<" in html
+    assert ">Cash sale booked late<" in html, "the memo fills the Description of a line that has none"
+    assert ">Counter sale<" in html and ">Total<" in html
+    assert html.index("</table>", html.index('class="lines"')) < html.index("Narration:"), "the narration sits under the table"

@@ -218,7 +218,11 @@ class JournalEntryViewSet(DocumentViewSet):
         lines = list(e.lines.select_related("account", "cheque_leaf"))
         code = voucher_code(e, lines)
         return render_doc(request, "accounting/voucher.html",
-                          {"e": e, "lines": lines, "voucher_code": code, "voucher_title": voucher_title(code), "signatures": signature_boxes(code)},
+                          {"e": e, "lines": lines, "voucher_code": code, "voucher_title": voucher_title(code), "signatures": signature_boxes(code),
+                           # the cheques the voucher is written on, as its Reference; the memo heads the voucher only when no
+                           # line shows it in its Description column
+                           "reference": ", ".join(f"Chq# {l.cheque_leaf.number}" for l in lines if l.cheque_leaf_id),
+                           "memo_alone": bool(e.memo) and all(l.description for l in lines)},
                           e.number, title=voucher_title(code), ref=e.number)
 
     @action(detail=True, methods=["get"])
