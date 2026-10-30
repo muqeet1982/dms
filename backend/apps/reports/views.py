@@ -12,7 +12,7 @@ from apps.core.viewsets import TenantModelViewSet
 
 from .exporters import to_csv, to_pdf, to_xlsx
 from .models import ReportSchedule, SavedReportFilter
-from .registry import REPORTS, catalog
+from .registry import REPORTS, catalog, may_see
 
 DATE_PARAMS = {"date_from", "date_to", "as_of", "date", "compare_from", "compare_to"}
 
@@ -22,7 +22,7 @@ class ReportCatalogView(APIView):
     required_perm = "reports.view_report"  # the Reports page's View switch; each report still has its own
 
     def get(self, request):
-        return Response([r for r in catalog() if has_tenant_perm(request, r["permission"])])
+        return Response([r for r in catalog() if may_see(request, r["permission"])])
 
 
 class ReportRunView(APIView):
@@ -35,7 +35,7 @@ class ReportRunView(APIView):
         spec = REPORTS.get(key)
         if spec is None:
             raise DomainError(f"Unknown report {key}", status_code=404)
-        if not has_tenant_perm(request, spec["perm"]):
+        if not may_see(request, spec["perm"]):
             raise DomainError("You cannot view this report.", status_code=403)
         from datetime import date
 

@@ -5,7 +5,20 @@ from apps.accounting import reports as fin
 from apps.reports import operational as ops
 
 FIN = "accounting.view_financial_reports"
-OPS = "reports.view_operational_reports"
+# The Reports page's View switch opens the operational reports. They asked for the old coarse
+# "view_operational_reports", which the role editor has no switch for — so a role with Reports → View on still saw
+# only the financial ones (TDN, 30 Oct 2026: asif.malik saw 16 of 64). A role holding the old codename still gets
+# them: expand() turns it into this one.
+OPS = "reports.view_report"
+# the Financial switch may store either codename — either one opens the financial reports
+ALTERNATIVES = {FIN: (FIN, "reports.view_financial_reports")}
+
+
+def may_see(request, perm):
+    """Whether this caller may open a report needing `perm` (its alternatives count)."""
+    from apps.core.permissions import has_tenant_perm
+
+    return any(has_tenant_perm(request, p) for p in ALTERNATIVES.get(perm, (perm,)))
 
 DATE_RANGE = [{"name": "date_from", "type": "date"}, {"name": "date_to", "type": "date"}]
 AS_OF = [{"name": "as_of", "type": "date"}]
