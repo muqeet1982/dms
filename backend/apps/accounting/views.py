@@ -156,8 +156,23 @@ class JournalEntryViewSet(DocumentViewSet):
         entry = serializer.instance
         if entry.status != "draft":
             raise DomainError("Posted journals cannot be edited; reverse them instead.")
+        if entry.source_type:
+            raise DomainError(f"This entry belongs to {entry.source_type} {entry.source_number or ''} — edit that document instead.".replace("  ", " "), code="document_entry")
         lines = serializer.validated_data.pop("lines", None)
+        # a new voucher type moves the journal into that type's own numbering series (owner, 30 Oct 2026: "when edit
+        # also give option to edit voucher type … update all records") — lines, ledgers, payments and cheques point
+        # at the entry itself, so they follow; only the number changes
+        old_vt, old_no = entry.voucher_type or "jv", entry.number
+        vt = str(serializer.validated_data.get("voucher_type") or old_vt).lower()
+        if vt not in dict(JournalEntry.VOUCHER_TYPES):
+            raise DomainError(f"Unknown voucher type {vt!r}.")
         super().perform_update(serializer)
+        if vt != old_vt:
+            entry.voucher_type = vt
+            entry.number = next_number("journal" if vt == "jv" else f"journal_{vt}")
+            entry.save(update_fields=["voucher_type", "number", "updated_at"])
+            AuditService.log("journal.voucher_type_changed", entry, before={"voucher_type": old_vt, "number": old_no},
+                             after={"voucher_type": vt, "number": entry.number}, request=self.request)
         if lines is not None:
             self._write_lines(entry, lines)
 

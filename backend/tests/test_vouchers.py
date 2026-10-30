@@ -244,3 +244,27 @@ def test_a_journal_carries_a_narration_and_prints_it_under_the_table(api, tenant
     assert ">Cash sale booked late<" in html, "the memo fills the Description of a line that has none"
     assert ">Counter sale<" in html and ">Total<" in html
     assert html.index("</table>", html.index('class="lines"')) < html.index("Narration:"), "the narration sits under the table"
+
+
+def test_editing_a_draft_journal_can_change_its_voucher_type_and_moves_it_to_that_series(api, tenant):
+    """Owner, 30 Oct 2026: "in journal entry when edit also give option to edit voucher type … update all records"."""
+    from apps.accounting.services import account_for
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        cash, sales = str(account_for("cash").id), str(account_for("sales").id)
+    lines = [{"account": cash, "debit": "100", "credit": 0, "description": ""}, {"account": sales, "debit": 0, "credit": "100", "description": ""}]
+    r = api.post("/api/v1/accounting/journals", {"date": "2026-10-30", "voucher_type": "jv", "memo": "type change", "lines": lines}, format="json")
+    assert r.status_code == 201, r.content
+    jv_no = r.data["number"]
+    cpv = api.post("/api/v1/accounting/journals", {"date": "2026-10-30", "voucher_type": "cpv", "memo": "a cash payment", "lines": lines}, format="json").data["number"]
+    e = api.patch(f"/api/v1/accounting/journals/{r.data['id']}", {"voucher_type": "cpv", "memo": "type change", "lines": lines}, format="json")
+    assert e.status_code == 200, e.content
+    after = api.get(f"/api/v1/accounting/journals/{r.data['id']}").data
+    assert after["voucher_type"] == "cpv" and after["number"] != jv_no and after["number"] != cpv, "a fresh number in the CPV series"
+    assert after["number"].split("-")[0] == cpv.split("-")[0], "same series prefix as the other CPV"
+    assert len(after["lines"]) == 2 and after["total_debit"] in ("100.0000", "100.00", "100")
+
+    assert api.post(f"/api/v1/accounting/journals/{r.data['id']}/post", {}, format="json").status_code == 200
+    locked = api.patch(f"/api/v1/accounting/journals/{r.data['id']}", {"voucher_type": "jv"}, format="json")
+    assert locked.status_code in (400, 422), "a posted journal is reset to draft before it is edited"
