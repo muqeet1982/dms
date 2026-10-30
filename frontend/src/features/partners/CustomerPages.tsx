@@ -238,7 +238,7 @@ export function CustomerDetailPage() {
         </>} />
       {c.is_blocked && <Alert kind="danger">Blocked: {c.blocked_reason || "no reason given"}</Alert>}
       <div className="row g-3 mb-3">
-        <div className="col-6 col-md-4"><StatCard label="Outstanding" value={money(c.outstanding, 0)} icon="ti-receipt" color={Number(c.outstanding) > 0 ? "warning" : "success"} /></div>
+        <div className="col-6 col-md-4"><StatCard label="Outstanding" value={money(c.outstanding, 0)} icon="ti-receipt" color={Number(c.outstanding) > 0 ? "warning" : "success"} sub={Number(c.available_credit) > 0 ? `includes credit of ${money(c.available_credit)} from returns` : undefined} /></div>
         <div className="col-6 col-md-4"><StatCard label="Credit limit" value={money(c.credit_limit, 0)} icon="ti-credit-card" color="primary" sub={`${c.credit_days} credit days`} /></div>
         <div className="col-6 col-md-4"><StatCard label="Sale Person" value={(c.rep_names || []).join(", ") || "—"} icon="ti-user-star" color="secondary" /></div>
       </div>

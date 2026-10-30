@@ -15,7 +15,7 @@ from apps.core.tenancy import get_current_tenant, get_current_user
 from apps.inventory.services import StockService
 from apps.partners.services import CustomerService
 
-from .models import CompanyClaim, CreditNote, CreditNoteLine, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine, StockReservation
+from .models import CompanyClaim, CreditNote, CreditNoteApplication, CreditNoteLine, RepCollection, RepSettlement, SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine, StockReservation
 
 Q4 = Decimal("0.0001")
 
@@ -141,7 +141,13 @@ class OrderService:
 
         def settled(inv):
             filing = getattr(inv, "fbr_filing", None)
-            return inv.paid_amount > 0 or inv.status not in ("posted", "overdue") or (filing is not None and filing.status == "submitted")
+            if inv.paid_amount > 0 or inv.status not in ("posted", "overdue") or (filing is not None and filing.status == "submitted"):
+                return True
+            try:
+                InvoiceService.reversal_blockers(inv)   # a return against it, or its claim paid by a payment
+            except DomainError:
+                return True
+            return False
 
         for o in SalesOrder.objects.filter(customer=customer, status__in=in_flight, apply_customer_discount=True):
             if o.discount_pct is not None and Decimal(str(o.discount_pct)) != old_pct:
@@ -582,7 +588,9 @@ class OrderService:
         from apps.inventory.services import StockService
 
         for dn in order.delivery_notes.exclude(status__in=("cancelled", "delivered", "partially_delivered")):
-            if dn.stock_out_done:
+            # refused at the door and the trip already closed: its close brought the goods home (delivery_return)
+            home = dn.status in ("failed", "returned") and dn.trip_id is not None and dn.trip.status == "closed"
+            if dn.stock_out_done and not home:
                 for line in dn.lines.select_related("variant", "batch"):
                     if line.qty_loaded:
                         StockService.move(warehouse=dn.warehouse, variant=line.variant, qty=line.qty_loaded,
@@ -612,21 +620,56 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def cancel(order, reason, by_rep=False):
+    def cancel(order, reason, by_rep=False, final_status="cancelled"):
         if by_rep and not OrderService.rep_can_cancel(order):
             raise DomainError("This order can no longer be cancelled from the app — ask the office.", code="cancel_window_closed", status_code=403)
         if order.status in ("partially_delivered", "delivered", "invoiced"):
             raise DomainError("Delivered or invoiced orders cannot be cancelled; use a return.")
         if order.status in ("cancelled", "rejected"):
             raise DomainError("Order already closed.")
+        # The order's invoice goes with it: cancelling TDN-SO-00076 left its invoice on the books, and a return then
+        # put the goods in stock a second time (29 Oct 2026). Money received or an FBR filing makes it a return.
+        live = list(order.invoices.exclude(status="cancelled"))
+        for inv in live:
+            if inv.status != "draft":
+                CreditNoteService.unapply_foreign(inv)   # kept credit it took goes back to its returns
+                inv.refresh_from_db()
+            InvoiceService.reversal_blockers(inv)
+            filing = getattr(inv, "fbr_filing", None)
+            if inv.paid_amount > 0 or (filing is not None and filing.status == "submitted"):
+                why = "has money or a return against it" if inv.paid_amount > 0 else "is filed with FBR"
+                raise DomainError(f"{order.number} cannot be cancelled: its invoice {inv.number} {why}. Record a return instead.", code="invoice_settled")
+        for inv in live:
+            if inv.status != "draft":
+                InvoiceService.reopen(inv, reason=f"order {order.number} {'rejected by the customer' if final_status == 'rejected' else 'cancelled'}: {reason}")
+                inv.refresh_from_db()
+            # its entries come off the books with it (held by the reopen, dropped by the cancel; a closed month reverses)
+            InvoiceService.cancel(inv, reason=("Customer rejected: " if final_status == "rejected" else "Order cancelled: ") + (reason or ""))
         # anything the warehouse issued — even if it is on a vehicle but not yet delivered — comes home first
         OrderService.unissue(order, reason=f"cancelled: {reason}" if reason else "cancelled")
         OrderService.release_reservations(order)
         order.rejection_reason = reason
         order.save(update_fields=["rejection_reason"])
-        OrderService._set(order, "cancelled", "cancelled", {"reason": reason})
-        emit("order.cancelled", order=order)
+        if final_status == "rejected":
+            OrderService._set(order, "rejected", "customer_rejected", {"reason": reason})
+            emit("order.rejected", order=order)
+        else:
+            OrderService._set(order, "cancelled", "cancelled", {"reason": reason})
+            emit("order.cancelled", order=order)
         return order
+
+    @staticmethod
+    @transaction.atomic
+    def customer_rejected(order, reason=""):
+        """
+        The customer refused the goods before or at delivery, nothing paid (owner, 30 Oct 2026, Case A): no return and
+        no payment — the goods come back once (now if still in the warehouse; with the van, the refused delivery's
+        trip close otherwise), the invoice's entries come off the books, and the order closes as Rejected.
+        """
+        if order.status in ("partially_delivered", "delivered", "invoiced"):
+            raise DomainError(f"{order.number} was delivered — goods the customer kept and sent back later are a return: "
+                              "use Credit note / return on the invoice.", code="delivered")
+        return OrderService.cancel(order, f"Rejected by the customer{': ' + reason if reason else ''}", final_status="rejected")
 
     @staticmethod
     @transaction.atomic
@@ -1174,6 +1217,42 @@ class InvoiceService:
         return inv
 
     @staticmethod
+    def settle_status(inv):
+        """
+        An invoice's status from what settled it (owner, 30 Oct 2026: a return is not a payment). Settled in full by
+        returns alone reads Returned; any money in it reads Paid / Partially paid; nothing yet is Posted, or
+        Overdue once its due date has passed.
+        """
+        cash = inv.paid_amount - inv.credited_amount
+        if inv.paid_amount >= inv.total - Decimal("0.005"):
+            return "paid" if cash > Decimal("0.005") else "returned"
+        if cash > Decimal("0.005"):
+            return "partially_paid"
+        return "overdue" if inv.due_date and inv.due_date < timezone.localdate() else "posted"
+
+    @staticmethod
+    def reversal_blockers(inv):
+        """
+        What makes reversing (reopening, cancelling, Customer rejected) this invoice wrong (review, 30 Oct 2026):
+        a return against it — posted, or a draft that could be posted after the sale is gone; and a manufacturer
+        claim on it settled by a PAYMENT (a receipt from the manufacturer, or a deduction on a supplier payment),
+        whose journal would stay while the claim's own came off. A claim netted against payables is fine: its
+        net-off is the claim's own entry and comes off with it.
+        """
+        from apps.accounting.models import PaymentAllocation
+
+        live = list(CreditNote.objects.filter(invoice=inv).exclude(status="cancelled").values_list("number", "status"))
+        if live:
+            drafts = [n for n, st in live if st == "draft"]
+            if drafts:
+                raise DomainError(f"Return {', '.join(drafts)} is drafted against {inv.number} — delete that draft first.", code="draft_return")
+            raise DomainError(f"Goods of {inv.number} were already returned ({', '.join(n for n, _ in live)}) — correct it with another return.", code="has_returns")
+        claims = [str(c) for c in inv.company_claims.exclude(status="cancelled").values_list("pk", flat=True)]
+        paid = PaymentAllocation.objects.filter(document_type="company_claim", document_id__in=claims).exclude(payment__status="cancelled")
+        if claims and paid.exists():
+            raise DomainError(f"The manufacturer's claim on {inv.number} was settled by a payment — reverse that payment first, or record a return.", code="claim_paid")
+
+    @staticmethod
     def company_shares(inv):
         """
         The manufacturer-funded part of this invoice's discount, per supplier, from the DiscountContribution
@@ -1339,6 +1418,8 @@ class InvoiceService:
                 if inv.balance <= 0:
                     break
                 PaymentService.allocate(pay, [{"document_type": "sales_invoice", "document_id": str(inv.pk), "amount": min(pay.unallocated, inv.balance)}])
+        # credit the customer kept from a return ("keep as credit") settles their next invoice
+        CreditNoteService.auto_apply(inv)
         if inv.order_id:
             order = inv.order
             if order.status == "delivered" and not order.delivery_notes.exclude(invoice__isnull=False).filter(status__in=["delivered", "partially_delivered"]).exists():
@@ -1365,6 +1446,10 @@ class InvoiceService:
             return inv
         if inv.status == "cancelled":
             raise DomainError("A cancelled invoice cannot be reopened — raise a fresh invoice.")
+        CreditNoteService.unapply_foreign(inv)
+        InvoiceService.reversal_blockers(inv)
+        if inv.credited_amount > 0:
+            raise DomainError(f"A return already settles {inv.credited_amount:,.2f} of this invoice — it cannot be reopened. Correct it with another return.", code="has_returns")
         if inv.paid_amount > 0 or inv.status in ("partially_paid", "paid"):
             raise DomainError("Money has been received against this invoice — remove the receipts first, or correct it with a credit note.", code="has_payments")
         filing = getattr(inv, "fbr_filing", None)
@@ -1387,6 +1472,11 @@ class InvoiceService:
     @staticmethod
     @transaction.atomic
     def cancel(inv, reason=""):
+        if inv.status not in ("draft", "cancelled"):
+            CreditNoteService.unapply_foreign(inv)
+        InvoiceService.reversal_blockers(inv)
+        if inv.credited_amount > 0:
+            raise DomainError(f"A return already settles {inv.credited_amount:,.2f} of {inv.number} — it cannot be cancelled.", code="has_returns")
         if inv.paid_amount > 0:
             raise DomainError("Invoice has payments; cancel them first.")
         filing = getattr(inv, "fbr_filing", None)
@@ -1425,6 +1515,40 @@ class InvoiceService:
         return SalesInvoice.objects.filter(status__in=["posted", "partially_paid"], due_date__lt=today).update(status="overdue")
 
 
+def returned_company_shares(cn):
+    """
+    The manufacturer's share of the discount on the goods a return brings back, per supplier: {supplier_id: (claim,
+    share)} — the returned list value x the claim's company %, never more than the claim. The return's journal
+    credits it back to the incentive head and the claw-back reduces the claim by it, so the two always agree.
+    """
+    from collections import defaultdict
+
+    inv = cn.invoice
+    if inv is None:
+        return {}
+    claims = {c.supplier_id: c for c in inv.company_claims.exclude(status__in=("cancelled", "written_off"))}
+    if not claims:
+        return {}
+    base_by_supplier = defaultdict(Decimal)
+    for l in cn.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
+        product = l.variant.product
+        supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
+        if supplier is not None and supplier.pk in claims:
+            base_by_supplier[supplier.pk] += q4(l.qty * l.unit_price)
+    out = {}
+    for supplier_id, base in base_by_supplier.items():
+        claim = claims[supplier_id]
+        share = min(q4(base * claim.company_pct / 100), claim.total)
+        if share > 0:
+            out[supplier_id] = (claim, share)
+    # never more than the discount the return actually reverses (a hand-edited line can carry less)
+    total = sum((sh for _c, sh in out.values()), Decimal("0"))
+    if total > cn.discount:
+        scale = (cn.discount / total) if total else Decimal("0")
+        out = {k: (c, q4(sh * scale)) for k, (c, sh) in out.items()}
+    return out
+
+
 def _claw_back_claims(cn):
     """
     Keune does not fund goods that came home (owner, 21 Oct 2026). For each manufacturer claim on the
@@ -1432,29 +1556,14 @@ def _claw_back_claims(cn):
     Distribution Margin head / Cr the claims receivable), a SETTLED one puts the payable back up (Dr the
     margin head / Cr Trade Payables) — the mirror of how it was taken.
     """
-    from collections import defaultdict
-
     from apps.accounting.services import Line, PostingService, account_for
 
-    inv = cn.invoice
-    if inv is None:
+    if cn.invoice is None:
         return
-    claims = {c.supplier_id: c for c in inv.company_claims.exclude(status__in=("cancelled", "written_off"))}
-    if not claims:
-        return
-    base_by_supplier = defaultdict(Decimal)
-    for l in cn.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
-        product = l.variant.product
-        supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
-        if supplier is not None and supplier.pk in claims:
-            base_by_supplier[supplier.pk] += q4(l.qty * l.unit_price)
     inc = account_for("manufacturer_incentive", "company_claim")
     recv = account_for("manufacturer_claim", "company_claim")
-    for supplier_id, base in base_by_supplier.items():
-        claim = claims[supplier_id]
-        share = min(q4(base * claim.company_pct / 100), claim.total)
-        if share <= 0:
-            continue
+    for supplier_id, (claim, share) in returned_company_shares(cn).items():
+        inv = cn.invoice
         open_part = min(share, claim.balance)
         settled_part = share - open_part
         lines = []
@@ -1474,78 +1583,243 @@ def _claw_back_claims(cn):
 
 
 class CreditNoteService:
+    """
+    Returns (owner, 30 Oct 2026: "do research and make plan … make sure update stock, inventory and accounting").
+
+    A return against an invoice credits exactly what that invoice charged for the goods coming back — per variant,
+    in proportion to the units returned: the price, the discount (its own and the manufacturer's share), every tax,
+    and the cost of goods at the sale's cost. It can never return more than was sold less what was already
+    returned. On posting, the credit settles the invoice's open balance as CREDIT, never as money (the invoice
+    reads Returned, not Paid); whatever is left is the customer's credit — kept for their next invoice, applied to
+    another open invoice now, or refunded in cash, by bank transfer or by cheque.
+    """
+
+    OTHER = ("fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount")
+
+    @staticmethod
+    def _sold(invoice):
+        """What the invoice charged per variant: units (paid + free), gross, discount, each tax, cost."""
+        sold = {}
+        for il in invoice.lines.all():
+            c = sold.setdefault(il.variant_id, {"units": Decimal("0"), "gross": Decimal("0"), "disc": Decimal("0"), "cost": Decimal("0"),
+                                                "t1": Decimal("0"), "t2": Decimal("0"), "tt1": None, "r1": None, "tt2": None, "r2": None,
+                                                **{k: Decimal("0") for k in CreditNoteService.OTHER}})
+            units = il.qty + (il.free_qty or Decimal("0"))
+            c["units"] += units
+            c["gross"] += q4(il.qty * il.unit_price)
+            c["disc"] += il.discount_amount
+            c["cost"] += q4(units * (il.unit_cost or Decimal("0")))
+            c["t1"] += il.tax1_amount
+            c["t2"] += il.tax2_amount
+            for k in CreditNoteService.OTHER:
+                c[k] += getattr(il, k)
+            c["tt1"], c["r1"] = c["tt1"] or il.tax1_type, c["r1"] if c["r1"] is not None else il.tax1_rate
+            c["tt2"], c["r2"] = c["tt2"] or il.tax2_type, c["r2"] if c["r2"] is not None else il.tax2_rate
+        return sold
+
+    @staticmethod
+    def _taken(invoice, exclude=None):
+        out = {}
+        qs = CreditNoteLine.objects.filter(credit_note__invoice=invoice).exclude(credit_note__status="cancelled")
+        if exclude is not None:
+            qs = qs.exclude(credit_note=exclude)
+        for l in qs:
+            d = out.setdefault(l.variant_id, {"units": Decimal("0"), "gross": Decimal("0"), "disc": Decimal("0"), "t1": Decimal("0"), "t2": Decimal("0"),
+                                              **{k: Decimal("0") for k in CreditNoteService.OTHER}})
+            in_line = l.fed_amount + l.extra_tax_amount + l.further_tax_amount
+            d["units"] += l.qty
+            d["gross"] += l.line_total - l.tax1_amount - l.tax2_amount - in_line + l.discount_amount
+            d["disc"] += l.discount_amount
+            d["t1"] += l.tax1_amount
+            d["t2"] += l.tax2_amount
+            for k in CreditNoteService.OTHER:
+                d[k] += getattr(l, k)
+        return out
+
+    @staticmethod
+    def returned_units(invoice, exclude=None):
+        """Units already returned against this invoice, per variant (posted returns; drafts count too, so two
+        drafts cannot both claim the same goods)."""
+        out = {}
+        qs = CreditNoteLine.objects.filter(credit_note__invoice=invoice).exclude(credit_note__status="cancelled")
+        if exclude is not None:
+            qs = qs.exclude(credit_note=exclude)
+        for l in qs:
+            out[l.variant_id] = out.get(l.variant_id, Decimal("0")) + l.qty
+        return out
+
     @staticmethod
     @transaction.atomic
     def create(*, customer, lines, invoice=None, warehouse=None, date=None, reason="", notes="", applied_to_invoice=True):
-        cn = CreditNote.objects.create(number=next_number("credit_note"), customer=customer, invoice=invoice, warehouse=warehouse, date=date or timezone.localdate(), reason=reason, notes=notes, applied_to_invoice=applied_to_invoice and invoice is not None)
-        # the credit reverses what the invoice actually charged, per variant — never the tax classes;
-        # a standalone credit note (no invoice) charges no tax, because tax rides only on an invoice's
-        # tax switch (owner, 25 Oct 2026). Mirrored as PER-UNIT tax, not a rate %: a fixed ("Rs.700/MT"),
-        # compound or MRP-based charge has no single percentage, and reversing the rate alone
-        # under-credited exactly the part the rate could not say (guide §4-§6, 26 Oct 2026). Aggregated
-        # over ALL the variant's invoice lines — two lines of one variant (two batches, two packagings)
-        # can carry different per-unit tax, and keeping only the last line's figure mis-credited both
-        # (audit, 26 Oct 2026); both taxes ride along so a legacy class-taxed invoice credits in full.
-        # FED, Extra Tax, Further Tax and WHT (owner 26 Oct 2026) are mirrored per unit the same way, so a
-        # return reverses every tax the invoice put on the books — and gives back the WHT the buyer withheld
-        OTHER = ("fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount")
-        charged = {}
-        if invoice is not None:
-            for il in invoice.lines.all():
-                c = charged.setdefault(il.variant_id, {"qty": Decimal("0"), "t1": Decimal("0"), "t2": Decimal("0"),
-                                                       "tt1": None, "r1": None, "tt2": None, "r2": None,
-                                                       **{k: Decimal("0") for k in OTHER}})
-                c["qty"] += il.qty
-                c["t1"] += il.tax1_amount
-                c["t2"] += il.tax2_amount
-                for k in OTHER:
-                    c[k] += getattr(il, k)
-                c["tt1"], c["r1"] = c["tt1"] or il.tax1_type, c["r1"] if c["r1"] is not None else il.tax1_rate
-                c["tt2"], c["r2"] = c["tt2"] or il.tax2_type, c["r2"] if c["r2"] is not None else il.tax2_rate
         from apps.fbr.engine import round2
 
-        subtotal = t1 = t2 = Decimal("0")
-        sums = {k: Decimal("0") for k in OTHER}
-        tax1_type = tax2_type = None
+        if invoice is not None:
+            CreditNoteService._invoice_can_take_returns(invoice)
+        cn = CreditNote.objects.create(number=next_number("credit_note"), customer=customer, invoice=invoice, warehouse=warehouse, date=date or timezone.localdate(), reason=reason, notes=notes, applied_to_invoice=applied_to_invoice)
+        sold = CreditNoteService._sold(invoice) if invoice is not None else {}
+        back = CreditNoteService.returned_units(invoice, exclude=cn) if invoice is not None else {}
+        asked = {}
         for l in lines:
-            variant = l["variant"]
-            unit_price = q4(l["unit_price"])
-            taxable = q4(Decimal(l["qty"]) * unit_price)
-            hit = charged.get(variant.id)
-            other = {k: Decimal("0") for k in OTHER}
-            if hit is not None and hit["qty"]:
+            asked[l["variant"].id] = asked.get(l["variant"].id, Decimal("0")) + Decimal(str(l["qty"]))
+        for vid, qty in asked.items():
+            if qty <= 0:
+                raise DomainError("A returned quantity must be more than zero.", code="bad_qty")
+            if invoice is not None:
+                have = sold.get(vid, {}).get("units", Decimal("0")) - back.get(vid, Decimal("0"))
+                if vid not in sold:
+                    name = next(l["variant"].name for l in lines if l["variant"].id == vid)
+                    raise DomainError(f"{name} is not on {invoice.number}.", code="not_on_invoice")
+                if qty > have:
+                    name = next(l["variant"].name for l in lines if l["variant"].id == vid)
+                    n = lambda x: format(Decimal(x).normalize(), "f")   # 2.000 → "2", 1.500 → "1.5"
+                    raise DomainError(f"{name}: {n(qty)} returned but only {n(max(have, Decimal('0')))} of {invoice.number} is left to return "
+                                      f"({n(sold[vid]['units'])} sold, {n(back.get(vid, Decimal('0')))} already returned).", code="over_return")
+
+        if invoice is not None:
+            CreditNoteService._goods_already_back(invoice, asked)
+        # units already back in stock without a return (refused at the door, or the order was cancelled) are
+        # returned on lines of their own that move no stock
+        left_back = {vid: q - CreditNoteService.stock_back_units(invoice, exclude=cn).get(vid, Decimal("0"))
+                     for vid, q in CreditNoteService.back_already(invoice).items()} if invoice is not None else {}
+        parts = []
+        for l in lines:
+            qty = Decimal(str(l["qty"]))
+            sb = min(qty, max(left_back.get(l["variant"].id, Decimal("0")), Decimal("0")))
+            if sb > 0:
+                left_back[l["variant"].id] -= sb
+                parts.append({**l, "qty": sb, "stock_back": True, "restock": True, "condition": "good"})
+            if qty - sb > 0:
+                parts.append({**l, "qty": qty - sb, "stock_back": False})
+
+        subtotal = disc = t1 = t2 = Decimal("0")
+        sums = {k: Decimal("0") for k in CreditNoteService.OTHER}
+        tax1_type = tax2_type = None
+        taken = CreditNoteService._taken(invoice, exclude=cn) if invoice is not None else {}
+        for l in parts:
+            variant, qty = l["variant"], Decimal(str(l["qty"]))
+            hit = sold.get(variant.id)
+            other = {k: Decimal("0") for k in CreditNoteService.OTHER}
+            if hit is not None and hit["units"]:
+                # the share of what the invoice charged for these units — price, discount, taxes and cost alike;
+                # the LAST of an item takes exactly what is left, so partial returns never leave a paisa behind
+                done = taken.setdefault(variant.id, {"units": Decimal("0"), "gross": Decimal("0"), "disc": Decimal("0"), "t1": Decimal("0"), "t2": Decimal("0"),
+                                                     **{k: Decimal("0") for k in CreditNoteService.OTHER}})
+                if qty >= hit["units"] - done["units"]:
+                    gross, line_disc = hit["gross"] - done["gross"], hit["disc"] - done["disc"]
+                    amt1, amt2 = hit["t1"] - done["t1"], hit["t2"] - done["t2"]
+                    other = {k: hit[k] - done[k] for k in CreditNoteService.OTHER}
+                else:
+                    ratio = qty / hit["units"]
+                    gross, line_disc = q4(hit["gross"] * ratio), q4(hit["disc"] * ratio)
+                    amt1, amt2 = round2(hit["t1"] * ratio), round2(hit["t2"] * ratio)
+                    other = {k: round2(hit[k] * ratio) for k in CreditNoteService.OTHER}
+                done["units"] += qty
+                done["gross"] += gross
+                done["disc"] += line_disc
+                done["t1"] += amt1
+                done["t2"] += amt2
+                for k in CreditNoteService.OTHER:
+                    done[k] += other[k]
+                unit_price = q4(gross / qty) if qty else Decimal("0")
+                unit_cost = q4(hit["cost"] / hit["units"])
                 tt1, r1 = hit["tt1"], hit["r1"] or Decimal("0")
                 tt2, r2 = hit["tt2"], hit["r2"] or Decimal("0")
-                amt1 = round2(hit["t1"] / hit["qty"] * Decimal(l["qty"]))
-                amt2 = round2(hit["t2"] / hit["qty"] * Decimal(l["qty"]))
-                other = {k: round2(hit[k] / hit["qty"] * Decimal(l["qty"])) for k in OTHER}
-            elif invoice is not None and invoice.force_tax_type_id:
-                # a variant the invoice never carried, credited against a switch invoice: same chain
-                tt1 = invoice.force_tax_type
-                lt = InvoiceService.line_taxes(variant.product, qty=l["qty"], unit_price=unit_price, discount_amount=Decimal("0"))
-                r1, amt1, tt2, r2, amt2 = lt["rate"], q4(lt["gst"]), None, Decimal("0"), Decimal("0")
-                other = {"fed_amount": q4(lt["fed"]), "extra_tax_amount": q4(lt["extra"]),
-                         "further_tax_amount": q4(lt["further"]), "wht_amount": q4(lt["wht"])}
             else:
+                # a standalone return (no invoice): the price typed, no discount, no tax — tax rides only on an
+                # invoice's tax switch (owner, 25 Oct 2026)
+                unit_price = q4(l["unit_price"])
+                gross, line_disc = q4(qty * unit_price), Decimal("0")
+                unit_cost = q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price)
                 tt1, r1, amt1, tt2, r2, amt2 = None, Decimal("0"), Decimal("0"), None, Decimal("0"), Decimal("0")
-            t = {"tax1_type": tt1 if amt1 else None, "tax1_rate": r1 or Decimal("0"), "tax1_amount": amt1,
-                 "tax2_type": tt2 if amt2 else None, "tax2_rate": r2 or Decimal("0"), "tax2_amount": amt2}
             in_line = other["fed_amount"] + other["extra_tax_amount"] + other["further_tax_amount"]
-            CreditNoteLine.objects.create(credit_note=cn, variant=variant, batch=l.get("batch"), qty=l["qty"], unit_price=unit_price, unit_cost=q4(l.get("unit_cost") or variant.avg_cost or variant.cost_price), reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), line_total=taxable + t["tax1_amount"] + t["tax2_amount"] + in_line, tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], **other)
-            subtotal += taxable
-            t1 += t["tax1_amount"]
-            t2 += t["tax2_amount"]
-            for k in OTHER:
+            CreditNoteLine.objects.create(
+                credit_note=cn, variant=variant, batch=l.get("batch"), qty=qty, unit_price=unit_price, unit_cost=unit_cost,
+                reason=l.get("reason", ""), restock=l.get("restock", True), condition=l.get("condition", "good"), discount_amount=line_disc,
+                stock_back=l.get("stock_back", False),
+                line_total=gross - line_disc + amt1 + amt2 + in_line,
+                tax1_type=tt1 if amt1 else None, tax1_rate=r1, tax1_amount=amt1, tax2_type=tt2 if amt2 else None, tax2_rate=r2, tax2_amount=amt2, **other)
+            subtotal += gross
+            disc += line_disc
+            t1 += amt1
+            t2 += amt2
+            for k in CreditNoteService.OTHER:
                 sums[k] += other[k]
-            tax1_type = tax1_type or t["tax1_type"]
-            tax2_type = tax2_type or t["tax2_type"]
-        cn.subtotal, cn.tax1_total, cn.tax2_total, cn.tax1_type, cn.tax2_type = subtotal, t1, t2, tax1_type, tax2_type
+            tax1_type = tax1_type or (tt1 if amt1 else None)
+            tax2_type = tax2_type or (tt2 if amt2 else None)
+        cn.subtotal, cn.discount, cn.tax1_total, cn.tax2_total, cn.tax1_type, cn.tax2_type = subtotal, disc, t1, t2, tax1_type, tax2_type
         cn.fed_total, cn.extra_tax_total = sums["fed_amount"], sums["extra_tax_amount"]
         cn.further_tax_total, cn.wht_total = sums["further_tax_amount"], sums["wht_amount"]
-        cn.total = subtotal + t1 + t2 + cn.fed_total + cn.extra_tax_total + cn.further_tax_total - cn.wht_total
+        cn.total = subtotal - disc + t1 + t2 + cn.fed_total + cn.extra_tax_total + cn.further_tax_total - cn.wht_total
         cn.save()
         AuditService.log("created", cn, after={"customer": customer.name, "total": str(cn.total)})
         return cn
+
+    @staticmethod
+    def _invoice_can_take_returns(invoice):
+        """A return needs a posted invoice whose goods reached the customer — not one still on its way."""
+        if invoice.status in ("draft", "cancelled"):
+            raise DomainError(f"{invoice.number} is {invoice.get_status_display().lower()} — a return needs a posted invoice. A draft is simply edited.", code="not_posted")
+        dn = invoice.delivery_note
+        if dn is not None and dn.stock_out_done and dn.status in ("pending", "loaded", "dispatched"):
+            raise DomainError(f"The goods of {invoice.number} have not been delivered yet ({dn.number} is {dn.get_status_display().lower()}) — "
+                              "record the delivery or the refusal first; if the customer refused them, use Customer rejected.", code="not_delivered")
+
+    @staticmethod
+    def back_already(invoice):
+        """
+        Units of this invoice already back in stock without any return, per variant: the whole invoice when its
+        order or its delivery note was cancelled (the issue was reversed); the good units the customer refused at
+        the door otherwise (the trip brings them home and its close restocks them).
+        """
+        o, dn = invoice.order, invoice.delivery_note
+        sold = CreditNoteService._sold(invoice)
+        if (o is not None and o.status in ("cancelled", "rejected")) or (dn is not None and dn.status == "cancelled"):
+            return {vid: c["units"] for vid, c in sold.items()}
+        out = {}
+        # refused at the door: only units the invoice BILLED but the customer did not keep (an invoice drafted at
+        # delivery bills only what was delivered), and only when a trip brings them home — its close restocks the
+        # good ones; with no trip nothing restocks them, so the return must (review, 30 Oct 2026)
+        if dn is not None and dn.trip_id is not None:
+            delivered, refused_good = {}, {}
+            for l in dn.lines.all():
+                delivered[l.variant_id] = delivered.get(l.variant_id, Decimal("0")) + l.qty_delivered
+                if l.qty_returned > 0 and l.return_condition != "damaged":
+                    refused_good[l.variant_id] = refused_good.get(l.variant_id, Decimal("0")) + l.qty_returned
+            for vid, units in refused_good.items():
+                billed_not_kept = sold.get(vid, {}).get("units", Decimal("0")) - delivered.get(vid, Decimal("0"))
+                if billed_not_kept > 0:
+                    out[vid] = min(units, billed_not_kept)
+        return out
+
+    @staticmethod
+    def stock_back_units(invoice, exclude=None):
+        out = {}
+        qs = CreditNoteLine.objects.filter(credit_note__invoice=invoice, stock_back=True).exclude(credit_note__status="cancelled")
+        if exclude is not None:
+            qs = qs.exclude(credit_note=exclude)
+        for l in qs:
+            out[l.variant_id] = out.get(l.variant_id, Decimal("0")) + l.qty
+        return out
+
+    @staticmethod
+    def _goods_already_back(invoice, asked=None):
+        """
+        Goods that came back without a return — and nothing paid, nothing filed with FBR — are not a return at
+        all: the sale never happened, so Customer rejected reverses it (TDN-SO-00076, 29 Oct 2026, was returned
+        AND cancelled, and its stock counted twice). A paid or FBR-filed invoice still takes a return; its lines
+        for those goods move no stock.
+        """
+        filing = getattr(invoice, "fbr_filing", None)
+        filed = filing is not None and filing.status == "submitted"
+        if invoice.paid_amount > 0 or filed:
+            return
+        back = CreditNoteService.back_already(invoice)
+        sold = CreditNoteService._sold(invoice)
+        if back and all(back.get(vid, Decimal("0")) >= c["units"] for vid, c in sold.items()):
+            o, dn = invoice.order, invoice.delivery_note
+            what = f"order {o.number} was cancelled" if o is not None and o.status in ("cancelled", "rejected") else f"the customer refused {dn.number}"
+            raise DomainError(f"The goods of {invoice.number} already came back ({what}) and nothing was paid — use Customer rejected "
+                              "on the invoice to reverse the sale. A return would count the goods in stock twice.", code="goods_already_back")
 
     @staticmethod
     @transaction.atomic
@@ -1555,9 +1829,23 @@ class CreditNoteService:
         from apps.accounting.services import PostingService
         from apps.inventory.models import Warehouse
 
+        if cn.invoice_id:
+            inv = cn.invoice
+            CreditNoteService._invoice_can_take_returns(inv)
+            CreditNoteService._goods_already_back(inv)
+            sold, back = CreditNoteService._sold(inv), CreditNoteService.returned_units(inv, exclude=cn)
+            mine = {}
+            for l in cn.lines.all():
+                mine[l.variant_id] = mine.get(l.variant_id, Decimal("0")) + l.qty
+            for vid, q in mine.items():
+                if q > sold.get(vid, {}).get("units", Decimal("0")) - back.get(vid, Decimal("0")):
+                    raise DomainError(f"{cn.number} returns more than is left of {inv.number} — another return took some of it since this draft was saved. "
+                                      "Delete the draft and record the return again.", code="over_return")
         wh = cn.warehouse or Warehouse.objects.filter(type="main").first()
         quarantine = Warehouse.objects.filter(type="quarantine", is_active=True).first()
         for line in cn.lines.select_related("variant", "variant__product", "batch"):
+            if line.stock_back:
+                continue  # already in stock — refused at the door or the order cancelled; the cost still goes back
             # Only good stock the user chose to restock goes back as sellable; broken and expired goods are
             # written off — held in the quarantine warehouse at zero value (see PostingService.post_credit_note
             # for the matching loss accounts). Keep this predicate identical to the one accounting uses.
@@ -1568,21 +1856,123 @@ class CreditNoteService:
         cn.journal = PostingService.post_credit_note(cn)
         cn.status = "posted"
         cn.save(update_fields=["journal", "status", "updated_at"])
+        # the credit settles its own invoice first — as credit, never as money
         if cn.applied_to_invoice and cn.invoice_id:
-            inv = cn.invoice
-            apply_amt = min(cn.total, inv.total - inv.paid_amount)
-            if apply_amt > 0:
-                inv.paid_amount += apply_amt
-                inv.status = "paid" if inv.paid_amount >= inv.total else "partially_paid"
-                inv.save(update_fields=["paid_amount", "status"])
+            inv = SalesInvoice.objects.get(pk=cn.invoice_id)
+            if inv.status in ("posted", "partially_paid", "overdue"):
+                CreditNoteService._apply(cn, inv, min(cn.available_credit, inv.balance))
         for line in cn.lines.select_related("variant"):
             ol = SalesOrderLine.objects.filter(order=cn.invoice.order if cn.invoice_id and cn.invoice.order_id else None, variant=line.variant).first() if cn.invoice_id else None
             if ol:
                 ol.qty_returned += line.qty
                 ol.save(update_fields=["qty_returned"])
         _claw_back_claims(cn)
-        AuditService.log("status.posted", cn, after={"total": str(cn.total)})
+        AuditService.log("status.posted", cn, after={"total": str(cn.total), "customer_credit": str(cn.available_credit)})
         return cn
+
+    @staticmethod
+    def _apply(cn, inv, amount):
+        """Settle `amount` of an open invoice with this return's credit. No journal: both sides are the customer's
+        receivable — the return already credited it; this only says which invoice the credit paid."""
+        amount = q4(amount)
+        if amount <= 0:
+            return
+        if inv.status not in ("posted", "partially_paid", "overdue"):
+            raise DomainError(f"{inv.number} is {inv.get_status_display().lower()} — credit settles only an open invoice.", code="not_open")
+        if amount > cn.available_credit + Decimal("0.005"):
+            raise DomainError(f"{cn.number} has only {cn.available_credit:,.2f} of credit left.", code="no_credit")
+        if amount > inv.balance + Decimal("0.005"):
+            raise DomainError(f"{inv.number} has only {inv.balance:,.2f} left to settle.", code="over_balance")
+        CreditNoteApplication.objects.create(credit_note=cn, invoice=inv, amount=amount, date=timezone.localdate())
+        cn.applied_amount = q4(cn.applied_amount + amount)
+        cn.save(update_fields=["applied_amount", "updated_at"])
+        inv.paid_amount = q4(inv.paid_amount + amount)
+        inv.credited_amount = q4(inv.credited_amount + amount)
+        inv.status = InvoiceService.settle_status(inv)
+        inv.save(update_fields=["paid_amount", "credited_amount", "status", "updated_at"])
+        AuditService.log("credit.applied", inv, after={"credit_note": cn.number, "amount": str(amount)})
+
+    @staticmethod
+    @transaction.atomic
+    def apply(cn, allocations):
+        """Use a return's credit on the customer's other open invoices: [{invoice, amount}]."""
+        if cn.status != "posted":
+            raise DomainError("Post the return first.")
+        for a in allocations or []:
+            inv = SalesInvoice.objects.filter(pk=a.get("invoice"), customer_id=cn.customer_id).first()
+            if inv is None:
+                raise DomainError("That invoice is not this customer's.", status_code=400)
+            if inv.status not in ("posted", "partially_paid", "overdue"):
+                raise DomainError(f"{inv.number} is not open ({inv.get_status_display()}).", code="not_open")
+            CreditNoteService._apply(cn, inv, Decimal(str(a.get("amount") or 0)))
+        return cn
+
+    @staticmethod
+    def auto_apply(inv):
+        """A newly posted invoice takes the customer's kept credit first — "keep as credit for the next invoice"."""
+        from django.db.models import F
+
+        with_credit = (CreditNote.objects.filter(customer_id=inv.customer_id, status="posted")
+                       .annotate(left=F("total") - F("applied_amount") - F("refunded_amount")).filter(left__gt=0).order_by("date", "created_at"))
+        for cn in with_credit:
+            inv.refresh_from_db(fields=["paid_amount", "credited_amount", "status", "total"])
+            if inv.balance <= 0 or inv.status not in ("posted", "partially_paid", "overdue"):
+                break
+            CreditNoteService._apply(cn, inv, min(cn.available_credit, inv.balance))
+
+    @staticmethod
+    def unapply_foreign(inv):
+        """
+        Take back credit that OTHER returns put on this invoice — kept credit auto-applied when it posted — so it can
+        still be reversed: the credit goes back to those returns, to be used again (review, 30 Oct 2026). A return of
+        this invoice's own goods is not undone: it stays, and blocks the reversal.
+        """
+        notes = {}   # one copy per return: two applications of the same return must both come off it
+        for a in list(CreditNoteApplication.objects.filter(invoice=inv).exclude(credit_note__invoice=inv).select_related("credit_note")):
+            cn = notes.setdefault(a.credit_note_id, a.credit_note)
+            cn.applied_amount = max(q4(cn.applied_amount - a.amount), Decimal("0"))
+            cn.save(update_fields=["applied_amount", "updated_at"])
+            inv.paid_amount = q4(inv.paid_amount - a.amount)
+            inv.credited_amount = q4(inv.credited_amount - a.amount)
+            a.delete()
+            AuditService.log("credit.unapplied", inv, after={"credit_note": cn.number, "amount": str(a.amount)})
+        inv.status = InvoiceService.settle_status(inv) if inv.status not in ("draft", "cancelled") else inv.status
+        inv.save(update_fields=["paid_amount", "credited_amount", "status", "updated_at"])
+
+    @staticmethod
+    @transaction.atomic
+    def refund(cn, *, amount, method, cash_account=None, bank_account=None, cheque_no="", cheque_date=None, reference="", date=None, actor=None):
+        """
+        Pay a return's credit back to the customer — cash, bank transfer or cheque (owner, 30 Oct 2026: "give
+        multiple options for customer amount return"). Dr the customer's receivable / Cr the cash or bank
+        account (a cheque goes through Cheques Payable until it is presented, like any cheque we write).
+        """
+        from apps.accounting.services import PaymentService
+
+        if cn.status != "posted":
+            raise DomainError("Post the return first.")
+        amount = q4(Decimal(str(amount or 0)))
+        if amount <= 0:
+            raise DomainError("Enter the amount to refund.", status_code=400)
+        if amount > cn.available_credit + Decimal("0.005"):
+            raise DomainError(f"{cn.number} has only {cn.available_credit:,.2f} of credit left to refund.", code="no_credit")
+        if method not in ("cash", "bank_transfer", "cheque"):
+            raise DomainError("Refund by cash, bank transfer or cheque.", status_code=400)
+        if method in ("bank_transfer", "cheque") and bank_account is None:
+            raise DomainError("Choose the bank account the refund is paid from.", status_code=400)
+        # only the account the method uses: a bank picked and then switched to cash must not pay from the bank
+        cash_account, bank_account = (cash_account, None) if method == "cash" else (None, bank_account)
+        pay = PaymentService.record(direction="out", partner_type="customer", partner_id=str(cn.customer_id), partner_name=cn.customer.name,
+                                    amount=amount, method=method, date_=date, cash_account=cash_account, bank_account=bank_account,
+                                    cheque_no=cheque_no, cheque_date=cheque_date, reference=reference or f"Refund of {cn.number}",
+                                    notes=f"Refund of return {cn.number}", allocations=[], auto_allocate=False)
+        pay.credit_note = cn
+        pay.unallocated = Decimal("0")   # matched to the return, not money on account
+        pay.save(update_fields=["credit_note", "unallocated"])
+        cn.refunded_amount = q4(cn.refunded_amount + amount)
+        cn.save(update_fields=["refunded_amount", "updated_at"])
+        AuditService.log("credit.refunded", cn, after={"amount": str(amount), "method": method, "payment": pay.number}, actor=actor)
+        return pay
 
 
 def _accuracy(gps):

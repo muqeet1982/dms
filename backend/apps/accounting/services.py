@@ -282,6 +282,18 @@ class PostingService:
     def post_credit_note(cn):
         ar = cn.customer.account or account_for("ar", "credit_note")
         lines = [Line(account_for("sales_return", "credit_note"), debit=cn.subtotal, description=f"Credit note {cn.number}")]
+        # the mirror of the invoice's discount on the returned goods (owner, 30 Oct 2026): the manufacturer's share
+        # back to the incentive head (the claw-back reduces the claim by the same figure), the rest — the
+        # distributor's own points — back to Discounts Allowed; the customer is credited only what they were charged
+        if getattr(cn, "discount", 0):
+            from apps.sales.services import returned_company_shares
+
+            funded = min(sum((share for _c, share in returned_company_shares(cn).values()), Decimal("0")), cn.discount)
+            own = cn.discount - funded
+            if own > 0:
+                lines.append(Line(account_for("discount", "credit_note"), credit=own, description=f"Discount on returned goods {cn.number} — own share"))
+            if funded > 0:
+                lines.append(Line(account_for("manufacturer_incentive", "company_claim"), credit=funded, description=f"Discount on returned goods {cn.number} — manufacturer share"))
         for idx, (amt, tt) in enumerate([(cn.tax1_total, cn.tax1_type), (cn.tax2_total, cn.tax2_type)]):
             if amt:
                 acct = (tt.output_account if tt and tt.output_account_id else None) or account_for(f"tax{idx + 1}_out", "credit_note")
@@ -301,7 +313,8 @@ class PostingService:
         restock_value = expired_value = damaged_value = Decimal("0")
         for l in cn.lines.all():
             val = q4(l.qty * l.unit_cost)
-            if l.restock and l.condition == "good":
+            if l.stock_back or (l.restock and l.condition == "good"):
+                # back in Stock in Hand — restocked by this return, or already there (refused at the door / order cancelled)
                 restock_value += val
             elif l.condition == "expired":
                 expired_value += val
@@ -679,8 +692,24 @@ class PaymentService:
         return []
 
     @staticmethod
+    def _refund_undone(payment):
+        """A refund that did not happen (cancelled, or its cheque bounced): the credit is the customer's again."""
+        if payment.credit_note_id and payment.direction == "out":
+            cn = payment.credit_note
+            cn.refunded_amount = max(cn.refunded_amount - payment.amount, Decimal("0"))
+            cn.save(update_fields=["refunded_amount", "updated_at"])
+            AuditService.log("credit.refund_undone", cn, after={"payment": payment.number, "amount": str(payment.amount)})
+
+    @staticmethod
     def _apply(document, doc_type, amount):
         document.paid_amount = (document.paid_amount or Decimal("0")) + amount
+        if doc_type == "sales_invoice":
+            # the invoice's own rule: returns are not money, and an unpaid one past its due date is overdue
+            from apps.sales.services import InvoiceService
+
+            document.status = InvoiceService.settle_status(document)
+            document.save(update_fields=["paid_amount", "status", "updated_at"])
+            return
         if document.paid_amount >= document.total:
             document.status = "paid"
         elif document.paid_amount > 0:
@@ -820,11 +849,18 @@ class PaymentService:
     def cancel(payment, reason=""):
         if payment.status == "cancelled":
             raise DomainError("Already cancelled.")
-        for a in payment.allocations.all():
-            doc = PaymentService._load(a.document_type, a.document_id)
-            PaymentService._apply(doc, a.document_type, -a.amount)
-        if payment.journal_id:
-            PostingService.reverse(payment.journal, memo=f"Cancelled {payment.number}: {reason}")
+        # a bounced cheque was undone by its bounce — allocations, entries and any refund — so cancelling it only
+        # closes the record; undoing it again would credit the customer twice (review, 30 Oct 2026)
+        if payment.cheque_status != "bounced":
+            for a in payment.allocations.all():
+                doc = PaymentService._load(a.document_type, a.document_id)
+                PaymentService._apply(doc, a.document_type, -a.amount)
+            if payment.journal_id:
+                PostingService.reverse(payment.journal, memo=f"Cancelled {payment.number}: {reason}")
+            # a cleared cheque also moved the bank: that comes off too, or the cheque account is left holding it
+            for je in JournalEntry.objects.filter(source_type="Payment", source_id=str(payment.pk), status="posted").exclude(pk=payment.journal_id):
+                PostingService.reverse(je, memo=f"Cancelled {payment.number}: {reason}")
+            PaymentService._refund_undone(payment)
         payment.status = "cancelled"
         payment.notes = (payment.notes + f"\nCancelled: {reason}").strip()
         payment.save(update_fields=["status", "notes", "updated_at"])
@@ -836,6 +872,8 @@ class PaymentService:
     def cheque_event(payment, event, bank_account=None, charges=Decimal("0")):
         if payment.method != "cheque":
             raise DomainError("Not a cheque payment.")
+        if payment.status == "cancelled":
+            raise DomainError(f"{payment.number} is cancelled — its cheque is no longer tracked.")
         order = ["pending", "deposited", "cleared"]
         if event == "deposited" and payment.cheque_status != "pending":
             raise DomainError("Cheque is not pending.")
@@ -848,6 +886,8 @@ class PaymentService:
             payment.bank_account = bank_account
         payment.cheque_status = event
         payment.save(update_fields=["cheque_status", "bank_account", "updated_at"])
+        if event == "bounced" and payment.direction == "out":
+            PaymentService._refund_undone(payment)
         if event == "bounced":
             for a in payment.allocations.all():
                 doc = PaymentService._load(a.document_type, a.document_id)

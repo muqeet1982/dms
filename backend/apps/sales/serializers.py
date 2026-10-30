@@ -283,6 +283,22 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return {"status": f.status, "sandbox": f.sandbox, "fbr_invoice_number": f.fbr_invoice_number,
                 "validated_at": f.validated_at, "submitted_at": f.submitted_at, "error": f.error_text}
 
+    cash_paid = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    credit_applications = serializers.SerializerMethodField()
+
+    def get_credit_applications(self, obj):
+        """The returns that settled this invoice (owner, 30 Oct 2026: a return is not a payment)."""
+        return [{"credit_note": str(a.credit_note_id), "number": a.credit_note.number, "amount": str(a.amount), "date": a.date,
+                 "own": a.credit_note.invoice_id == obj.pk}   # a return of this invoice's goods, not credit brought from another
+                for a in obj.credit_applications.all()]
+
+    returns_count = serializers.SerializerMethodField()
+
+    def get_returns_count(self, obj):
+        """Live returns (drafts included) against this invoice — while any stands, it cannot be reversed."""
+        n = getattr(obj, "live_returns", None)
+        return n if n is not None else obj.credit_notes.exclude(status="cancelled").count()
+
     lines = InvoiceLineSerializer(many=True, read_only=True)
     company_claims_total = serializers.SerializerMethodField()
     delivery_status = serializers.SerializerMethodField()
@@ -334,7 +350,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
@@ -344,8 +360,8 @@ class CreditNoteLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNoteLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
-        read_only_fields = ["id", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "batch", "qty", "unit_price", "unit_cost", "reason", "restock", "condition", "discount_amount", "stock_back", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
+        read_only_fields = ["id", "discount_amount", "stock_back", "tax1_rate", "tax1_amount", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"]
         extra_kwargs = {"unit_cost": {"required": False}}
 
 
@@ -357,6 +373,18 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 
         return gst_pct(l.tax1_rate for l in obj.lines.all())
 
+    available_credit = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    applications = serializers.SerializerMethodField()
+    refunds = serializers.SerializerMethodField()
+
+    def get_applications(self, obj):
+        return [{"invoice": str(a.invoice_id), "invoice_number": a.invoice.number, "amount": str(a.amount), "date": a.date}
+                for a in obj.applications.select_related("invoice")]
+
+    def get_refunds(self, obj):
+        return [{"id": str(p.id), "number": p.number, "date": p.date, "amount": str(p.amount), "method": p.method, "status": p.status}
+                for p in obj.refunds.exclude(status="cancelled")]
+
     lines = CreditNoteLineSerializer(many=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default="")
@@ -364,8 +392,9 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNote
-        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at"]
-        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at",
+                  "discount", "applied_amount", "refunded_amount", "available_credit", "applications", "refunds"]
+        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "created_at", "discount", "applied_amount", "refunded_amount"]
 
 
 class RepCollectionSerializer(serializers.ModelSerializer):

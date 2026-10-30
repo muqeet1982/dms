@@ -60,7 +60,19 @@ class CustomerService:
 
             paid = JournalLine.objects.filter(partner_type="customer", partner_id=str(customer.id), entry__status__in=GL_LIVE, entry__type="payment").aggregate(c=Sum("credit"))["c"] or Decimal("0")
             opening = max(Decimal("0"), opening - max(Decimal("0"), paid - invoiced))
-        return invoiced + opening
+        # credit kept from returns is theirs to use: it brings what they owe down, below zero when we owe them
+        return invoiced + opening - CustomerService.credit(customer)
+
+    @staticmethod
+    def credit(customer):
+        """Credit the customer holds from returns (owner, 30 Oct 2026) — posted returns not yet applied or refunded."""
+        from django.db.models import F
+
+        from apps.sales.models import CreditNote
+
+        left = CreditNote.objects.filter(customer=customer, status="posted").aggregate(
+            c=Sum(F("total") - F("applied_amount") - F("refunded_amount")))["c"] or Decimal("0")
+        return max(left, Decimal("0"))
 
     @staticmethod
     def overdue(customer):

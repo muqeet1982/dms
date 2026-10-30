@@ -29,7 +29,7 @@ def _window(qs, field, date_from, date_to):
 def _inv_lines(date_from, date_to, **filters):
     from apps.sales.models import SalesInvoiceLine
 
-    qs = SalesInvoiceLine.objects.filter(invoice__status__in=["posted", "partially_paid", "paid", "overdue"]).select_related("invoice", "variant", "variant__product", "variant__product__brand", "variant__product__supplier", "invoice__customer", "invoice__rep")
+    qs = SalesInvoiceLine.objects.filter(invoice__status__in=["posted", "partially_paid", "paid", "overdue", "returned"]).select_related("invoice", "variant", "variant__product", "variant__product__brand", "variant__product__supplier", "invoice__customer", "invoice__rep")
     qs = _window(qs, "invoice__date", date_from, date_to)
     return qs.filter(**filters)
 
@@ -84,7 +84,7 @@ def sales_by_route(date_from=None, date_to=None, **_):
 def sales_by_period(date_from=None, date_to=None, granularity="day", **_):
     from apps.sales.models import SalesInvoice
 
-    qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue"]), "date", date_from, date_to)
+    qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue", "returned"]), "date", date_from, date_to)
     trunc = TruncMonth("date") if granularity == "month" else TruncDay("date")
     rows = [{"period": r["p"].isoformat() if hasattr(r["p"], "isoformat") else str(r["p"]), "invoices": r["n"], "sales": str(r["s"] or 0), "tax": str(sum((r[k] or 0) for k in ("t1", "t2", "fed", "extra", "further")))} for r in qs.annotate(p=trunc).values("p").annotate(n=Count("id"), s=Sum("subtotal") - Sum("discount"), t1=Sum("tax1_total"), t2=Sum("tax2_total"), fed=Sum("fed_total"), extra=Sum("extra_tax_total"), further=Sum("further_tax_total")).order_by("p")]
     return {"columns": ["period", "invoices", "sales", "tax"], "rows": rows, "totals": {"sales": str(sum((Decimal(r["sales"]) for r in rows), Z))}}
@@ -665,7 +665,7 @@ def sales_tax_register(date_from=None, date_to=None, **_):
     from apps.sales.models import CreditNote, SalesInvoice
 
     rows = []
-    inv_qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue"]),
+    inv_qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue", "returned"]),
                      "date", date_from, date_to)
     inv_qs = inv_qs.filter(Q(force_tax_type__isnull=False) | Q(tax1_total__gt=0)).select_related("customer")
     for i in inv_qs:
@@ -685,7 +685,7 @@ def sales_tax_register(date_from=None, date_to=None, **_):
         rows.append({"date": c.date, "doc": "Credit note", "number": c.number, "customer": c.customer.name,
                      "ntn_cnic": (c.customer.ntn or c.customer.cnic or "").strip(),
                      "registration": c.customer.fbr_registration_type or "",
-                     "taxable_value": str(-c.subtotal), "sales_tax": str(-c.tax1_total),
+                     "taxable_value": str(-(c.subtotal - c.discount)), "sales_tax": str(-c.tax1_total),
                      "fed": str(-c.fed_total), "extra_tax": str(-c.extra_tax_total), "further_tax": str(-c.further_tax_total),
                      "wht": str(-c.wht_total), "total": str(-c.total),
                      "fbr_status": f"against {c.invoice.number}" if c.invoice_id else "standalone", "fbr_number": ""})

@@ -6,6 +6,8 @@ import pytest
 
 from apps.core.tenancy import tenant_context
 
+from .conftest import deliver_invoice
+
 pytestmark = pytest.mark.django_db
 
 
@@ -313,6 +315,7 @@ def test_a_credit_note_against_a_forced_invoice_reverses_the_charged_rate(api, t
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     assert Decimal(inv["tax1_total"]) == Decimal("108")
+    deliver_invoice(api, inv["id"])
 
     cn = api.post("/api/v1/credit-notes", {"customer": str(cust.id), "invoice": inv["id"], "warehouse": str(wh.id),
                                            "reason": "damaged", "lines": [{"variant": str(v.id), "qty": "1", "unit_price": "150"}]}, format="json")
@@ -425,6 +428,7 @@ def test_a_credit_note_mirrors_the_per_unit_tax_not_the_rate(api, tenant, taxed_
     oid = _issued_order(api, wh, cust, v)  # 4 units, tax 348 → 87 a unit
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
+    deliver_invoice(api, inv["id"])
     with tenant_context(tenant, tenant.owner):
         from apps.sales.models import SalesInvoice
         from apps.sales.services import CreditNoteService
@@ -656,6 +660,7 @@ def test_a_credit_note_against_two_lines_of_one_variant_credits_the_true_total(a
     made = api.post(f"/api/v1/sales-orders/{r.data['id']}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     assert len(inv["lines"]) == 2, "two lines of the same variant must stay two lines"
+    deliver_invoice(api, inv["id"])
     with tenant_context(tenant, tenant.owner):
         from apps.sales.models import SalesInvoice
         from apps.sales.services import CreditNoteService
@@ -697,6 +702,7 @@ def test_the_sales_tax_register_reports_fbr_invoices_and_their_credit_notes(api,
     # an untaxed invoice stays OUT of the register
     oid2 = _issued_order(api, wh, cust, v)
     api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"apply_tax": False}, format="json")
+    deliver_invoice(api, inv["id"])
     with tenant_context(tenant, tenant.owner):
         from apps.inventory.models import Warehouse
         from apps.sales.models import SalesInvoice

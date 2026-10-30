@@ -90,7 +90,7 @@ export function OrderDetailPage() {
   const tripsPage = usePage("trips");
   const q = useDoc("/api/v1/sales-orders", id);
   const { run, busy } = useAction("/api/v1/sales-orders", id, [["orders-stats"], ["orders-stats-badge"], ["dashboard"]]);
-  const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm" | "delete">(null);
+  const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm" | "delete" | "rejected">(null);
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
   if (q.isLoading) return <Spinner />;
@@ -117,7 +117,7 @@ export function OrderDetailPage() {
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
           {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
    : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
-   : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
+   : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{["issued", "dispatched"].includes(o.status) && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("rejected")}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -184,6 +184,9 @@ export function OrderDetailPage() {
         try { await api.delete(`/api/v1/sales-orders/${o.id}`); toast.success(`${o.number} deleted`); qc.invalidateQueries({ queryKey: ["list", "/api/v1/sales-orders"] }); nav("/app/sales/orders"); }
         catch (e: any) { toast.error(e.message); }
       }} />
+      <ConfirmDialog open={dlg === "rejected"} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
+        message="The goods come back to stock once, the order's unpaid invoice is reversed (its entries come off the books) and the order closes as Rejected. No return and no payment are recorded."
+        onClose={() => setDlg(null)} onConfirm={async (r) => { await run("customer-rejected", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "cancel"} title="Cancel order" message={["issued", "dispatched"].includes(o.status) ? "The goods the warehouse issued come back into stock, and the load form and delivery note are cancelled with the order." : undefined} withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "hold"} title="Put on hold" withReason confirmText="Hold" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("hold", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "confirm"} title="Override credit hold?" message={<>{o.hold_reason}<br />Confirming will override the credit check.</>} confirmText="Override & confirm" onClose={() => setDlg(null)} onConfirm={async () => { await run("confirm", { override_credit: true }); setDlg(null); }} />

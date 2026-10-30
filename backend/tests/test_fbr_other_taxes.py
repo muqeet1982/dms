@@ -10,6 +10,8 @@ import pytest
 
 from apps.core.tenancy import tenant_context
 
+from .conftest import deliver_invoice
+
 pytestmark = pytest.mark.django_db
 
 D = Decimal
@@ -69,6 +71,7 @@ def test_the_four_taxes_flow_from_the_product_through_order_invoice_ledger_filin
     inv = made.data[0] if isinstance(made.data, list) else made.data
     assert D(inv["total"]) == D(order["total"]) == D("714"), "order and invoice must agree to the paisa"
     assert (D(inv["fed_total"]), D(inv["extra_tax_total"]), D(inv["further_tax_total"]), D(inv["wht_total"])) == (D("12"), D("6"), D("18"), D("30"))
+    deliver_invoice(api, inv["id"])
 
     with tenant_context(tenant, tenant.owner):
         from apps.accounting.models import JournalLine

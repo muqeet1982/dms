@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Prefetch, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -14,7 +14,7 @@ from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import DocumentViewSet, ExportableMixin, TenantModelViewSet, warehouse_scope
 
-from .models import CompanyClaim, CreditNote, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesOrder
+from .models import CompanyClaim, CreditNote, CreditNoteApplication, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesOrder
 from .serializers import CompanyClaimSerializer, CreditNoteSerializer, DiscountContributionSerializer, SalesInvoiceEditSerializer, RepCollectionSerializer, RepSettlementSerializer, SalesInvoiceSerializer, SalesOrderListSerializer, SalesOrderSerializer
 from .services import CompanyClaimService, CreditNoteService, InvoiceService, OrderService, RepCollectionService
 
@@ -192,6 +192,18 @@ class SalesOrderViewSet(DocumentViewSet):
             raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
         return Response(SalesOrderSerializer(OrderService.cancel(order, request.data.get("reason", ""), by_rep=by_rep)).data)
 
+    @action(detail=True, methods=["post"], url_path="customer-rejected")
+    def customer_rejected(self, request, pk=None):
+        """The customer refused the goods, nothing paid (owner, 30 Oct 2026): goods back once, invoice off the books,
+        order Rejected — no return, no payment. Whoever may cancel this order may record it."""
+        m = request.membership
+        order = self.get_object()
+        if not (m.has_perm("sales.cancel_sales_order") or m.is_owner):
+            raise DomainError("You cannot cancel orders.", status_code=403)
+        if order.status in ("confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched") and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
+            raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
+        return Response(SalesOrderSerializer(OrderService.customer_rejected(order, request.data.get("reason", ""))).data)
+
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):
         return Response(SalesOrderSerializer(OrderService.allocate(self.get_object(), request.data.get("allocations", []))).data)
@@ -308,6 +320,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
     http_method_names = ["get", "post", "patch", "head", "options"]
     perm_map = page_perms("invoices", {
         "cancel": "sales.delete_invoice",
+        "reject": "sales.delete_invoice",
         "post_to_ledger": "sales.add_invoice",
         "post": "sales.add_invoice",  # belt and braces: any POST reaching this viewset needs the same right
         "discount": extra_perm("invoices", "discount"),
@@ -365,7 +378,9 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         return Response(SalesInvoiceSerializer(self.get_object()).data)
 
     def get_queryset(self):
-        qs = SalesInvoice.objects.select_related("customer", "order", "delivery_note", "rep", "journal", "tax1_type", "tax2_type").prefetch_related("lines__variant", "lines__batch")
+        qs = SalesInvoice.objects.select_related("customer", "order", "delivery_note", "rep", "journal", "tax1_type", "tax2_type").prefetch_related(
+            "lines__variant", "lines__batch", Prefetch("credit_applications", queryset=CreditNoteApplication.objects.select_related("credit_note")))
+        qs = qs.annotate(live_returns=Count("credit_notes", filter=~Q(credit_notes__status="cancelled"), distinct=True))
         qs = _rep_scope(self.request, qs)
         p = self.request.query_params
         if p.get("date_from"):
@@ -388,6 +403,37 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         return Response(SalesInvoiceSerializer(InvoiceService.cancel(self.get_object(), request.data.get("reason", ""))).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """The customer refused this invoice's goods, nothing paid (owner, 30 Oct 2026, Case A): its order closes as
+        Rejected — goods back once, the invoice's entries off the books. No return, no payment."""
+        inv = self.get_object()
+        reason = request.data.get("reason", "")
+        filing = getattr(inv, "fbr_filing", None)
+        if filing is not None and filing.status == "submitted":
+            raise DomainError(f"{inv.number} is filed with FBR and cannot be reversed — record a return (credit note).", code="fbr_submitted")
+        # reversing the sale cancels its order — the order's own Cancel rights apply (review, 30 Oct 2026)
+        m = request.membership
+        o = inv.order
+        if o is not None and o.status not in ("cancelled", "rejected"):
+            if not (m.is_owner or m.has_perm("sales.cancel_sales_order")):
+                raise DomainError("You cannot cancel orders.", status_code=403)
+            if o.status in ("confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched") and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
+                raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
+        if inv.status != "draft":
+            CreditNoteService.unapply_foreign(inv)   # kept credit it took goes back to its returns
+            inv.refresh_from_db()
+        if inv.paid_amount > 0:
+            raise DomainError(f"{inv.number} has money or a return against it — record a return (credit note) instead.", code="invoice_settled")
+        if inv.order_id and inv.order.status not in ("cancelled", "rejected"):
+            OrderService.customer_rejected(inv.order, reason)
+        else:
+            if inv.status != "draft":
+                InvoiceService.reopen(inv, reason=f"rejected by the customer: {reason}")
+                inv.refresh_from_db()
+            InvoiceService.cancel(inv, reason=f"Customer rejected: {reason}")
+        return Response(SalesInvoiceSerializer(SalesInvoice.objects.get(pk=inv.pk)).data)
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
@@ -493,21 +539,96 @@ class CreditNoteViewSet(DocumentViewSet):
     export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "gst_pct", "tax1_total", "total", "status"]
     export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
     serializer_class = CreditNoteSerializer
-    perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note"})
+    perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note", "apply": "sales.add_credit_note", "refund": "sales.add_credit_note"})
     filterset_fields = ["status", "customer", "invoice"]
     search_fields = ["number", "customer__name", "reason"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     queryset = CreditNote.objects.select_related("customer", "invoice", "warehouse", "journal").prefetch_related("lines__variant")
+
+    def perform_update(self, serializer):
+        """A return keeps its customer, invoice and lines (review, 30 Oct 2026): a posted one changes only its words;
+        a draft also its date and warehouse — a different return is a new one (delete the draft, record it again)."""
+        cn = serializer.instance
+        d = serializer.validated_data
+        allowed = {"reason", "notes"} if cn.status != "draft" else {"reason", "notes", "date", "warehouse", "applied_to_invoice"}
+        refused = sorted(k for k in d if k not in allowed and (k != "lines" or cn.status != "draft" or d[k] is not None))
+        if refused:
+            raise DomainError(f"{cn.number}'s {', '.join(refused)} cannot change — " + ("only its reason and notes once posted." if cn.status != "draft" else "delete the draft and record the return again."), code="locked")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """A DRAFT return can be thrown away — it moved no stock and booked nothing. A posted one stays."""
+        if instance.status != "draft":
+            raise DomainError(f"{instance.number} is posted — it stays on the books; correct it with another document.", code="posted")
+        AuditService.log("credit_note.deleted", instance, before={"number": instance.number, "total": str(instance.total)})
+        instance.delete()
 
     def perform_create(self, serializer):
         d = serializer.validated_data
         serializer.instance = CreditNoteService.create(customer=d["customer"], lines=[dict(l) for l in d["lines"]], invoice=d.get("invoice"), warehouse=d.get("warehouse"), date=d.get("date"), reason=d.get("reason", ""), notes=d.get("notes", ""), applied_to_invoice=d.get("applied_to_invoice", True))
         if self.request.data.get("post"):
             CreditNoteService.post(serializer.instance)
+            self._settle(serializer.instance, self.request.data.get("settlement") or {})
+
+    def _settle(self, cn, settlement):
+        """What to do with the customer's credit, chosen on the return form (owner, 30 Oct 2026: "give multiple
+        options for customer amount return"): keep it for their next invoice (the default), apply it to open
+        invoices now, and/or refund part or all of it in cash, by bank transfer or by cheque."""
+        cn.refresh_from_db()
+        if cn.available_credit <= 0:
+            return
+        choice = settlement.get("choice") or ("refund" if settlement.get("refund") else "apply" if settlement.get("apply") else "keep")
+        if choice == "apply":
+            rows = []
+            for a in settlement.get("apply") or []:
+                inv = SalesInvoice.objects.filter(pk=a.get("invoice"), customer_id=cn.customer_id).first()
+                if inv is None:
+                    continue
+                cn.refresh_from_db()
+                # a blank amount takes as much of the credit as the invoice still owes
+                want = Decimal(str(a.get("amount"))) if a.get("amount") not in (None, "") else min(cn.available_credit, inv.balance)
+                rows.append({"invoice": str(inv.pk), "amount": str(want)})
+                CreditNoteService.apply(cn, rows[-1:])
+        elif choice == "refund":
+            refund = dict(settlement.get("refund") or {})
+            # a blank amount refunds all of the credit
+            if refund.get("amount") in (None, ""):
+                refund["amount"] = str(cn.available_credit)
+            if Decimal(str(refund["amount"])) > 0:
+                self._refund(cn, refund)
+
+    def _refund(self, cn, d):
+        from apps.accounting.models import BankAccount, CashAccount
+
+        m = self.request.membership
+        if not (m.is_owner or m.has_perm("cash.make_payment")):
+            raise DomainError("Refunding pays money out — it needs the Payments → Pay right.", status_code=403)
+        return CreditNoteService.refund(
+            cn, amount=d.get("amount"), method=d.get("method") or "cash",
+            cash_account=CashAccount.objects.filter(pk=d.get("cash_account")).first() if d.get("cash_account") else None,
+            bank_account=BankAccount.objects.filter(pk=d.get("bank_account")).first() if d.get("bank_account") else None,
+            cheque_no=d.get("cheque_no") or "", cheque_date=d.get("cheque_date") or None, reference=d.get("reference") or "",
+            date=d.get("date") or None, actor=self.request.user)
 
     @action(detail=True, methods=["post"])
     def post(self, request, pk=None):
-        return Response(CreditNoteSerializer(CreditNoteService.post(self.get_object())).data)
+        cn = CreditNoteService.post(self.get_object())
+        self._settle(cn, request.data.get("settlement") or {})
+        return Response(CreditNoteSerializer(CreditNote.objects.get(pk=cn.pk)).data)
+
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):
+        """`POST /credit-notes/{id}/apply {allocations: [{invoice, amount}]}` — the credit settles open invoices."""
+        cn = CreditNoteService.apply(self.get_object(), request.data.get("allocations") or [])
+        return Response(CreditNoteSerializer(CreditNote.objects.get(pk=cn.pk)).data)
+
+    @action(detail=True, methods=["post"])
+    def refund(self, request, pk=None):
+        """`POST /credit-notes/{id}/refund {amount, method: cash|bank_transfer|cheque, cash_account | bank_account,
+        cheque_no?, cheque_date?, reference?, date?}` — pay the credit back to the customer."""
+        cn = self.get_object()
+        self._refund(cn, request.data)
+        return Response(CreditNoteSerializer(CreditNote.objects.get(pk=cn.pk)).data)
 
 
 class RepCollectionViewSet(DocumentViewSet):

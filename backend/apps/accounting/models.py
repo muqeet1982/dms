@@ -253,6 +253,8 @@ class Payment(DocumentModel):
     journal = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     trip = models.ForeignKey("delivery.DeliveryTrip", null=True, blank=True, on_delete=models.SET_NULL, related_name="payments")
     delivery_note = models.ForeignKey("delivery.DeliveryNote", null=True, blank=True, on_delete=models.SET_NULL, related_name="payments")
+    # a refund to a customer pays out the credit of this return (owner, 30 Oct 2026)
+    credit_note = models.ForeignKey("sales.CreditNote", null=True, blank=True, on_delete=models.SET_NULL, related_name="refunds")
     unallocated = models.DecimalField(**MONEY)
 
     class Meta:

@@ -136,7 +136,8 @@ class StockReservation(TenantModel):
 
 
 class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
-    STATUS = [("draft", "Draft"), ("posted", "Posted"), ("partially_paid", "Partially paid"), ("paid", "Paid"), ("overdue", "Overdue"), ("cancelled", "Cancelled")]
+    # "returned": settled by returns (credit notes) alone, no money received — never "paid" (owner, 30 Oct 2026)
+    STATUS = [("draft", "Draft"), ("posted", "Posted"), ("partially_paid", "Partially paid"), ("paid", "Paid"), ("overdue", "Overdue"), ("returned", "Returned"), ("cancelled", "Cancelled")]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="invoices")
     order = models.ForeignKey(SalesOrder, null=True, blank=True, on_delete=models.SET_NULL, related_name="invoices")
     delivery_note = models.OneToOneField("delivery.DeliveryNote", null=True, blank=True, on_delete=models.SET_NULL, related_name="invoice")
@@ -159,6 +160,9 @@ class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
     force_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     total = models.DecimalField(**MONEY)
     paid_amount = models.DecimalField(**MONEY)
+    # the part of paid_amount that came from returns (credit notes), not money: paid_amount stays the settled
+    # total so every balance (total - paid) keeps working; cash_paid = paid_amount - credited_amount
+    credited_amount = models.DecimalField(**MONEY)
     status = models.CharField(max_length=20, choices=STATUS, default="draft", db_index=True)
     journal = models.ForeignKey("accounting.JournalEntry", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     cost_centre = models.ForeignKey("accounting.CostCentre", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -174,6 +178,11 @@ class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
     @property
     def balance(self):
         return self.total - self.paid_amount
+
+    @property
+    def cash_paid(self):
+        """Money actually received — the settled amount less what returns settled."""
+        return self.paid_amount - self.credited_amount
 
 
 class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
@@ -215,6 +224,11 @@ class CreditNote(OtherTaxTotalsMixin, DocumentModel):
     status = models.CharField(max_length=10, choices=STATUS, default="draft", db_index=True)
     journal = models.ForeignKey("accounting.JournalEntry", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     applied_to_invoice = models.BooleanField(default=True)
+    # the invoice's discount on the returned goods, mirrored so the return credits what was actually charged
+    discount = models.DecimalField(**MONEY)
+    # where the credit went: onto invoices (its own first, then others) or refunded; the rest is customer credit
+    applied_amount = models.DecimalField(**MONEY)
+    refunded_amount = models.DecimalField(**MONEY)
 
     class Meta:
         ordering = ["-date", "-created_at"]
@@ -222,6 +236,13 @@ class CreditNote(OtherTaxTotalsMixin, DocumentModel):
 
     def __str__(self):
         return self.number
+
+    @property
+    def available_credit(self):
+        """What is left to use or refund — a posted return's credit not yet applied to an invoice or paid out."""
+        if self.status != "posted":
+            return self.total * 0
+        return max(self.total - self.applied_amount - self.refunded_amount, self.total * 0)
 
 
 class CreditNoteLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
@@ -235,7 +256,23 @@ class CreditNoteLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     reason = models.CharField(max_length=120, blank=True)
     restock = models.BooleanField(default=True)
     condition = models.CharField(max_length=10, choices=CONDITIONS, default="good")
+    discount_amount = models.DecimalField(**MONEY)
+    # the goods came back without this return — refused at the door (the trip brought them home) or the order was
+    # cancelled: posting moves no stock (it is already there) but still puts the cost back into Stock in Hand
+    stock_back = models.BooleanField(default=False)
     line_total = models.DecimalField(**MONEY)
+
+
+class CreditNoteApplication(TenantModel):
+    """A return's credit settling an invoice — its own invoice when posted, any open one of the customer's later."""
+
+    credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name="applications")
+    invoice = models.ForeignKey(SalesInvoice, on_delete=models.CASCADE, related_name="credit_applications")
+    amount = models.DecimalField(**MONEY)
+    date = models.DateField(default=timezone.localdate)
+
+    class Meta:
+        ordering = ["date", "created_at"]
 
 
 class RepCollection(DocumentModel):

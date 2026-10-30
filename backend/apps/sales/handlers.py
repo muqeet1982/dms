@@ -75,6 +75,15 @@ def _delivery_failed(delivery_note, reason="", **_):
     u = _rep_user(order)
     if u:
         notify(u, "delivery.failed", f"Delivery failed: {order.number}", reason or delivery_note.remarks or "", {"order_id": str(order.id), "screen": "order"})
+    # the customer refused goods already invoiced: the office reverses the sale with Customer rejected — not a
+    # return, which would count the goods (coming home with the trip) in stock twice (owner, 30 Oct 2026)
+    inv = getattr(delivery_note, "invoice", None)
+    if inv is not None and inv.status not in ("cancelled", "draft"):
+        from apps.core.notifications import notify_permission
+
+        notify_permission("sales.delete_invoice", "invoice.customer_refused", f"{inv.number}: the customer refused the goods",
+                          f"{order.customer.name} refused {delivery_note.number}. Open the invoice and press Customer rejected — not a return.",
+                          {"invoice_id": str(inv.id)})
 
 
 @on("delivery.completed")

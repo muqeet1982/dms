@@ -61,6 +61,13 @@ def api(tenant):
     return c
 
 
+def deliver_invoice(api, invoice_id):
+    """Record an invoice's goods delivered: a return needs them at the customer, not still on the way (30 Oct 2026)."""
+    dn = api.get(f"/api/v1/invoices/{invoice_id}").data["delivery_note"]
+    r = api.post(f"/api/v1/delivery-notes/{dn}/deliver", {"receiver_name": "Shop"}, format="json")
+    assert r.status_code == 200, r.content
+
+
 def seed_basic(tenant):
     """Warehouse, supplier, product with stock, customer — inside tenant context."""
     from apps.catalog.models import Barcode, UnitOfMeasure

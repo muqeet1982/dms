@@ -16,6 +16,7 @@ import { ListPage } from "@/components/ui/ListPage";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { DocTabs } from "@/components/documents/DocTabs";
 import { EditLine, LinesEditor } from "@/components/documents/LinesEditor";
+import { CreditChoice, CreditOptions, creditBody, emptyCreditChoice } from "@/components/documents/CreditOptions";
 
 export function InvoicesPage() {
   const stats = useQuery({ queryKey: ["invoice-stats"], queryFn: () => api.get("/api/v1/invoices/stats") });
@@ -26,7 +27,8 @@ export function InvoicesPage() {
     { key: "order_number", header: "Order / DN", render: (i) => <>{i.order_number}<div className="text-muted fs-11">{i.delivery_note_number}</div></> },
     { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
     { key: "total", header: "Total", num: true, sortKey: "total", render: (i) => money(i.total) },
-    { key: "paid_amount", header: "Paid", num: true, render: (i) => money(i.paid_amount) },
+    // a return is not a payment (owner, 30 Oct 2026): Paid is money received; what returns settled shows under it
+    { key: "paid_amount", header: "Paid", num: true, render: (i) => <>{money(i.cash_paid ?? i.paid_amount)}{Number(i.credited_amount) > 0 && <div className="fs-11 text-warning">returned {money(i.credited_amount)}</div>}</> },
     { key: "balance", header: "Balance", num: true, render: (i) => <span className={Number(i.balance) > 0 ? "fw-semibold text-danger" : "text-success"}>{money(i.balance)}</span> },
     { key: "gst_pct", header: "FBR", render: (i) => i.gst_pct ? <>{i.gst_pct}{i.fbr?.status === "submitted" && <div className="fs-11 text-success">filed</div>}</> : <span className="text-muted">—</span> },
     { key: "status", header: "Status", render: (i) => <StatusBadge status={i.status} /> },
@@ -49,6 +51,7 @@ export function InvoiceDetailPage() {
   const { run, busy } = useAction("/api/v1/invoices", id);
   const [cancel, setCancel] = useState(false);
   const [reopen, setReopen] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
@@ -60,6 +63,8 @@ export function InvoiceDetailPage() {
   const inv = q.data;
   if (!inv) return null;
   const open = ["posted", "partially_paid", "overdue"].includes(inv.status);
+  // credit brought from another return goes back to it, so only money received or a return of these goods stops a reversal
+  const reversible = Number(inv.cash_paid ?? inv.paid_amount) === 0 && !Number(inv.returns_count);
   return (
     <>
       <PageHeader title={inv.number} badge={<><StatusBadge status={inv.status} />{inv.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{inv.delivery_status}</span>}</>} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
@@ -71,9 +76,10 @@ export function InvoiceDetailPage() {
             </select>
           </div>}
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
-          {["posted", "partially_paid", "overdue", "paid"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
-          {inv.status !== "cancelled" && Number(inv.paid_amount) === 0 && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
-          {["posted", "overdue"].includes(inv.status) && Number(inv.paid_amount) === 0 && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
+          {["posted", "partially_paid", "overdue", "paid", "returned"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
+          {["draft", "posted", "overdue", "returned"].includes(inv.status) && reversible && inv.fbr?.status !== "submitted" && page.delete && <button className="btn btn-outline-danger" onClick={() => setRejecting(true)}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}
+          {inv.status !== "cancelled" && reversible && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
+          {["posted", "overdue", "returned"].includes(inv.status) && reversible && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
           {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): ONE atomic call
               reopens it and flips the switch — a refusal rolls the reopen back too, so nothing strands.
               Both rights are shown-for because the server demands edit_posted (reopen) + discount (tax) */}
@@ -111,10 +117,13 @@ export function InvoiceDetailPage() {
       </Alert>}
       <div className="row g-3 mb-3">
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #F26522" }}><div className="card-body py-3 text-center"><div className="fw-bold text-primary fs-18">{money(inv.total)}</div><div className="text-muted fs-12">Invoice total</div></div></div></div>
-        <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #03C95A" }}><div className="card-body py-3 text-center"><div className="fw-bold text-success fs-18">{money(inv.paid_amount)}</div><div className="text-muted fs-12">Paid</div></div></div></div>
+        <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #03C95A" }}><div className="card-body py-3 text-center"><div className="fw-bold text-success fs-18">{money(inv.cash_paid ?? inv.paid_amount)}</div><div className="text-muted fs-12">Paid{Number(inv.credited_amount) > 0 && <> · <span className="text-warning">returned {money(inv.credited_amount)}</span></>}</div></div></div></div>
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #E70D0D" }}><div className="card-body py-3 text-center"><div className="fw-bold text-danger fs-18">{money(inv.balance)}</div><div className="text-muted fs-12">{inv.due_date && inv.due_date !== inv.date ? <>Balance due {date(inv.due_date)}</> : "Balance due"}</div></div></div></div>
         <div className="col-sm-6 col-xl-3"><div className="card mb-0" style={{ borderTop: "3px solid #1B84FF" }}><div className="card-body py-3 text-center"><div className="fw-bold fs-16"><Link to={`/app/customers/${inv.customer}`}>{inv.customer_name}</Link></div><div className="text-muted fs-12">{inv.customer_code}</div></div></div></div>
       </div>
+      {inv.credit_applications?.length > 0 && <div className="card mb-3"><div className="card-body py-2 fs-13">
+        <i className="ti ti-arrow-back-up me-1 text-warning" />Settled by returns: {inv.credit_applications.map((a: any, k: number) => <span key={k} className="me-3"><Link to={`/app/sales/credit-notes/${a.credit_note}`}>{a.number}</Link> {money(a.amount)} <span className="text-muted">({date(a.date)})</span></span>)}
+      </div></div>}
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Order">{inv.order_number ? <Link to={`/app/sales/orders/${inv.order}`}>{inv.order_number}</Link> : "—"}</InfoItem><InfoItem label="Delivery note">{inv.delivery_note_number ? <Link to={`/app/delivery/notes/${inv.delivery_note}`}>{inv.delivery_note_number}</Link> : "—"}</InfoItem><InfoItem label="Load form / dispatch">{inv.picklist_number ? <Link to={`/app/delivery/pick-lists/${inv.picklist}`}>{inv.picklist_number}</Link> : "—"}{inv.trip_number ? <div className="fs-12"><Link to={`/app/delivery/trips/${inv.trip}`}>{inv.trip_number}</Link></div> : null}</InfoItem><InfoItem label="Rep">{inv.rep_name || "—"}</InfoItem><InfoItem label="Journal">{inv.journal_number ? <Link to={`/app/accounting/journals/${inv.journal}`}>{inv.journal_number}</Link> : "—"}</InfoItem>{inv.force_tax_type && <InfoItem label="Tax" col="col-md-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span></InfoItem>}</div>
         {(() => {
@@ -248,6 +257,9 @@ export function InvoiceDetailPage() {
         </div>}
       </Modal>
       <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); }} />
+      <ConfirmDialog open={rejecting} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
+        message={<>The sale of <strong>{inv.number}</strong> is reversed: the goods come back to stock once, its entries come off the books and its order closes as Rejected. No return and no payment are recorded.</>}
+        onClose={() => setRejecting(false)} onConfirm={async (r) => { await run("reject", { reason: r }, { success: "Sale reversed — customer rejected" }); setRejecting(false); }} />
       <ConfirmDialog open={cancel} title="Cancel invoice" withReason danger confirmText="Cancel invoice" onClose={() => setCancel(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancel(false); }} />
     </>
   );
@@ -372,12 +384,19 @@ export function CreditNoteDetailPage() {
   const { can } = usePerms();
   const q = useDoc("/api/v1/credit-notes", id);
   const { run, busy } = useAction("/api/v1/credit-notes", id);
+  const nav = useNavigate();
   if (q.isLoading) return <Spinner />;
   const cn = q.data;
   if (!cn) return null;
   return (
     <>
-      <PageHeader title={cn.number} badge={<StatusBadge status={cn.status} />} crumbs={[{ label: "Credit notes", to: "/app/sales/credit-notes" }, { label: cn.number }]} actions={cn.status === "draft" && pageRights("credit_notes").add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: "Credit note posted" })}><i className="ti ti-check me-1" />Post</button>} />
+      <PageHeader title={cn.number} badge={<StatusBadge status={cn.status} />} crumbs={[{ label: "Credit notes", to: "/app/sales/credit-notes" }, { label: cn.number }]} actions={cn.status === "draft" && <>
+        {pageRights("credit_notes").add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: "Credit note posted" })}><i className="ti ti-check me-1" />Post</button>}
+        {pageRights("credit_notes").delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={async () => {
+          if (!window.confirm(`Delete the draft ${cn.number}? It moved no stock and booked nothing.`)) return;
+          try { await api.delete(`/api/v1/credit-notes/${cn.id}`); toast.success("Draft deleted"); nav("/app/sales/credit-notes"); } catch (e: any) { toast.error(e.message); }
+        }}><i className="ti ti-trash me-1" />Delete draft</button>}
+      </>} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${cn.customer}`}>{cn.customer_name}</Link></InfoItem><InfoItem label="Invoice">{cn.invoice_number ? <Link to={`/app/sales/invoices/${cn.invoice}`}>{cn.invoice_number}</Link> : "—"}</InfoItem><InfoItem label="Date">{date(cn.date)}</InfoItem><InfoItem label="Reason">{cn.reason || "—"}</InfoItem></div>
         {(() => {
@@ -388,13 +407,50 @@ export function CreditNoteDetailPage() {
           const taxed = taxTotal > 0 || showOther || Number(cn.wht_total) > 0;
           const span = (taxed ? 8 : 6) + (showOther ? 1 : 0);
           return <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th>Restock</th><th>Condition</th><th>Reason</th>{taxed && <><th className="num">Taxable</th><th className="num">GST</th></>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{taxed ? "Line Total" : "Total"}</th></tr></thead>
-            <tbody>{cn.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td>{l.restock ? "yes" : "no"}</td><td>{l.condition}</td><td>{l.reason}</td>{taxed && <><td className="num">{money(Number(l.line_total) - t - otherOf(l))}</td><td className="num">{t ? <>{money(t)}{Number(l.tax1_rate) > 0 && <div className="text-muted fs-11">{Number(l.tax1_rate)}%</div>}</> : "—"}</td></>}{showOther && <td className="num">{otherOf(l) ? money(otherOf(l)) : "—"}</td>}<td className="num">{money(l.line_total)}</td></tr>; })}</tbody>
-            <tfoot>{taxed ? <TaxFooterRows span={span} sub={Number(cn.subtotal)} net={Number(cn.subtotal)} gst={taxTotal} gstPct={gstPct(cn.lines.map((l: any) => l.tax1_rate))} fed={Number(cn.fed_total)} extra={Number(cn.extra_tax_total)}
-                further={Number(cn.further_tax_total)} wht={Number(cn.wht_total)} payableLabel="Total Credit" /> : <PlainFooterRows span={span} sub={Number(cn.subtotal)} payable={Number(cn.total)} payableLabel="Total Credit" hideZeroDiscount />}</tfoot></table>;
+            <tbody>{cn.lines.map((l: any) => { const t = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td className="num">{qty(l.qty)}</td><td className="num">{money(l.unit_price)}</td><td>{l.stock_back ? <span className="text-muted" title="Refused at the door or the order was cancelled — the goods were already back">already back</span> : l.restock ? "yes" : "no"}</td><td>{l.condition}</td><td>{l.reason}</td>{taxed && <><td className="num">{money(Number(l.line_total) - t - otherOf(l))}</td><td className="num">{t ? <>{money(t)}{Number(l.tax1_rate) > 0 && <div className="text-muted fs-11">{Number(l.tax1_rate)}%</div>}</> : "—"}</td></>}{showOther && <td className="num">{otherOf(l) ? money(otherOf(l)) : "—"}</td>}<td className="num">{money(l.line_total)}</td></tr>; })}</tbody>
+            <tfoot>{taxed ? <TaxFooterRows span={span} sub={Number(cn.subtotal)} discount={Number(cn.discount) || 0} net={Number(cn.subtotal) - (Number(cn.discount) || 0)} gst={taxTotal} gstPct={gstPct(cn.lines.map((l: any) => l.tax1_rate))} fed={Number(cn.fed_total)} extra={Number(cn.extra_tax_total)}
+                further={Number(cn.further_tax_total)} wht={Number(cn.wht_total)} payableLabel="Total Credit" /> : <PlainFooterRows span={span} sub={Number(cn.subtotal)} discount={Number(cn.discount) || 0} payable={Number(cn.total)} payableLabel="Total Credit" hideZeroDiscount />}</tfoot></table>;
         })()}
       </div></div>
+      {cn.status === "posted" && <CustomerCreditCard cn={cn} onDone={() => q.refetch()} />}
       <DocTabs model="CreditNote" id={cn.id} showMovements />
     </>
+  );
+}
+
+/** Where a posted return's credit went — its invoice, other invoices, refunds — and what is left to use or refund. */
+function CustomerCreditCard({ cn, onDone }: { cn: any; onDone: () => void }) {
+  const [choice, setChoice] = useState<CreditChoice>(emptyCreditChoice("refund"));
+  const [busy, setBusy] = useState(false);
+  const left = Number(cn.available_credit) || 0;
+  const may = pageRights("credit_notes").add;
+  const go = async () => {
+    const body: any = creditBody(choice);
+    if (body.choice === "keep") return;
+    setBusy(true);
+    try {
+      if (body.choice === "refund") await api.post(`/api/v1/credit-notes/${cn.id}/refund`, body.refund);
+      else await api.post(`/api/v1/credit-notes/${cn.id}/apply`, { allocations: body.apply });
+      toast.success(body.choice === "refund" ? "Refund recorded" : "Credit used on the invoice");
+      setChoice(emptyCreditChoice("refund"));
+      onDone();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card mb-3"><div className="card-body">
+      <div className="row g-3 mb-2">
+        <InfoItem label="Credit">{money(cn.total)}</InfoItem>
+        <InfoItem label="Settled invoices">{money(cn.applied_amount)}{(cn.applications || []).map((a: any, i: number) => <div key={i} className="fs-12"><Link to={`/app/sales/invoices/${a.invoice}`}>{a.invoice_number}</Link> {money(a.amount)}</div>)}</InfoItem>
+        <InfoItem label="Refunded">{money(cn.refunded_amount)}{(cn.refunds || []).map((r: any) => <div key={r.id} className="fs-12"><Link to={`/app/accounting/payments/${r.id}`}>{r.number}</Link> {money(r.amount)} · {r.method.replace("_", " ")}</div>)}</InfoItem>
+        <InfoItem label="Customer credit left"><span className={left > 0 ? "fw-bold text-success" : ""}>{money(left)}</span>{left > 0 && <div className="fs-12 text-muted">used on their next invoice unless refunded or used now</div>}</InfoItem>
+      </div>
+      {left > 0 && may && <>
+        <CreditOptions customer={cn.customer} exclude={cn.invoice} value={choice} onChange={setChoice} keepLabel={null} available={left} />
+        <button className="btn btn-primary btn-sm mt-2" disabled={busy || (choice.choice === "apply" && !choice.apply.invoice)} onClick={go}>
+          <i className={`ti ${choice.choice === "refund" ? "ti-cash" : "ti-file-invoice"} me-1`} />{choice.choice === "refund" ? "Record the refund" : "Use the credit"}
+        </button>
+      </>}
+    </div></div>
   );
 }
 
@@ -405,6 +461,7 @@ export function CreditNoteFormPage() {
   const invoiceId = sp.get("invoice");
   const [form, setForm] = useState<any>({ customer: null, invoice: invoiceId, warehouse: "", date: new Date().toISOString().slice(0, 10), reason: "", applied_to_invoice: true, notes: "" });
   const [lines, setLines] = useState<(EditLine & { restock?: boolean; condition?: string; reason?: string })[]>([]);
+  const [credit, setCredit] = useState<CreditChoice>(emptyCreditChoice());
   // whichever way an invoice is chosen — the URL (from the invoice page) or the dropdown — its items load,
   // with their full quantities, ready to be trimmed, repriced or removed before issuing the credit note
   const inv = useDoc("/api/v1/invoices", form.invoice || undefined);
@@ -416,7 +473,16 @@ export function CreditNoteFormPage() {
   if (form.invoice && inv.data && inv.data.id === form.invoice && loadedFor !== form.invoice) {
     setLoadedFor(form.invoice);
     setForm((f: any) => ({ ...f, customer: inv.data.customer }));
-    setLines(inv.data.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.description, sku: l.variant_sku, qty: String(Number(l.qty)), unit_price: String(l.unit_price), batch: l.batch, restock: true, condition: "good", reason: "", extra: { fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } })));
+    // what the invoice charged per unit of each item, after its discount — a return credits exactly that (owner,
+    // 30 Oct 2026); free units count, as the server counts them, so the preview and the credit agree
+    const net: Record<string, { units: number; value: number }> = {};
+    for (const il of inv.data.lines) {
+      const n = net[il.variant] || (net[il.variant] = { units: 0, value: 0 });
+      n.units += (Number(il.qty) || 0) + (Number(il.free_qty) || 0);
+      n.value += (Number(il.qty) || 0) * (Number(il.unit_price) || 0) - (Number(il.discount_amount) || 0);
+    }
+    const unitNet = (v: string) => (net[v]?.units ? Math.round((net[v].value / net[v].units) * 10000) / 10000 : 0);
+    setLines(inv.data.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.description, sku: l.variant_sku, qty: String((Number(l.qty) || 0) + (Number(l.free_qty) || 0)), unit_price: String(unitNet(l.variant)), batch: l.batch, restock: true, condition: "good", reason: "", extra: { fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } })));
   }
 
   // a return against a tax invoice credits the tax the invoice CHARGED, per unit and per variant — mirrors
@@ -427,7 +493,7 @@ export function CreditNoteFormPage() {
   const perUnit: Record<string, Record<string, number>> = {};
   for (const il of (form.invoice && inv.data?.lines) || []) {
     const c = perUnit[il.variant] || (perUnit[il.variant] = { q: 0, t1: 0, t2: 0, fed: 0, extra: 0, further: 0, wht: 0 });
-    c.q += Number(il.qty) || 0;
+    c.q += (Number(il.qty) || 0) + (Number(il.free_qty) || 0);
     for (const k of KEYS) c[k] += Number(il[FIELD[k]]) || 0;
   }
   const creditTax = (l: EditLine, q: number, taxable: number): LineTax | null => {
@@ -445,7 +511,7 @@ export function CreditNoteFormPage() {
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
     if (!form.customer || !valid.length) return toast.error("Select a customer and at least one line with quantity");
     try {
-      const r = await api.post("/api/v1/credit-notes", { ...form, warehouse: form.warehouse || null, post, lines: valid.map((l) => ({ variant: l.variant, batch: l.batch || null, qty: l.qty, unit_price: l.unit_price, restock: l.restock ?? true, condition: l.condition || "good", reason: l.reason || "" })) }, true);
+      const r = await api.post("/api/v1/credit-notes", { ...form, warehouse: form.warehouse || null, post, settlement: post ? creditBody(credit) : undefined, lines: valid.map((l) => ({ variant: l.variant, batch: l.batch || null, qty: l.qty, unit_price: l.unit_price, restock: l.restock ?? true, condition: l.condition || "good", reason: l.reason || "" })) }, true);
       toast.success("Credit note created");
       nav(`/app/sales/credit-notes/${r.id}`);
     } catch (e: any) { setErr(e.message); toast.error(e.message); }
@@ -468,6 +534,10 @@ export function CreditNoteFormPage() {
         <LinesEditor lines={lines} onChange={setLines as any} showDiscount={false} chargeTax={invTaxed} lineTax={creditTax} payableLabel="Total Credit" discountless />
         {lines.length > 0 && <div className="table-responsive mt-2"><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th>Restock?</th><th>Condition</th><th>Line reason</th></tr></thead><tbody>{lines.map((l) => <tr key={l.key}><td>{l.variant_name || "—"}</td><td><input type="checkbox" className="form-check-input" checked={(l.condition || "good") === "good" ? (l.restock ?? true) : false} disabled={(l.condition || "good") !== "good"} title={(l.condition || "good") !== "good" ? "Broken or expired goods are written off, not put back in stock" : ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, restock: e.target.checked } : x)))} /></td><td><select className="form-select form-select-sm" value={l.condition || "good"} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, condition: e.target.value, restock: e.target.value === "good" } : x)))}><option value="good">good</option><option value="damaged">damaged</option><option value="expired">expired</option></select></td><td><input className="form-control form-control-sm" value={l.reason || ""} onChange={(e) => setLines(lines.map((x) => (x.key === l.key ? { ...x, reason: e.target.value } : x)))} /></td></tr>)}</tbody></table></div>}
       </div></div>
+      {form.customer && (!form.invoice || Number(inv.data?.paid_amount) > 0) && <div className="card mb-3"><div className="card-body">
+        <h6 className="fs-13 mb-2">Money the customer is owed after this return</h6>
+        <CreditOptions customer={form.customer} exclude={form.invoice} value={credit} onChange={setCredit} />
+      </div></div>}
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-outline-primary" onClick={() => submit(false)}>Save Draft</button><button className="btn btn-primary" onClick={() => submit(true)}>Issue Credit Note</button></div>
     </>
   );
