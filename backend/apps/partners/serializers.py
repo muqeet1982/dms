@@ -145,6 +145,7 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
     def update(self, instance, validated_data):
         rows = validated_data.pop("locations_write", None)
         old_pct = getattr(instance, "default_discount_pct", None)
+        old_adv = instance.advance_income_tax_rate
         obj = super().update(instance, validated_data)
         if rows is not None:
             self._save_locations(obj, rows)
@@ -158,6 +159,11 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
             # those invoices are only listed in the notification
             repost = bool(m and (m.is_owner or m.has_perm("sales.edit_posted_invoice")))
             OrderService.follow_customer_discount(obj, old_pct, obj.default_discount_pct, actor=getattr(request, "user", None), repost=repost)
+        # a new advance income tax rate reaches the orders and draft invoices not on the books yet (owner, 31 Oct 2026)
+        if obj.advance_income_tax_rate != old_adv:
+            from apps.sales.services import OrderService
+
+            OrderService.follow_customer_advance_tax(obj, actor=getattr(self.context.get("request"), "user", None))
         return obj
 
     def validate(self, attrs):

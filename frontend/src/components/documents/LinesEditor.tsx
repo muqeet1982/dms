@@ -29,7 +29,9 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
-export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false }: {
+export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false, advanceRate }: {
+  /** A sales document's customer advance income tax % (236G/236H) — the footer adds it on the Grand Total. */
+  advanceRate?: number | string | null;
   lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>; blockOutOfStock?: boolean;
   /** When given, a switch appears to show or hide the discount column — off until a deal actually needs it. */
   onToggleDiscount?: () => void; discountShown?: boolean;
@@ -185,8 +187,8 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           </tbody>
           {showPrice && lines.length > 0 && <tfoot>
             {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} net={total} gst={taxTotal} gstPct={gstPctOfLabels(lines.map((l) => taxOf(l)?.label))}
-                fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} payableLabel={payableLabel} />
-              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} payable={total} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
+                fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} advanceRate={advanceRate} payableLabel={payableLabel} />
+              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} advanceRate={advanceRate} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>
       </div>

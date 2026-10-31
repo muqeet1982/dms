@@ -28,6 +28,30 @@ def _base_qty(qty, packaging):
     return Decimal(qty) * (packaging.qty_in_base if packaging else Decimal("1"))
 
 
+def advance_income_tax(rate, grand_total):
+    """Advance income tax 236G/236H on the Grand Total (net + GST + FED + Extra + Further, before the WHT the buyer
+    withholds), to the paisa, half up — the customer's rate, on every invoice of theirs, taxed or not (owner, 31 Oct
+    2026). Returns (rate, amount); a customer with no rate pays none."""
+    rate = Decimal(str(rate or 0))
+    if rate <= 0 or grand_total <= 0:
+        return (rate if rate > 0 else Decimal("0")), Decimal("0")
+    return rate, (Decimal(grand_total) * rate / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
+
+
+def retotal_advance_tax(doc, rate):
+    """Charge `doc` (an order or invoice) the advance income tax at `rate` on its stored Grand Total — nothing else
+    is re-priced. Returns True when its figures moved."""
+    grand = (doc.subtotal - doc.discount - (getattr(doc, "scheme_discount", None) or Decimal("0")) + doc.tax1_total + doc.tax2_total
+             + doc.fed_total + doc.extra_tax_total + doc.further_tax_total)
+    new_rate, amount = advance_income_tax(rate, grand)
+    total = grand + amount - doc.wht_total
+    if (new_rate, amount, total) == (doc.advance_tax_rate, doc.advance_tax_total, doc.total):
+        return False
+    doc.advance_tax_rate, doc.advance_tax_total, doc.total = new_rate, amount, total
+    doc.save(update_fields=["advance_tax_rate", "advance_tax_total", "total", "updated_at"])
+    return True
+
+
 def gst_pct(rates):
     """"18%" — the GST % a footer prints beside GST (owner, 27 Oct 2026: "change GST to GST (N%)"), from the lines'
     own rates; a document mixing rates lists each ("17%, 18%"). Empty when no line carries a %."""
@@ -107,10 +131,12 @@ class OrderService:
             wht += line.wht_amount
         order.subtotal, order.discount, order.scheme_discount, order.tax1_total, order.tax2_total = subtotal, disc, sd, t1, t2
         order.fed_total, order.extra_tax_total, order.further_tax_total, order.wht_total = fed, extra, further, wht
-        order.total = subtotal - disc - sd + t1 + t2 + fed + extra + further - wht
+        grand = subtotal - disc - sd + t1 + t2 + fed + extra + further
+        order.advance_tax_rate, order.advance_tax_total = advance_income_tax(order.customer.advance_income_tax_rate, grand)
+        order.total = grand + order.advance_tax_total - wht
         order.price_flags = flags
         order.save(update_fields=["subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total",
-                                  "further_tax_total", "wht_total", "total", "price_flags", "updated_at"])
+                                  "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "price_flags", "updated_at"])
         return order
 
     @staticmethod
@@ -242,8 +268,10 @@ class OrderService:
                          "tax2_amount": str(line.tax2_amount), "fed_amount": str(line.fed_amount), "extra_tax_amount": str(line.extra_tax_amount),
                          "further_tax_amount": str(line.further_tax_amount), "wht_amount": str(line.wht_amount), "line_total": str(line.line_total)})
         t = totals
-        total = t["subtotal"] - t["discount"] - t["scheme_discount"] + t["tax1_total"] + t["tax2_total"] + t["fed_total"] + t["extra_tax_total"] + t["further_tax_total"] - t["wht_total"]
-        return {**{k: str(v) for k, v in t.items()}, "discount_pct": str(o.discount_pct if o.discount_pct is not None else default_pct),
+        grand = t["subtotal"] - t["discount"] - t["scheme_discount"] + t["tax1_total"] + t["tax2_total"] + t["fed_total"] + t["extra_tax_total"] + t["further_tax_total"]
+        t["advance_tax_rate"], t["advance_tax_total"] = advance_income_tax(customer.advance_income_tax_rate, grand)
+        total = grand + t["advance_tax_total"] - t["wht_total"]
+        return {**{k: str(v) for k, v in t.items()}, "grand_total": str(grand), "discount_pct": str(o.discount_pct if o.discount_pct is not None else default_pct),
                 "charge_tax": bool(o.charge_tax), "total": str(total), "lines": rows,
                 "gst_pct": gst_pct(r.get("tax1_rate") for r in rows)}   # "18%" — the footer's GST (N%), as the saved order
 
@@ -620,6 +648,28 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    def follow_customer_advance_tax(customer, actor=None):
+        """
+        A customer's new advance income tax rate (owner, 31 Oct 2026) reaches their documents that are not on the
+        books: orders not yet billed and draft invoices are re-totalled at it. A posted invoice keeps the rate it
+        was charged at — reopened and posted again, it is charged the new one.
+        """
+        rate, moved = customer.advance_income_tax_rate, []
+        in_flight = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
+        for o in SalesOrder.objects.filter(customer=customer, status__in=in_flight):
+            if o.invoices.exclude(status__in=["draft", "cancelled"]).exists():
+                continue   # billed: the posted invoice is what the customer owes
+            if retotal_advance_tax(o, rate):
+                moved.append(o.number)
+        for inv in SalesInvoice.objects.filter(customer=customer, status="draft"):
+            if retotal_advance_tax(inv, rate):
+                moved.append(inv.number)
+        if moved:
+            AuditService.log("customer.advance_tax_followed", customer, after={"rate": str(rate), "documents": moved}, actor=actor)
+        return moved
+
+    @staticmethod
+    @transaction.atomic
     def cancel(order, reason, by_rep=False, final_status="cancelled"):
         if by_rep and not OrderService.rep_can_cancel(order):
             raise DomainError("This order can no longer be cancelled from the app — ask the office.", code="cancel_window_closed", status_code=403)
@@ -806,7 +856,8 @@ class InvoiceService:
             tax2_type = tax2_type or t["tax2_type"]
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, disc, t1, t2
         inv.tax1_type, inv.tax2_type = tax1_type, tax2_type
-        inv.total = subtotal - disc + t1 + t2
+        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(customer.advance_income_tax_rate, subtotal - disc + t1 + t2)
+        inv.total = subtotal - disc + t1 + t2 + inv.advance_tax_total
         # the co-funded discount % comes from the order (which seeded it from the customer, changeable there);
         # it drives the manufacturer claim on posting
         inv.discount_pct = OrderService.effective_discount_pct(dn.order) if dn.order_id else Decimal(str(customer.default_discount_pct or 0))
@@ -1168,9 +1219,12 @@ class InvoiceService:
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, discount, t1, t2
         inv.fed_total, inv.extra_tax_total, inv.further_tax_total, inv.wht_total = fed, extra, further, wht
         inv.tax1_type, inv.tax2_type = forced, None
-        inv.total = subtotal - discount + t1 + t2 + fed + extra + further - wht
+        grand = subtotal - discount + t1 + t2 + fed + extra + further
+        # a draft takes the customer's rate as it stands — reopened, it is charged again at today's, like its FBR rates
+        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(inv.customer.advance_income_tax_rate, grand)
+        inv.total = grand + inv.advance_tax_total - wht
         inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "fed_total",
-                                "extra_tax_total", "further_tax_total", "wht_total", "total", "updated_at"])
+                                "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "updated_at"])
         return inv
 
     @staticmethod
@@ -1305,9 +1359,11 @@ class InvoiceService:
             l.other_label = " · ".join(parts)
         gst = (doc.tax1_total or Decimal("0")) + (doc.tax2_total or Decimal("0"))
         fed, extra, further, wht = doc.fed_total or 0, doc.extra_tax_total or 0, doc.further_tax_total or 0, doc.wht_total or 0
+        advance = getattr(doc, "advance_tax_total", None) or Decimal("0")
         return {"show_other": any(l.other_tax for l in lines), "fed_total": q4(fed), "extra_total": q4(extra),
                 "further_total": q4(further), "wht_total": q4(wht), "total_tax": q4(gst + fed + extra + further),
-                "grand_total": q4((doc.total or Decimal("0")) + wht)}
+                "grand_total": q4((doc.total or Decimal("0")) + wht - advance),
+                "advance_tax_total": q4(advance), "advance_tax_rate": getattr(doc, "advance_tax_rate", None) or Decimal("0")}
 
     @staticmethod
     def present_lines(inv, lines):
@@ -1400,6 +1456,8 @@ class InvoiceService:
             raise DomainError("Invoice already posted.")
         from apps.accounting.services import PostingService
 
+        # it goes to the books at the customer's advance income tax rate as it stands now, whatever the draft held
+        retotal_advance_tax(inv, inv.customer.advance_income_tax_rate)
         inv.journal = PostingService.post_sales_invoice(inv)
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])
@@ -1750,10 +1808,30 @@ class CreditNoteService:
         cn.subtotal, cn.discount, cn.tax1_total, cn.tax2_total, cn.tax1_type, cn.tax2_type = subtotal, disc, t1, t2, tax1_type, tax2_type
         cn.fed_total, cn.extra_tax_total = sums["fed_amount"], sums["extra_tax_amount"]
         cn.further_tax_total, cn.wht_total = sums["further_tax_amount"], sums["wht_amount"]
-        cn.total = subtotal - disc + t1 + t2 + cn.fed_total + cn.extra_tax_total + cn.further_tax_total - cn.wht_total
+        grand = subtotal - disc + t1 + t2 + cn.fed_total + cn.extra_tax_total + cn.further_tax_total
+        cn.advance_tax_rate, cn.advance_tax_total = CreditNoteService._advance_back(invoice, cn, grand, taken, sold)
+        cn.total = grand + cn.advance_tax_total - cn.wht_total
         cn.save()
         AuditService.log("created", cn, after={"customer": customer.name, "total": str(cn.total)})
         return cn
+
+    @staticmethod
+    def _advance_back(invoice, cn, grand, taken, sold):
+        """
+        The advance income tax the invoice charged on the returned goods, at the invoice's own rate (owner, 31 Oct
+        2026). The return that takes the last of the invoice takes exactly what is left of it, so its returns give
+        back to the paisa what was charged — never more, never less.
+        """
+        if invoice is None or not invoice.advance_tax_total:
+            return Decimal("0"), Decimal("0")
+        from django.db.models import Sum
+
+        given = (CreditNote.objects.filter(invoice=invoice).exclude(pk=cn.pk).exclude(status="cancelled")
+                 .aggregate(s=Sum("advance_tax_total"))["s"] or Decimal("0"))
+        left = max(invoice.advance_tax_total - given, Decimal("0"))
+        last = all(taken.get(vid, {}).get("units", Decimal("0")) >= c["units"] for vid, c in sold.items())
+        _rate, amount = advance_income_tax(invoice.advance_tax_rate, grand)
+        return invoice.advance_tax_rate, (left if last else min(amount, left))
 
     @staticmethod
     def _invoice_can_take_returns(invoice):

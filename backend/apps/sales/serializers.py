@@ -174,6 +174,8 @@ class SalesOrderSerializer(SalesOrderListSerializer):
     driver_name = serializers.CharField(source="trip.driver.name", read_only=True, default="")
     vehicle_reg = serializers.CharField(source="trip.vehicle.reg_no", read_only=True, default="")
     delivery_person = serializers.CharField(source="trip.delivery_rep.full_name", read_only=True, default="")
+    # the customer's advance income tax % as it stands — what billing this order will charge (owner, 31 Oct 2026)
+    customer_advance_tax_rate = serializers.DecimalField(source="customer.advance_income_tax_rate", max_digits=5, decimal_places=2, read_only=True)
     payment_terms = serializers.SerializerMethodField()
     invoices = serializers.SerializerMethodField()
     delivery_notes = serializers.SerializerMethodField()
@@ -183,8 +185,8 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         return f"{days} days credit" if days else "Cash on delivery"
 
     class Meta(SalesOrderListSerializer.Meta):
-        fields = SalesOrderListSerializer.Meta.fields + ["gst_pct", "payment_terms", "delivery_person", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
-        read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
+        fields = SalesOrderListSerializer.Meta.fields + ["gst_pct", "payment_terms", "delivery_person", "customer_advance_tax_rate", "gps", "gps_accuracy_m", "version", "price_list", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "rejection_reason", "confirmed_by", "confirmed_by_name", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "cost_centre", "apply_customer_discount", "discount_pct", "notes", "lines", "created_by_name", "customer_phone", "customer_address", "driver_name", "vehicle_reg", "invoices", "delivery_notes", "updated_at"]
+        read_only_fields = ["id", "number", "version", "status", "currency", "subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "trip", "rejection_reason", "confirmed_by", "confirmed_at", "dispatched_at", "delivered_at", "price_flags", "hold_reason", "gps", "gps_accuracy_m", "created_at", "updated_at"]
 
     def get_gps(self, obj):
         return {"lat": float(obj.gps_lat), "lng": float(obj.gps_lng)} if obj.gps_lat is not None else None
@@ -284,6 +286,8 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 "validated_at": f.validated_at, "submitted_at": f.submitted_at, "error": f.error_text}
 
     cash_paid = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    # what a draft will be charged when posted: the customer's advance income tax % as it stands (owner, 31 Oct 2026)
+    customer_advance_tax_rate = serializers.DecimalField(source="customer.advance_income_tax_rate", max_digits=5, decimal_places=2, read_only=True)
     credit_applications = serializers.SerializerMethodField()
 
     def get_credit_applications(self, obj):
@@ -350,7 +354,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "customer_advance_tax_rate", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 
@@ -392,9 +396,9 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CreditNote
-        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at",
+        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at",
                   "discount", "applied_amount", "refunded_amount", "available_credit", "applications", "refunds"]
-        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "total", "status", "journal", "created_at", "discount", "applied_amount", "refunded_amount"]
+        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "created_at", "discount", "applied_amount", "refunded_amount"]
 
 
 class RepCollectionSerializer(serializers.ModelSerializer):

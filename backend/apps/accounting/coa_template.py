@@ -42,6 +42,7 @@ COA = [
     ("2-01-002-0001", "Output Tax 1 (Sales Tax)", "liability", "2-01-002", "tax"),
     ("2-01-002-0002", "Output Tax 2 (Further / Other Tax)", "liability", "2-01-002", "tax"),
     ("2-01-002-0003", "Withholding Tax Payable", "liability", "2-01-002", "tax"),
+    ("2-01-002-0004", "Advance Income Tax Payable (236G/236H)", "liability", "2-01-002", "tax"),
     ("2-01-003", "Accrued Expenses & Other", "liability", "2-01"),
     ("2-01-003-0001", "Accrued Expenses", "liability", "2-01-003", ""),
     ("2-01-003-0002", "Advances from Customers", "liability", "2-01-003", "advance"),
@@ -117,6 +118,7 @@ POSTING_MAP = {
     "opening_equity": "3-01-001-0005", "retained_earnings": "3-01-001-0003", "current_year_profit": "3-01-001-0004", "bank_charges": "5-03-001-0006", "other_income": "4-02-001-0003", "bad_debts": "5-04-001-0002",
     "manufacturer_incentive": "4-02-001-0001",
     "fed_out": "2-01-002-0002", "extra_tax_out": "2-01-002-0002", "further_tax_out": "2-01-002-0002", "st_withheld": "1-01-005-0005",
+    "advance_tax_out": "2-01-002-0004",
 }
 
 SYSTEM_CODES = set(POSTING_MAP.values())

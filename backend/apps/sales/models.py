@@ -22,11 +22,17 @@ class OtherTaxLineMixin(models.Model):
 
 
 class OtherTaxTotalsMixin(models.Model):
-    """Header sums of OtherTaxLineMixin. total = net + GST + FED + Extra + Further − WHT: what the buyer pays."""
+    """Header sums of OtherTaxLineMixin, and the advance income tax on top: Grand Total = net + GST + FED + Extra +
+    Further; total = Grand Total + advance income tax − WHT, what the buyer pays."""
     fed_total = models.DecimalField(**MONEY)
     extra_tax_total = models.DecimalField(**MONEY)
     further_tax_total = models.DecimalField(**MONEY)
     wht_total = models.DecimalField(**MONEY)
+    # Advance income tax, section 236G/236H (owner, 31 Oct 2026: "advance income tax on grand total"): the customer's
+    # own rate on the Grand Total, added after it. Income tax the seller collects and deposits — never in the FBR
+    # sales-tax filing, which carries only the line figures. The rate is the one the document was charged at.
+    advance_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    advance_tax_total = models.DecimalField(**MONEY)
 
     class Meta:
         abstract = True

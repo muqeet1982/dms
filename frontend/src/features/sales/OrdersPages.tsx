@@ -168,8 +168,8 @@ export function OrderDetailPage() {
                     <tfoot>{taxed
                       ? <TaxFooterRows span={span} sub={Number(o.subtotal)} discount={Number(o.discount)} discountPct={o.discount_pct} scheme={Number(o.scheme_discount)}
                           net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} gstPct={gstPct(o.lines.map((l: any) => l.tax1_rate))} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
-                          further={Number(o.further_tax_total)} wht={Number(o.wht_total)} payableLabel={`Total Payable (${o.currency})`} />
-                      : <PlainFooterRows span={span} sub={Number(o.subtotal)} discount={Number(o.discount) + Number(o.scheme_discount)} discountPct={o.discount_pct} payable={Number(o.total)} payableLabel={`Total Payable (${o.currency})`} />}</tfoot>
+                          further={Number(o.further_tax_total)} wht={Number(o.wht_total)} advance={Number(o.advance_tax_total || 0)} advanceRate={o.advance_tax_rate} payableLabel={`Total Payable (${o.currency})`} />
+                      : <PlainFooterRows span={span} sub={Number(o.subtotal)} discount={Number(o.discount) + Number(o.scheme_discount)} discountPct={o.discount_pct} payable={Number(o.total)} advance={Number(o.advance_tax_total || 0)} advanceRate={o.advance_tax_rate} payableLabel={`Total Payable (${o.currency})`} />}</tfoot>
                   </table>;
                 })()}
               </div>
@@ -277,7 +277,7 @@ export function OrderFormPage() {
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
         {chargeTax && <div className="mb-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span><span className="text-muted fs-12 ms-2">this customer is charged sales tax — GST shows on each line as you add items</span></div>}
-        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock chargeTax={chargeTax} defaultDiscountPct={form.discount_pct !== "" && form.discount_pct != null ? form.discount_pct : cust.data?.default_discount_pct || 0} />
+        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} advanceRate={cust.data?.advance_income_tax_rate} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock chargeTax={chargeTax} defaultDiscountPct={form.discount_pct !== "" && form.discount_pct != null ? form.discount_pct : cust.data?.default_discount_pct || 0} />
         {/* the tax-invoice choice lives on the CUSTOMER (owner, 26 Oct 2026) — the order inherits it */}
         <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
           <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />

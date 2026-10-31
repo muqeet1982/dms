@@ -233,6 +233,21 @@ def tax_summary(date_from=None, date_to=None, **_):
         o = (output["c"] or Z) - (output["d"] or Z)
         i = (inp["d"] or Z) - (inp["c"] or Z)
         rows.append({"tax_type_id": str(tt.id), "code": tt.code, "name": tt.name, "kind": tt.kind, "output_tax": str(o), "input_tax": str(i), "net_payable": str(o - i)})
+    # advance income tax 236G/236H collected on invoices (owner, 31 Oct 2026): its own account, no tax type
+    from .models import PostingRule
+
+    rule = PostingRule.objects.filter(role="advance_tax_out", document_type="*").select_related("account").first()
+    if rule is not None:
+        qs = JournalLine.objects.filter(entry__status__in=GL_LIVE, account=rule.account)
+        if date_from:
+            qs = qs.filter(entry__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(entry__date__lte=date_to)
+        a = qs.aggregate(c=Sum("credit"), d=Sum("debit"))
+        o = (a["c"] or Z) - (a["d"] or Z)
+        if o or qs.exists():
+            rows.append({"tax_type_id": "", "code": rule.account.code, "name": rule.account.name, "kind": "income_tax",
+                         "output_tax": str(o), "input_tax": "0", "net_payable": str(o)})
     return {"columns": ["code", "name", "kind", "output_tax", "input_tax", "net_payable"], "rows": rows, "totals": {"net_payable": str(sum((Decimal(r["net_payable"]) for r in rows), Z))}}
 
 

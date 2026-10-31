@@ -219,8 +219,8 @@ export function RepOrderDetailPage() {
             {prices && <tfoot>{taxed
               ? <TaxFooterRows span={span} trail={1} sub={Number(o.subtotal)} discount={Number(o.discount)} discountPct={o.discount_pct} scheme={Number(o.scheme_discount)}
                   net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} gstPct={gstPct(o.lines.map((l: any) => l.tax1_rate))} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
-                  further={Number(o.further_tax_total)} wht={Number(o.wht_total)} />
-              : <PlainFooterRows span={span} trail={1} sub={Number(o.subtotal)} discount={Number(o.discount) + Number(o.scheme_discount)} discountPct={o.discount_pct} payable={Number(o.total)} />}</tfoot>}
+                  further={Number(o.further_tax_total)} wht={Number(o.wht_total)} advance={Number(o.advance_tax_total || 0)} advanceRate={o.advance_tax_rate} />
+              : <PlainFooterRows span={span} trail={1} sub={Number(o.subtotal)} discount={Number(o.discount) + Number(o.scheme_discount)} discountPct={o.discount_pct} payable={Number(o.total)} advance={Number(o.advance_tax_total || 0)} advanceRate={o.advance_tax_rate} />}</tfoot>}
           </table>;
         })()}</div></div>
       <div className="card"><div className="card-body"><ul className="status-timeline mb-0"><li><div className="fs-13 fw-medium">Submitted</div><div className="fs-12 text-muted">{datetime(o.created_at)}</div></li>{o.confirmed_at && <li><div className="fs-13 fw-medium">Confirmed</div><div className="fs-12 text-muted">{datetime(o.confirmed_at)}</div></li>}{o.dispatched_at && <li><div className="fs-13 fw-medium">Dispatched</div><div className="fs-12 text-muted">{datetime(o.dispatched_at)}</div></li>}{o.delivered_at && <li><div className="fs-13 fw-medium">Delivered</div><div className="fs-12 text-muted">{datetime(o.delivered_at)}</div></li>}{o.invoices?.map((i: any) => <li key={i.id}><div className="fs-13 fw-medium">Invoice {i.number}</div><div className="fs-12 text-muted">{money(i.total)} · {i.status}</div></li>)}</ul></div></div>

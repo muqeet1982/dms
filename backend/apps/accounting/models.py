@@ -337,6 +337,8 @@ class PostingRule(TenantModel):
         # Other Tax) and Withholding Tax Receivable — see PostingService.post_sales_invoice
         ("fed_out", "FED payable"), ("extra_tax_out", "Extra tax payable"), ("further_tax_out", "Further tax payable"),
         ("st_withheld", "Sales tax withheld by customers"),
+        # income tax collected from the buyer on the invoice and deposited by the seller (owner, 31 Oct 2026)
+        ("advance_tax_out", "Advance income tax payable (236G/236H)"),
     ]
     role = models.CharField(max_length=30, choices=ROLES)
     document_type = models.CharField(max_length=30, default="*")

@@ -128,6 +128,7 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
   {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}
   <tr><td class="l">Total Tax</td><td class="r">{{ total_tax|num }}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ grand_total|num }}</td></tr>
+  {% if o.advance_tax_total %}<tr><td class="l">Advance Income Tax ({{ o.advance_tax_rate|qty }}%)</td><td class="r">{{ o.advance_tax_total|num }}</td></tr>{% endif %}
   {% if wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">−{{ wht_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% else %}
@@ -135,6 +136,7 @@ Total Payable — the same footing as the tax invoice that will bill it, so the 
   <tr><td class="l">Sub Total</td><td class="r">{{ o.subtotal|num }}</td></tr>
   <tr><td class="l">Total Discount{% if o.discount_pct %} ({{ o.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">{% if total_discount %}−{{ total_discount|num }}{% else %}0.00{% endif %}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ taxable_total|num }}</td></tr>
+  {% if o.advance_tax_total %}<tr><td class="l">Advance Income Tax ({{ o.advance_tax_rate|qty }}%)</td><td class="r">{{ o.advance_tax_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ o.total|num }}</td></tr>
   {% endif %}
 </table>

@@ -266,6 +266,10 @@ class PostingService:
             amt = getattr(inv, field, 0) or 0
             if amt:
                 lines.append(Line(account_or(role, fallback, "sales_invoice"), credit=amt, description=f"{label} {inv.number}"))
+        # advance income tax 236G/236H: collected from the customer with the invoice, owed to FBR (owner, 31 Oct 2026)
+        if getattr(inv, "advance_tax_total", 0):
+            lines.append(Line(account_for("advance_tax_out", "sales_invoice"), credit=inv.advance_tax_total,
+                              description=f"Advance income tax {inv.advance_tax_rate.normalize():f}% (236G/236H) {inv.number}"))
         # the customer owes inv.total, which is already net of the sales tax they withhold at source
         if getattr(inv, "wht_total", 0):
             lines.append(Line(account_or("st_withheld", "withholding_receivable", "sales_invoice"), debit=inv.wht_total,
@@ -302,6 +306,9 @@ class PostingService:
             amt = getattr(cn, field, 0) or 0
             if amt:
                 lines.append(Line(account_or(role, fallback, "credit_note"), debit=amt, description=f"{label} reversal {cn.number}"))
+        if getattr(cn, "advance_tax_total", 0):
+            lines.append(Line(account_for("advance_tax_out", "credit_note"), debit=cn.advance_tax_total,
+                              description=f"Advance income tax reversed (236G/236H) {cn.number}"))
         if getattr(cn, "wht_total", 0):
             lines.append(Line(account_or("st_withheld", "withholding_receivable", "credit_note"), credit=cn.wht_total,
                               description=f"Sales tax withheld at source reversed — {cn.number}"))

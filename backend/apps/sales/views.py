@@ -40,10 +40,14 @@ def with_location_check(qs):
     return qs.annotate(loc_verdict=Subquery(ev.values("verdict")[:1]), loc_distance=Subquery(ev.values("distance_m")[:1]))
 
 
+# advance income tax 236G/236H in every sales export (owner, 31 Oct 2026)
+ADVANCE_LABELS = {"advance_tax_rate": "Advance Tax %", "advance_tax_total": "Advance Income Tax"}
+
+
 class SalesOrderViewSet(DocumentViewSet):
     export_fields = ["number", "order_date", "customer_code", "customer_name", "rep_name", "warehouse_name",
-                     "status", "lines_count", "subtotal", "discount", "gst_pct", "tax1_total", "total", "requested_delivery_date", "external_ref"]
-    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
+                     "status", "lines_count", "subtotal", "discount", "gst_pct", "tax1_total", "advance_tax_rate", "advance_tax_total", "total", "requested_delivery_date", "external_ref"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST", **ADVANCE_LABELS}   # owner, 27 Oct 2026: "GST (N%) … excel"
     perm_map = page_perms(
         "sales_orders",
         {
@@ -309,8 +313,8 @@ class SalesOrderViewSet(DocumentViewSet):
 
 class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
     export_fields = ["number", "date", "due_date", "customer_code", "customer_name", "order_number", "rep_name",
-                     "subtotal", "discount", "gst_pct", "tax1_total", "tax2_total", "total", "paid_amount", "balance", "status"]
-    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
+                     "subtotal", "discount", "gst_pct", "tax1_total", "tax2_total", "advance_tax_rate", "advance_tax_total", "total", "paid_amount", "balance", "status"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST", **ADVANCE_LABELS}   # owner, 27 Oct 2026: "GST (N%) … excel"
     """
     Invoices are read, printed and corrected in the narrow sense — see `SalesInvoiceEditSerializer` for why the
     amounts are not among the things a PATCH may change.
@@ -537,8 +541,8 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
 
 class CreditNoteViewSet(DocumentViewSet):
-    export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "gst_pct", "tax1_total", "total", "status"]
-    export_labels = {"gst_pct": "GST %", "tax1_total": "GST"}   # owner, 27 Oct 2026: "GST (N%) … excel"
+    export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "gst_pct", "tax1_total", "advance_tax_rate", "advance_tax_total", "total", "status"]
+    export_labels = {"gst_pct": "GST %", "tax1_total": "GST", **ADVANCE_LABELS}   # owner, 27 Oct 2026: "GST (N%) … excel"
     serializer_class = CreditNoteSerializer
     perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note", "apply": "sales.add_credit_note", "refund": "sales.add_credit_note"})
     filterset_fields = ["status", "customer", "invoice"]

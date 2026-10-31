@@ -113,9 +113,9 @@ The HS code rides under the item name, where the classification belongs.
 {% block totals %}
 {% comment %}
 Tax invoice, the owner's sample footer (26 Oct 2026): Sub Total − Discount = Net Total; GST, FED, Extra Tax and
-Further Tax add up to Total Tax; Net Total + Total Tax = Grand Total; less the sales tax the buyer withholds
+Further Tax add up to Total Tax; Net Total + Total Tax = Grand Total; + the advance income tax on it (236G/236H, owner 31 Oct 2026); less the sales tax the buyer withholds
 (WHT) = Total Payable, which is what is owed and what FBR is filed. Plain invoice: each Amount already
-carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount = Grand Total = Total Payable.
+carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount = Grand Total, + advance income tax = Total Payable.
 {% endcomment %}
 <table class="totals">
   {% if tax_on %}
@@ -128,12 +128,14 @@ carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount
   {% if further_total %}<tr><td class="l">Further Tax</td><td class="r">{{ further_total|num }}</td></tr>{% endif %}
   <tr><td class="l">Total Tax</td><td class="r">{{ total_tax|num }}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ grand_total|num }}</td></tr>
+  {% if inv.advance_tax_total %}<tr><td class="l">Advance Income Tax ({{ inv.advance_tax_rate|qty }}%)</td><td class="r">{{ inv.advance_tax_total|num }}</td></tr>{% endif %}
   {% if wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">&minus;{{ wht_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ inv.total|num }}</td></tr>
   {% else %}
   <tr><td class="l">Sub Total</td><td class="r">{{ gross_total|num }}</td></tr>
   <tr><td class="l">Total Discount{% if inv.discount_pct %} ({{ inv.discount_pct|floatformat:"-2" }}%){% endif %}</td><td class="r">{% if inv.discount %}&minus;{{ inv.discount|num }}{% else %}0.00{% endif %}</td></tr>
   <tr><td class="l">Grand Total</td><td class="r">{{ taxable_total|num }}</td></tr>
+  {% if inv.advance_tax_total %}<tr><td class="l">Advance Income Tax ({{ inv.advance_tax_rate|qty }}%)</td><td class="r">{{ inv.advance_tax_total|num }}</td></tr>{% endif %}
   <tr class="sum"><td>Total Payable</td><td class="r">{{ inv.total|num }}</td></tr>
   {% endif %}
   {% if inv.paid_amount %}<tr><td class="l">Paid</td><td class="r">{{ inv.paid_amount|num }}</td></tr>{% endif %}

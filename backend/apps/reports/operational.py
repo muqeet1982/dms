@@ -675,7 +675,7 @@ def sales_tax_register(date_from=None, date_to=None, **_):
                      "registration": i.customer.fbr_registration_type or "",
                      "taxable_value": str(i.subtotal - i.discount), "sales_tax": str(i.tax1_total),
                      "fed": str(i.fed_total), "extra_tax": str(i.extra_tax_total), "further_tax": str(i.further_tax_total),
-                     "wht": str(i.wht_total), "total": str(i.total),
+                     "wht": str(i.wht_total), "advance_tax": str(i.advance_tax_total), "total": str(i.total),
                      "fbr_status": (f.status if f is not None else "") or "not filed",
                      "fbr_number": (f.fbr_invoice_number if f is not None else "") or ""})
     cn_qs = _window(CreditNote.objects.filter(Q(tax1_total__gt=0) | Q(fed_total__gt=0) | Q(extra_tax_total__gt=0)
@@ -687,13 +687,43 @@ def sales_tax_register(date_from=None, date_to=None, **_):
                      "registration": c.customer.fbr_registration_type or "",
                      "taxable_value": str(-(c.subtotal - c.discount)), "sales_tax": str(-c.tax1_total),
                      "fed": str(-c.fed_total), "extra_tax": str(-c.extra_tax_total), "further_tax": str(-c.further_tax_total),
-                     "wht": str(-c.wht_total), "total": str(-c.total),
+                     "wht": str(-c.wht_total), "advance_tax": str(-c.advance_tax_total), "total": str(-c.total),
                      "fbr_status": f"against {c.invoice.number}" if c.invoice_id else "standalone", "fbr_number": ""})
     rows.sort(key=lambda r: (str(r["date"]), r["number"]))
-    money = ("taxable_value", "sales_tax", "fed", "extra_tax", "further_tax", "wht", "total")
+    money = ("taxable_value", "sales_tax", "fed", "extra_tax", "further_tax", "wht", "advance_tax", "total")
     totals = {k: str(sum((Decimal(r[k]) for r in rows), Z)) for k in money}
-    # FED / Extra / Further / WHT columns appear once any document in the period carries them (owner 26 Oct
-    # 2026) — total is net of WHT, the amount the buyers owe
-    others = [k for k in ("fed", "extra_tax", "further_tax", "wht") if any(Decimal(r[k]) for r in rows)]
+    # FED / Extra / Further / WHT / advance income tax columns appear once any document in the period carries them
+    # (owner 26 / 31 Oct 2026) — total is what the buyers owe: with the advance tax, net of WHT
+    others = [k for k in ("fed", "extra_tax", "further_tax", "wht", "advance_tax") if any(Decimal(r[k]) for r in rows)]
     return {"columns": ["date", "doc", "number", "customer", "ntn_cnic", "registration", "taxable_value",
                         "sales_tax", *others, "total", "fbr_status", "fbr_number"], "rows": rows, "totals": totals}
+
+
+def advance_tax_register(date_from=None, date_to=None, **_):
+    """
+    Advance income tax collected, section 236G/236H (owner, 31 Oct 2026) — the working paper for the withholding
+    statement and the deposit: every posted invoice that charged it, on its Grand Total at the customer's rate,
+    and every return that gave some back (negative), with the buyer's NTN/CNIC. Taxed and untaxed invoices alike.
+    """
+    from apps.sales.models import CreditNote, SalesInvoice
+
+    rows = []
+    inv_qs = _window(SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "paid", "overdue", "returned"], advance_tax_total__gt=0),
+                     "date", date_from, date_to).select_related("customer")
+    for i in inv_qs:
+        grand = i.total + i.wht_total - i.advance_tax_total
+        rows.append({"date": i.date, "doc": "Invoice", "number": i.number, "customer": i.customer.name,
+                     "ntn_cnic": (i.customer.ntn or i.customer.cnic or "").strip(), "registration": i.customer.fbr_registration_type or "",
+                     "grand_total": str(grand), "rate": str(i.advance_tax_rate), "advance_tax": str(i.advance_tax_total)})
+    cn_qs = _window(CreditNote.objects.filter(status="posted", advance_tax_total__gt=0), "date", date_from, date_to).select_related("customer", "invoice")
+    for c in cn_qs:
+        grand = c.total + c.wht_total - c.advance_tax_total
+        rows.append({"date": c.date, "doc": "Credit note", "number": c.number + (f" (against {c.invoice.number})" if c.invoice_id else ""),
+                     "customer": c.customer.name, "ntn_cnic": (c.customer.ntn or c.customer.cnic or "").strip(),
+                     "registration": c.customer.fbr_registration_type or "",
+                     "grand_total": str(-grand), "rate": str(c.advance_tax_rate), "advance_tax": str(-c.advance_tax_total)})
+    rows.sort(key=lambda r: (str(r["date"]), r["number"]))
+    totals = {k: str(sum((Decimal(r[k]) for r in rows), Z)) for k in ("grand_total", "advance_tax")}
+    return {"columns": ["date", "doc", "number", "customer", "ntn_cnic", "registration", "grand_total", "rate", "advance_tax"],
+            "column_labels": {"ntn_cnic": "NTN / CNIC", "grand_total": "Grand Total", "rate": "Rate %", "advance_tax": "Advance Income Tax"},
+            "rows": rows, "totals": totals}

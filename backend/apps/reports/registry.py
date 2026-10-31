@@ -90,6 +90,7 @@ REPORTS = {
     "cash_flow": {"title": "Cash flow (indirect)", "area": "financial", "params": DATE_RANGE, "query": fin.cash_flow, "perm": FIN},
     "cash_bank_book": {"title": "Cash & bank book", "area": "financial", "params": DATE_RANGE + [{"name": "account", "type": "account"}], "query": fin.cash_bank_book, "perm": FIN},
     "tax_summary": {"title": "Tax summary per tax type", "area": "financial", "params": DATE_RANGE, "query": fin.tax_summary, "perm": FIN},
+    "advance_tax_register": {"title": "Advance income tax register (236G / 236H)", "area": "financial", "params": DATE_RANGE, "query": ops.advance_tax_register, "perm": FIN},
     "sales_tax_register": {"title": "Sales tax register (FBR tax invoices & credit notes)", "area": "financial", "params": DATE_RANGE, "query": ops.sales_tax_register, "perm": FIN},
     "expense_by_category": {"title": "Expense by category", "area": "financial", "params": DATE_RANGE, "query": fin.expense_by_category, "perm": FIN},
     "inventory_reconciliation": {"title": "Inventory valuation vs GL", "area": "financial", "params": AS_OF, "query": fin.inventory_reconciliation, "perm": FIN},
