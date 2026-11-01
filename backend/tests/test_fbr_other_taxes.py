@@ -33,6 +33,9 @@ def world(api, tenant):
             fbr_rate_desc="18%", fbr_hs_code="7306.3090", fbr_sale_type="Goods at standard rate (default)",
             fbr_uom="Numbers, pieces, units", fbr_fed_rate=D("2"), fbr_extra_tax_rate=D("1"),
             fbr_further_tax_rate=D("3"), fbr_wht_rate=D("5"))
+    # these tests price tax ON TOP of the TP; tests/test_tp_includes_tax.py covers the TP that includes it
+    tenant.settings = {**(tenant.settings or {}), "tp_includes_tax": False}
+    tenant.save(update_fields=["settings"])
     return wh, cust, v, tt
 
 

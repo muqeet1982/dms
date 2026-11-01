@@ -205,6 +205,12 @@ class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     unit_price = models.DecimalField(**MONEY)
     unit_cost = models.DecimalField(**MONEY)
     discount_amount = models.DecimalField(**MONEY)
+    # the trade price as sold, tax INCLUDED on a tax invoice (owner, 1 Nov 2026: "tax is included in TP … TP divided
+    # by 125 multiplied by 100 is TP without tax" — at each item's own rate), and the discount on it. unit_price and
+    # discount_amount are then what is charged before tax, worked back from these. Empty on lines raised before:
+    # those add the tax on top, as they were posted.
+    tp = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    tp_discount = models.DecimalField(**MONEY)
     # the product's own standing discount carried from the order line — shown and adjustable on a draft
     product_discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
     line_total = models.DecimalField(**MONEY)

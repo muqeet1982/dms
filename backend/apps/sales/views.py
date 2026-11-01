@@ -392,6 +392,11 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
             qs = qs.filter(date__gte=p["date_from"])
         if p.get("date_to"):
             qs = qs.filter(date__lte=p["date_to"])
+        # Invoices and Tax invoices are separate pages (owner, 1 Nov 2026): tax=1 the tax invoices, tax=0 the rest
+        if p.get("tax") == "1":
+            qs = qs.filter(force_tax_type__isnull=False)
+        elif p.get("tax") == "0":
+            qs = qs.filter(force_tax_type__isnull=True)
         if p.get("open") == "1":
             qs = qs.filter(status__in=["posted", "partially_paid", "overdue"])
         if p.get("returnable") == "1":

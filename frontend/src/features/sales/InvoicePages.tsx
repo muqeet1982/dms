@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, fbrLineTax, fbrRateLabel, gstPct, gstPctOfLabels, LineTax, money, otherTaxLabel, qty } from "@/lib/format";
+import { lineWithinTp, date, datetime, fbrLineTax, fbrRateLabel, gstPct, gstPctOfLabels, LineTax, money, otherTaxLabel, qty } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
+import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
@@ -18,8 +19,9 @@ import { DocTabs } from "@/components/documents/DocTabs";
 import { EditLine, LinesEditor } from "@/components/documents/LinesEditor";
 import { CreditChoice, CreditOptions, creditBody, emptyCreditChoice } from "@/components/documents/CreditOptions";
 
-export function InvoicesPage() {
-  const stats = useQuery({ queryKey: ["invoice-stats"], queryFn: () => api.get("/api/v1/invoices/stats") });
+/** Invoices and Tax invoices are separate pages, each its own series — INV and STI (owner, 1 Nov 2026). */
+export function InvoicesPage({ tax = false }: { tax?: boolean }) {
+  const stats = useQuery({ queryKey: ["invoice-stats", tax], queryFn: () => api.get("/api/v1/invoices/stats", { tax: tax ? 1 : 0 }) });
   const cols: Column<any>[] = [
     { key: "number", header: "Invoice #", sortKey: "number", render: (i) => <span className="fw-semibold text-dark">{i.number}</span> },
     { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
@@ -34,7 +36,7 @@ export function InvoicesPage() {
     { key: "status", header: "Status", render: (i) => <StatusBadge status={i.status} /> },
   ];
   return (
-    <ListPage title="Sales invoices" page="invoices" endpoint="/api/v1/invoices" columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} createTo="/app/sales/invoices/new" createLabel="New invoice" defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
+    <ListPage key={tax ? "tax" : "plain"} title={tax ? "Tax invoices" : "Sales invoices"} page="invoices" endpoint="/api/v1/invoices" extraQuery={{ tax: tax ? 1 : 0 }} columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} createTo="/app/sales/invoices/new" createLabel="New invoice" defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
       filters={[{ name: "status", label: "Status", type: "select", options: ["draft", "posted", "partially_paid", "paid", "overdue", "cancelled"].map((s) => ({ value: s, label: s === "draft" ? "draft — to review & post" : s.replace(/_/g, " ") })) }, { name: "customer", label: "Customer", type: "entity", endpoint: "/api/v1/customers", mapOption: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, { name: "customer_type", label: "Customer type", type: "select", options: [["retailer", "Retailer"], ["salon", "Salon"], ["wholesaler", "Wholesaler"], ["lmt", "LMT"], ["other", "Other"]].map(([value, label]) => ({ value, label })) }, { name: "open", label: "Open only", type: "toggle" }, { name: "overdue", label: "Overdue only", type: "toggle" }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Open invoices" value={stats.data.open_count} icon="ti-file-invoice" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Outstanding" value={money(stats.data.outstanding, 0)} icon="ti-receipt" color="warning" /></div><div className="col-6 col-md-3"><StatCard label="Overdue" value={money(stats.data.overdue, 0)} icon="ti-alert-circle" color="danger" /></div><div className="col-6 col-md-3"><StatCard label="Sales this month" value={money(stats.data.month_sales, 0)} icon="ti-chart-line" color="success" /></div></div>} />
   );
@@ -67,7 +69,7 @@ export function InvoiceDetailPage() {
   const reversible = Number(inv.cash_paid ?? inv.paid_amount) === 0 && !Number(inv.returns_count);
   return (
     <>
-      <PageHeader title={inv.number} badge={<><StatusBadge status={inv.status} />{inv.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{inv.delivery_status}</span>}</>} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
+      <PageHeader title={inv.number} badge={<><StatusBadge status={inv.status} />{inv.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{inv.delivery_status}</span>}</>} crumbs={[inv.force_tax_type ? { label: "Tax invoices", to: "/app/sales/tax-invoices" } : { label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
         actions={<>
           {inv.status === "draft" && page.can("discount") && <div className="btn-group">
             <select className="form-select form-select-sm" style={{ width: 150 }} value={String(Number(inv.discount_pct || 0))} onChange={(e) => run("discount", { action: e.target.value === "0" ? "remove" : "apply", percent: e.target.value }, { success: "Discount updated" })} title="Co-funded total discount">
@@ -106,7 +108,7 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.discount_amount), unit_price: String(l.unit_price), discount_amount: String(l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", fbr_sale_type: l.fbr_sale_type || "", mrp: l.mrp, others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.tp != null ? l.tp_discount : l.discount_amount), within: (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false && l.tp != null, unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(l.tp != null ? l.tp_discount : l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", fbr_sale_type: l.fbr_sale_type || "", mrp: l.mrp, others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -214,6 +216,10 @@ export function InvoiceDetailPage() {
                   const base = l.isNew ? gross * Number(inv.discount_pct || 0) / 100 : Number(l.discount_amount || 0);
                   const disc = Math.max(0, base + gross * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
                   const taxable = gross - disc;
+                  if (taxed && l.within) {
+                    const w = lineWithinTp({ rate: l.fbr_rate, saleType: l.fbr_sale_type, mrp: l.mrp, overridePct: l.tax_pct, others: l.others, tp: Number(l.unit_price || 0), qty: Number(l.qty), discTp: disc });
+                    return { gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
+                  }
                   const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), saleType: l.fbr_sale_type, mrp: l.mrp, overridePct: l.tax_pct, others: l.others }) : null;
                   return { gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
                 });
@@ -275,7 +281,7 @@ export function InvoiceDetailPage() {
  * changed Discount % re-applied the way set_discount does (gross × (% + the product's own %)). With the tax
  * switch on, GST is the FBR engine's (fbrLineTax). PREVIEW only — the server computes the real invoice.
  */
-function billedLine(l: any, applyTax: boolean, newPct: number | null) {
+function billedLine(l: any, applyTax: boolean, newPct: number | null, within = false) {
   const r4 = (n: number) => Math.round(n * 10000) / 10000;
   const issued = Number(l.qty_dispatched) || Number(l.qty_delivered) || 0;
   const ordered = (Number(l.qty_ordered) || 0) + (Number(l.free_qty) || 0);
@@ -288,8 +294,13 @@ function billedLine(l: any, applyTax: boolean, newPct: number | null) {
     : r4(gross * (newPct + (Number(l.product_discount_pct) || 0)) / 100);
   const taxable = gross - disc;
   const others = { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate };
+  if (applyTax && within) {
+    // the TP includes the tax: the price before tax is worked back from it, as the saved invoice will (owner, 1 Nov 2026)
+    const w = lineWithinTp({ rate: l.product_fbr_rate, saleType: l.product_fbr_sale_type, mrp: l.product_mrp, others, tp: Number(l.unit_price) || 0, qty: paid, discTp: disc });
+    return { issued, unit: w.unit, gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, others, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
+  }
   const gst = applyTax ? fbrLineTax({ rate: l.product_fbr_rate, taxable, qty: paid, saleType: l.product_fbr_sale_type, mrp: l.product_mrp, others }) : null;
-  return { issued, gross, disc, taxable, gst, others, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
+  return { issued, unit: Number(l.unit_price) || 0, gross, disc, taxable, gst, others, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
 }
 
 export function InvoiceCreatePage() {
@@ -324,7 +335,8 @@ export function InvoiceCreatePage() {
                   // the invoice carries the order's % unless it is changed here, and only a change re-prices the discount
                   const orderPct = detail.data.discount_pct != null ? Number(detail.data.discount_pct) : null;
                   const newPct = discOverride !== "" && Number(discOverride) !== orderPct ? Number(discOverride) : null;
-                  const rows = (detail.data.lines || []).map((l: any) => ({ l, b: billedLine(l, applyTax, newPct) })).filter((r: any) => r.b.issued > 0);
+                  const within = (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false;
+                  const rows = (detail.data.lines || []).map((l: any) => ({ l, b: billedLine(l, applyTax, newPct, within) })).filter((r: any) => r.b.issued > 0);
                   const sum = (f: (b: any) => number) => rows.reduce((a: number, r: any) => a + f(r.b), 0);
                   const gross = sum((b) => b.gross), disc = sum((b) => b.disc), net = sum((b) => b.taxable), tax = sum((b) => b.gst?.amount || 0);
                   const showOther = applyTax && sum((b) => b.gst?.other || 0) > 0;
@@ -336,7 +348,7 @@ export function InvoiceCreatePage() {
                     <tbody>{rows.map(({ l, b }: any, i: number) => <tr key={l.id}>
                       <td>{i + 1}</td>
                       <td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{applyTax && l.hs_code ? ` · HS ${l.hs_code}` : ""}</div></td>
-                      <td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(b.issued)}</td><td className="num">{money(l.unit_price)}</td>
+                      <td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(b.issued)}</td><td className="num">{money(b.unit)}</td>
                       {applyTax && <><td className="num">{b.disc > 0.004 ? money(b.disc) : "—"}</td><td className="num">{money(b.taxable)}</td><td className="num">{b.gst?.label ? <>{money(b.gst.amount)}<div className="text-muted fs-11">{b.gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no GST; classify it on the product's FBR card (HS code → rate)">—</span>}</td></>}
                       {showOther && <td className="num">{b.gst?.other ? <>{money(b.gst.other)}<div className="text-muted fs-11">{otherTaxLabel(b.others)}</div></> : "—"}</td>}
                       <td className="num fw-medium">{money(applyTax ? b.total : b.gross)}</td>

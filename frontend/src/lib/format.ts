@@ -121,6 +121,47 @@ export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; sal
   return { label: fbrRateLabel(o.rate), amount: r2((base * pct) / 100 + o.qty * fixed), ...rest };
 }
 
+/**
+ * The TP that includes the tax (owner, 1 Nov 2026; Settings → Rules "TP includes tax"): on a tax document the price
+ * before tax is worked back from the TP at the item's own rates — the screen's mirror of InvoiceService.ex_tax_price
+ * and of how recompute keeps the line to the paisa, so a preview shows what the saved document will charge.
+ */
+type TaxArgs = { rate?: string; saleType?: string; mrp?: any; overridePct?: string | number | null; others?: OtherRates };
+export function exTaxUnit(tp: number, o: TaxArgs): number {
+  if (!(tp > 0)) return tp || 0;
+  const n = 1_000_000;
+  const inside = (unit: number) => { const t = fbrLineTax({ ...o, taxable: unit * n, qty: n }); return t ? (t.amount + t.other) / n : 0; };
+  let p = tp;
+  for (let i = 0; i < 8; i++) {
+    const slope = (inside(p + 0.01) - inside(p)) / 0.01;
+    const next = Math.max(p - (p + inside(p) - tp) / (1 + slope), 0);
+    if (Math.abs(next - p) < 1e-6) { p = next; break; }
+    p = next;
+  }
+  return Math.round(p * 10000) / 10000;
+}
+
+/** One line priced inside its TP: `tp` per unit, `discTp` the discount on the TP. */
+export function lineWithinTp(o: TaxArgs & { tp: number; qty: number; discTp: number }) {
+  const unit = exTaxUnit(o.tp, o);
+  const gross = r2(o.qty * unit);
+  const first = o.tp ? r2((o.discTp * unit) / o.tp) : 0;
+  const target = r2(o.qty * o.tp - o.discTp);
+  // the last paisa of rounding: of the discounts a paisa or two either side, the one that lands on the TP — as the
+  // server's fit_within_tp picks it
+  let best: { miss: number; disc: number; gst: LineTax | null } | null = null;
+  for (const step of [0, 1, -1, 2, -2]) {
+    const d = r2(first + step * 0.01);
+    if (d < 0 || d > gross) continue;
+    const g = fbrLineTax({ ...o, taxable: r2(gross - d), qty: o.qty });
+    const miss = Math.abs(r2(gross - d + (g?.amount || 0) + (g?.other || 0) - target));
+    if (!best || miss < best.miss) best = { miss, disc: d, gst: g };
+    if (miss === 0) break;
+  }
+  const disc = best ? best.disc : first;
+  return { unit, gross, disc, taxable: r2(gross - disc), gst: best ? best.gst : fbrLineTax({ ...o, taxable: r2(gross - disc), qty: o.qty }) };
+}
+
 /** "FED 2% · Further 3%" — which of the other taxes a line carries, for the sub-label under its amount. */
 export function otherTaxLabel(r: OtherRates): string {
   return ([["FED", r.fed], ["Extra", r.extra], ["Further", r.further]] as const).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k} ${Number(v)}%`).join(" · ");

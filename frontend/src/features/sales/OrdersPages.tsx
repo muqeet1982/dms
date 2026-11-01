@@ -6,6 +6,7 @@ import { api } from "@/api/client";
 import { date, datetime, fbrRateLabel, gstPct, money, otherTaxLabel, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { usePage, usePerms } from "@/lib/perms";
+import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
@@ -278,7 +279,7 @@ export function OrderFormPage() {
           <Field label="Requested delivery" col="col-md-2"><DateInput className="form-control" value={form.requested_delivery_date} onChange={(e) => setForm({ ...form, requested_delivery_date: e.target.value })} /></Field>
         </div>
         {chargeTax && <div className="mb-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span><span className="text-muted fs-12 ms-2">this customer is charged sales tax — GST shows on each line as you add items</span></div>}
-        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} advanceRate={cust.data?.advance_income_tax_rate} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock chargeTax={chargeTax} defaultDiscountPct={form.discount_pct !== "" && form.discount_pct != null ? form.discount_pct : cust.data?.default_discount_pct || 0} />
+        <LinesEditor lines={lines} onChange={setLines} customerId={form.customer} advanceRate={cust.data?.advance_income_tax_rate} taxInsideTp={(useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false} showDiscount={page.can("override_discount") && (showDiscount || lines.some((l) => Number(l.discount_pct || 0) || Number((l as any).discount_amount || 0)))} onToggleDiscount={page.can("override_discount") ? () => setShowDiscount((v) => !v) : undefined} discountShown={showDiscount} variantQuery={{ with_stock: 1 }} blockOutOfStock chargeTax={chargeTax} defaultDiscountPct={form.discount_pct !== "" && form.discount_pct != null ? form.discount_pct : cust.data?.default_discount_pct || 0} />
         {/* the tax-invoice choice lives on the CUSTOMER (owner, 26 Oct 2026) — the order inherits it */}
         <Field label="Discount %" col="col-md-4" hint="seeded from the customer's standing rate — change it for this order; applies to lines with no discount of their own">
           <DiscountPctSelect value={form.discount_pct ?? ""} onChange={(v) => setForm({ ...form, discount_pct: v })} autoLabel="Customer's standing rate (auto)" />

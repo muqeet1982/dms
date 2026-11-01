@@ -16,6 +16,8 @@ DEFAULT_PREFIXES = {
     "trip": "TRIP-",
     "delivery_note": "DN-",
     "sales_invoice": "INV-",
+    # tax invoices are their own series (owner, 1 Nov 2026: "TDN-STI-00001 then next TDN-STI-00002")
+    "tax_invoice": "STI-",
     "credit_note": "CN-",
     "company_claim": "CLM-",
     "rep_collection": "RC-",

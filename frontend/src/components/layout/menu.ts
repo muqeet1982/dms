@@ -12,7 +12,7 @@ export const TENANT_MENU: MenuSection[] = [
     title: "SALES", items: [
       { label: "Sales", icon: "ti-shopping-cart-dollar", children: [
         { label: "Orders inbox", to: "/app/sales/inbox", page: "sales_inbox", badgeKey: "inbox" }, { label: "Sales orders", to: "/app/sales/orders", page: "sales_orders" },
-        { label: "Invoices", to: "/app/sales/invoices", page: "invoices" }, { label: "Credit notes / returns", to: "/app/sales/credit-notes", page: "credit_notes" },
+        { label: "Invoices", to: "/app/sales/invoices", page: "invoices" }, { label: "Tax invoices", to: "/app/sales/tax-invoices", page: "invoices" }, { label: "Credit notes / returns", to: "/app/sales/credit-notes", page: "credit_notes" },
         { label: "Rep collections", to: "/app/sales/rep-collections", page: "rep_collections" }, { label: "Rep settlements", to: "/app/sales/rep-settlements", page: "rep_settlements" },
       ] },
       { label: "Customers", icon: "ti-users-group", children: [

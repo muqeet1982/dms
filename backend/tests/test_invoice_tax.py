@@ -48,6 +48,9 @@ def taxed_world(api, tenant):
     with tenant_context(tenant, tenant.owner):
         tt = TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")
         TaxRate.objects.create(tax_type=tt, rate_pct=Decimal("18"), valid_from=timezone.localdate())
+    # these tests price tax ON TOP of the TP; tests/test_tp_includes_tax.py covers the TP that includes it
+    tenant.settings = {**(tenant.settings or {}), "tp_includes_tax": False}
+    tenant.save(update_fields=["settings"])
     return wh, cust, v, tt
 
 

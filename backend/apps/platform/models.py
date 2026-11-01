@@ -209,6 +209,9 @@ class Tenant(models.Model):
         # a product is due for reorder when its stock falls below this % of its Max stock (owner, 1 Nov 2026);
         # its Min stock, when higher, still counts
         "reorder_point_pct": 30,
+        # the trade price (TP) already includes the tax (owner, 1 Nov 2026): on a tax order or invoice the price
+        # before tax is worked back from it at each item's rate, and price + tax = TP. Off: tax is added on top.
+        "tp_includes_tax": True,
     }
 
     def setting(self, key):

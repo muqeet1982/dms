@@ -28,6 +28,11 @@ def _base_qty(qty, packaging):
     return Decimal(qty) * (packaging.qty_in_base if packaging else Decimal("1"))
 
 
+def round2(v):
+    """To the paisa, half up — as the FBR engine rounds every line figure."""
+    return Decimal(v or 0).quantize(Decimal("0.01"), ROUND_HALF_UP)
+
+
 def advance_income_tax(rate, grand_total):
     """Advance income tax 236G/236H on the Grand Total (net + GST + FED + Extra + Further, before the WHT the buyer
     withholds), to the paisa, half up — the customer's rate, on every invoice of theirs, taxed or not (owner, 31 Oct
@@ -87,6 +92,8 @@ class OrderService:
         sd, free, names = PricingService.apply_schemes(line.variant, line.qty_ordered, line.unit_price, customer, order.order_date)
         line.scheme_discount, line.free_qty, line.scheme_names = sd, free, names
         taxable = gross - line.discount_amount - line.scheme_discount
+        # what the order's totals add: the same figures, or for a tax order the share before tax (set below)
+        line._ex = (gross, line.discount_amount, line.scheme_discount)
         if getattr(order, "charge_tax", False):
             # a tax-invoice order carries the SAME FBR tax its invoice will charge (owner, 26 Oct 2026:
             # "do same for sale order"), so a cash delivery collects the taxed total, not the net one.
@@ -95,9 +102,21 @@ class OrderService:
                 from apps.catalog.models import TaxType
 
                 order._sales_tax_tt = TaxType.objects.filter(kind="sales_tax", applies_to__in=("sales", "both")).order_by("code").first()
-            t = InvoiceService.line_taxes(
-                line.variant.product, qty=line.qty_ordered, unit_price=line.unit_price,
-                discount_amount=line.discount_amount + line.scheme_discount)
+            # the TP includes the tax (owner, 1 Nov 2026): the order is taxed on the price before tax worked back
+            # from it — the same figures its tax invoice will charge — so price + tax is the TP the rep quoted
+            within = InvoiceService.tp_includes_tax()
+            ex = InvoiceService.ex_tax_price(line.variant.product, line.unit_price) if within else line.unit_price
+            share = ex / line.unit_price if line.unit_price else Decimal("1")
+            if within:
+                sd_ex = round2(line.scheme_discount * share)
+                disc_all, t = InvoiceService.fit_within_tp(line.variant.product, qty=line.qty_ordered, unit=ex,
+                                                           disc=round2(line.discount_amount * share) + sd_ex, target=round2(gross - line.discount_amount - line.scheme_discount))
+                own = max(disc_all - sd_ex, Decimal("0"))
+                line._ex = (round2(line.qty_ordered * ex), own, disc_all - own)
+            else:
+                line._ex = (gross, line.discount_amount, line.scheme_discount)
+                t = InvoiceService.line_taxes(line.variant.product, qty=line.qty_ordered, unit_price=ex, discount_amount=line.discount_amount + line.scheme_discount)
+            taxable = line._ex[0] - line._ex[1] - line._ex[2]
             line.tax1_type, line.tax1_rate, line.tax1_amount = order._sales_tax_tt, t["rate"], q4(t["gst"])
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             others = InvoiceService.set_other_taxes(line, t)
@@ -117,12 +136,13 @@ class OrderService:
         subtotal = disc = sd = t1 = t2 = fed = extra = further = wht = Decimal("0")
         flags = []
         for line in order.lines.select_related("variant", "variant__product", "packaging"):
-            gross, f = OrderService.price_line(order, line, allow_override)
+            _gross, f = OrderService.price_line(order, line, allow_override)
             line.save()
             flags += f
+            gross, line_disc, line_sd = line._ex
             subtotal += gross
-            disc += line.discount_amount
-            sd += line.scheme_discount
+            disc += line_disc
+            sd += line_sd
             t1 += line.tax1_amount
             t2 += line.tax2_amount
             fed += line.fed_amount
@@ -254,8 +274,9 @@ class OrderService:
                                   requested_price=q4(req) if req is not None else None, unit_price=q4(req) if req is not None else Decimal("0"),
                                   discount_pct=l.get("discount_pct") or default_pct,
                                   product_discount_pct=product_discount_for(l["variant"].product, qty, o.order_date) or 0)
-            gross, _flags = OrderService.price_line(o, line)
-            for k, v in (("subtotal", gross), ("discount", line.discount_amount), ("scheme_discount", line.scheme_discount), ("tax1_total", line.tax1_amount),
+            _gross, _flags = OrderService.price_line(o, line)
+            gross, line_disc, line_sd = line._ex
+            for k, v in (("subtotal", gross), ("discount", line_disc), ("scheme_discount", line_sd), ("tax1_total", line.tax1_amount),
                          ("tax2_total", line.tax2_amount), ("fed_total", line.fed_amount), ("extra_tax_total", line.extra_tax_amount),
                          ("further_tax_total", line.further_tax_amount), ("wht_total", line.wht_amount)):
                 totals[k] += v
@@ -847,7 +868,7 @@ class InvoiceService:
             # tax classes no longer feed sales invoices; set_tax/recompute put the forced tax on later
             t = {"tax1_type": None, "tax1_rate": Decimal("0"), "tax1_amount": Decimal("0"),
                  "tax2_type": None, "tax2_rate": Decimal("0"), "tax2_amount": Decimal("0")}
-            SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=ol.variant, batch=dl.batch, description=ol.variant.name, qty=paid_qty, free_qty=free_part, unit_price=ol.unit_price, unit_cost=dl.unit_cost or ol.variant.avg_cost, discount_amount=line_disc, product_discount_pct=ol.product_discount_pct, line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], sequence=i)
+            SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=ol.variant, batch=dl.batch, description=ol.variant.name, qty=paid_qty, free_qty=free_part, unit_price=ol.unit_price, unit_cost=dl.unit_cost or ol.variant.avg_cost, discount_amount=line_disc, tp=ol.unit_price, tp_discount=line_disc, product_discount_pct=ol.product_discount_pct, line_total=taxable + t["tax1_amount"] + t["tax2_amount"], tax1_type=t["tax1_type"], tax1_rate=t["tax1_rate"], tax1_amount=t["tax1_amount"], tax2_type=t["tax2_type"], tax2_rate=t["tax2_rate"], tax2_amount=t["tax2_amount"], sequence=i)
             subtotal += gross
             disc += line_disc
             t1 += t["tax1_amount"]
@@ -925,6 +946,10 @@ class InvoiceService:
                 by_id.pop(str(line.id))
                 InvoiceService._remove_line(inv, line)
                 continue
+            if line.tp is not None:
+                # edits are typed in TP terms (the price as quoted, tax included on a tax invoice): edit those, and
+                # recompute works the charged price back out
+                line.unit_price, line.discount_amount = line.tp, line.tp_discount
             typed_disc = None if row.get("discount_amount") in (None, "") else Decimal(str(row["discount_amount"]))
             if new_qty is not None and new_qty != line.qty and new_qty != 0:
                 if new_qty < 0:
@@ -959,6 +984,8 @@ class InvoiceService:
             gross = q4(line.qty * line.unit_price)
             if line.discount_amount > gross:
                 raise DomainError(f"The discount on {line.description} is more than the line is worth.", status_code=400)
+            if line.tp is not None:
+                line.tp, line.tp_discount = line.unit_price, line.discount_amount
             line.save()
         if not inv.lines.exists():
             raise DomainError("An invoice needs at least one line — cancel it instead of emptying it.", status_code=400)
@@ -1068,7 +1095,7 @@ class InvoiceService:
             disc = q4(gross * ((inv.discount_pct or Decimal("0")) + prod_pct) / 100)
             seq += 1
             SalesInvoiceLine.objects.create(invoice=inv, order_line=ol, variant=variant, batch=batch, description=variant.name, qty=q, unit_price=price,
-                                            unit_cost=cost or variant.avg_cost, discount_amount=disc, product_discount_pct=prod_pct,
+                                            unit_cost=cost or variant.avg_cost, discount_amount=disc, tp=price, tp_discount=disc, product_discount_pct=prod_pct,
                                             line_total=gross - disc, sequence=seq)
 
     @staticmethod
@@ -1093,11 +1120,11 @@ class InvoiceService:
                 groups.setdefault(il.order_line_id, []).append(il)
         for ils in groups.values():
             ol = ils[0].order_line
-            gross = sum((q4(il.qty * il.unit_price) for il in ils), Decimal("0"))
-            disc = sum((il.discount_amount for il in ils), Decimal("0"))
+            gross = sum((q4(il.qty * (il.tp if il.tp is not None else il.unit_price)) for il in ils), Decimal("0"))
+            disc = sum(((il.tp_discount if il.tp is not None else il.discount_amount) for il in ils), Decimal("0"))
             main = max(ils, key=lambda il: il.qty)   # batch lines share a price; the largest speaks for them
             total_pct = (disc / gross * 100) if gross else Decimal("0")
-            ol.unit_price, ol.requested_price = main.unit_price, None
+            ol.unit_price, ol.requested_price = (main.tp if main.tp is not None else main.unit_price), None
             ol.product_discount_pct = main.product_discount_pct
             ol.discount_pct = max(Decimal("0"), (total_pct - main.product_discount_pct).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
             ol.save(update_fields=["unit_price", "requested_price", "product_discount_pct", "discount_pct"])
@@ -1122,8 +1149,13 @@ class InvoiceService:
         pct = Decimal("0") if action == "remove" else Decimal(str(percent if percent is not None else (inv.customer.default_discount_pct or 0)))
         for line in inv.lines.all():
             # the product's own % rides along — changing the customer % must not wipe it off the amount
-            line.discount_amount = q4(q4(line.qty * line.unit_price) * (pct + Decimal(str(line.product_discount_pct or 0))) / 100)
-            line.save(update_fields=["discount_amount"])
+            if line.tp is not None:
+                # on the TP: recompute works the charged discount back from it
+                line.tp_discount = q4(q4(line.qty * line.tp) * (pct + Decimal(str(line.product_discount_pct or 0))) / 100)
+                line.save(update_fields=["tp_discount"])
+            else:
+                line.discount_amount = q4(q4(line.qty * line.unit_price) * (pct + Decimal(str(line.product_discount_pct or 0))) / 100)
+                line.save(update_fields=["discount_amount"])
         inv.discount_pct = pct  # the co-funded total %; the manufacturer's share is claimed on posting
         inv.save(update_fields=["discount_pct"])
         InvoiceService.recompute(inv)
@@ -1144,6 +1176,70 @@ class InvoiceService:
         """
         t = InvoiceService.line_taxes(product, qty=qty, unit_price=unit_price, discount_amount=discount_amount, override=override)
         return t["rate"], t["gst"]
+
+    @staticmethod
+    def ex_tax_price(product, tp, override=None):
+        """
+        The price before tax inside a TP that includes it (owner, 1 Nov 2026), at the item's own rates: TP = price +
+        GST + FED + Extra + Further on it (WHT is the buyer's, never in the price). TP × 100 ÷ (100 + rate) for a plain
+        %; exact too for "18% along with rupees 60" and for a 3rd-Schedule item taxed on its printed retail price —
+        the taxes are straight lines in the price, piece by piece, so a few Newton steps land on the price.
+        """
+        tp = Decimal(str(tp or 0))
+        if tp <= 0 or product is None:
+            return tp
+        n = Decimal("1000000")
+
+        def inside(price):   # per unit, priced on a million units so the paisa rounding of one unit does not blur it
+            t = InvoiceService.line_taxes(product, qty=n, unit_price=price, discount_amount=Decimal("0"), override=override)
+            return (t["gst"] + t["fed"] + t["extra"] + t["further"]) / n
+
+        price, step = tp, Decimal("0.01")
+        for _ in range(8):
+            slope = (inside(price + step) - inside(price)) / step
+            nxt = max(price - (price + inside(price) - tp) / (1 + slope), Decimal("0"))
+            if abs(nxt - price) < Decimal("0.000001"):
+                price = nxt
+                break
+            price = nxt
+        return q4(price)
+
+    @staticmethod
+    def fit_within_tp(product, *, qty, unit, disc, target, override=None):
+        """
+        A line priced inside its TP: of the discounts a paisa or two either side of `disc`, the one whose value + taxes
+        lands on `target` (qty × TP − discount on the TP) — or comes nearest, when FBR's rounding of value and tax
+        cannot reach it. Orders and invoices both use it, so they always agree. Returns (discount, line_taxes).
+        """
+        gross = round2(qty * unit)
+
+        def total(d):
+            t = InvoiceService.line_taxes(product, qty=qty, unit_price=unit, discount_amount=d, override=override)
+            return gross - d + t["gst"] + t["fed"] + t["extra"] + t["further"], t
+
+        best = None
+        for step in (0, 1, -1, 2, -2):
+            d = disc + Decimal("0.01") * step
+            if d < 0 or d > gross:
+                continue
+            got, t = total(d)
+            miss = abs(got - target)
+            if best is None or miss < best[0]:
+                best = (miss, d, t)
+            if miss == 0:
+                break
+        return best[1], best[2]
+
+    @staticmethod
+    def tp_includes_tax():
+        tenant = get_current_tenant()
+        return bool(tenant.setting("tp_includes_tax")) if tenant is not None else True
+
+    @staticmethod
+    def is_tax_numbered(inv):
+        from apps.core.numbering import _prefix_for
+
+        return inv.number.startswith(_prefix_for("tax_invoice", inv.tenant_id))
 
     @staticmethod
     def line_taxes(product, *, qty, unit_price, discount_amount, override=None):
@@ -1188,15 +1284,32 @@ class InvoiceService:
     def recompute(inv):
         """Re-total an invoice from its lines (used after a discount or tax change)."""
         forced = inv.force_tax_type
+        inclusive = InvoiceService.tp_includes_tax()
         subtotal = discount = t1 = t2 = fed = extra = further = wht = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
-            gross = q4(line.qty * line.unit_price)
+            within_tp = line.tp is not None and forced is not None and inclusive
+            if line.tp is not None:
+                # the TP includes the tax on a tax invoice: what is charged before tax is worked back from it, the
+                # discount in the same proportion, so price + tax comes back to the TP the customer was quoted
+                if within_tp:
+                    line.unit_price = InvoiceService.ex_tax_price(line.variant.product if line.variant_id else None, line.tp, line.tax_pct_override)
+                    line.discount_amount = round2(line.tp_discount * line.unit_price / line.tp) if line.tp else Decimal("0")
+                else:
+                    line.unit_price, line.discount_amount = line.tp, line.tp_discount
+            # worked back from a TP, the figures are kept to the paisa the way FBR files them — no 600.0044 to pay
+            gross = round2(line.qty * line.unit_price) if within_tp else q4(line.qty * line.unit_price)
             taxable = gross - line.discount_amount
             if forced is not None:
                 t = InvoiceService.line_taxes(
                     line.variant.product if line.variant_id else None,
                     qty=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
                     override=line.tax_pct_override)
+                if within_tp:
+                    # the last paisa of rounding: the discount that brings the line back to its TP
+                    line.discount_amount, t = InvoiceService.fit_within_tp(
+                        line.variant.product if line.variant_id else None, qty=line.qty, unit=line.unit_price, disc=line.discount_amount,
+                        target=round2(line.qty * line.tp - line.tp_discount), override=line.tax_pct_override)
+                    taxable = gross - line.discount_amount
                 line.tax1_type, line.tax1_rate, line.tax1_amount = forced, t["rate"], q4(t["gst"])
                 others = InvoiceService.set_other_taxes(line, t)
             else:
@@ -1206,7 +1319,7 @@ class InvoiceService:
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             # the line's own taxes are in its total; WHT is withheld by the buyer, so it leaves the invoice total
             line.line_total = taxable + line.tax1_amount + line.tax2_amount + others
-            line.save(update_fields=["tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount",
+            line.save(update_fields=["unit_price", "discount_amount", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount",
                                      "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"])
             subtotal += gross
             discount += line.discount_amount
@@ -1458,6 +1571,13 @@ class InvoiceService:
 
         # it goes to the books at the customer's advance income tax rate as it stands now, whatever the draft held
         retotal_advance_tax(inv, inv.customer.advance_income_tax_rate)
+        # a tax invoice takes the next number of the tax-invoice series when it goes to the books — not before, so a
+        # draft switched back or never posted leaves no gap in it (owner, 1 Nov 2026: TDN-STI-00001, TDN-STI-00002 …)
+        if inv.force_tax_type_id and not InvoiceService.is_tax_numbered(inv):
+            before = inv.number
+            inv.number = next_number("tax_invoice", unique_for=(SalesInvoice, "number"))
+            inv.save(update_fields=["number", "updated_at"])
+            AuditService.log("invoice.tax_numbered", inv, before={"number": before}, after={"number": inv.number})
         inv.journal = PostingService.post_sales_invoice(inv)
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])

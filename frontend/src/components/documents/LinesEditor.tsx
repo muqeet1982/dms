@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { api } from "@/api/client";
-import { fbrLineTax, gstPctOfLabels, LineTax, money, otherTaxLabel } from "@/lib/format";
+import { fbrLineTax, gstPctOfLabels, LineTax, lineWithinTp, money, otherTaxLabel } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "./TaxFooter";
 import { useScanListener } from "@/lib/scan";
 import { toast } from "@/lib/toast";
@@ -29,9 +29,11 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
-export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false, advanceRate }: {
+export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false, advanceRate, taxInsideTp = false }: {
   /** A sales document's customer advance income tax % (236G/236H) — the footer adds it on the Grand Total. */
   advanceRate?: number | string | null;
+  /** The TP includes the tax (Settings → Rules): a taxed line shows the price before tax worked back from its TP. */
+  taxInsideTp?: boolean;
   lines: EditLine[]; onChange: (lines: EditLine[]) => void; showPrice?: boolean; showDiscount?: boolean; showBatch?: boolean; priceFor?: "sale" | "cost"; readOnly?: boolean; customerId?: string | null; variantQuery?: Record<string, any>; blockOutOfStock?: boolean;
   /** When given, a switch appears to show or hide the discount column — off until a deal actually needs it. */
   onToggleDiscount?: () => void; discountShown?: boolean;
@@ -132,11 +134,22 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     return fbrLineTax({ rate: String(l.extra?.fbr_rate || ""), taxable: lineNet(l), qty: baseQty, saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp, others: l.extra?.fbr_others });
   };
   const gstShown = Boolean(chargeTax && showPrice);
-  const taxOf = (l: EditLine) => (gstShown && l.variant ? lineGst(l) : null);
-  const total = lines.reduce((s, l) => s + lineNet(l), 0);
+  // the TP includes the tax (owner, 1 Nov 2026): the line's price before tax, discount and value are worked back from
+  // it the way the saved order will be, so price + tax adds back to the TP
+  const within = gstShown && taxInsideTp && !lineTax;
+  const insideTp = (l: EditLine) => {
+    const pk = (l.packagings || []).find((x) => x.id === l.packaging);
+    const per = pk ? Number(pk.qty_in_base) || 1 : 1;
+    const gross = Number(l.qty || 0) * Number(l.unit_price || 0);
+    return lineWithinTp({ rate: String(l.extra?.fbr_rate || ""), saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp, others: l.extra?.fbr_others,
+      tp: Number(l.unit_price || 0) / per, qty: Number(l.qty || 0) * per, discTp: gross - lineNet(l) });
+  };
+  const taxOf = (l: EditLine) => (gstShown && l.variant ? (within ? insideTp(l).gst : lineGst(l)) : null);
+  const valueOf = (l: EditLine) => (within && l.variant ? insideTp(l).taxable : lineNet(l));
+  const total = lines.reduce((s, l) => s + valueOf(l), 0);
   const sumTax = (k: "amount" | "fed" | "extra" | "further" | "wht" | "other") => lines.reduce((s, l) => s + (taxOf(l)?.[k] || 0), 0);
   const taxTotal = sumTax("amount");
-  const grossTotal = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.unit_price || 0), 0);
+  const grossTotal = lines.reduce((s, l) => s + (within && l.variant ? insideTp(l).gross : Number(l.qty || 0) * Number(l.unit_price || 0)), 0);
   // an Other Tax column (FED + Extra + Further) only once some line carries one
   const otherShown = gstShown && sumTax("other") > 0;
   // a SALES document without tax shows each line as Qty × Rate and takes every discount on the total (owner,
@@ -176,10 +189,10 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
                 {reasons && <td><select className="form-select form-select-sm" value={l.extra?.reason_code || ""} onChange={(e) => update(l.key, { extra: { ...(l.extra || {}), reason_code: e.target.value || null } })} disabled={readOnly}><option value="">same as document</option>{reasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></td>}
                 {showBatch && <td><input className="form-control form-control-sm" placeholder={l.extra?.is_batch_tracked ? "required" : "optional"} value={l.batch_no || ""} onChange={(e) => update(l.key, { batch_no: e.target.value })} readOnly={readOnly} /></td>}
                 {showBatch && <td><DateInput className="form-control form-control-sm" value={l.expiry_date || ""} onChange={(e) => update(l.key, { expiry_date: e.target.value })} readOnly={readOnly} /></td>}
-                {gstShown && <td className="num">{l.variant ? money(lineNet(l)) : <span className="text-muted">—</span>}</td>}
+                {gstShown && <td className="num">{l.variant ? money(valueOf(l)) : <span className="text-muted">—</span>}</td>}
                 {gstShown && <td className="num">{(() => { const t = taxOf(l); return t && t.label ? <>{money(t.amount)}<div className="text-muted fs-11">{t.label}</div></> : l.variant ? <span className="text-warning" title="No FBR rate — this item will carry no GST; classify it on the product's FBR card (HS code → rate)">—</span> : <span className="text-muted">—</span>; })()}</td>}
                 {otherShown && <td className="num">{(() => { const t = taxOf(l); return t && t.other ? <>{money(t.other)}<div className="text-muted fs-11">{otherTaxLabel(l.extra?.fbr_others || {})}</div></> : <span className="text-muted">—</span>; })()}</td>}
-                {showPrice && <td className="num fw-medium">{money(plainSale ? grossOf(l) : lineNet(l) + (taxOf(l)?.amount || 0) + (taxOf(l)?.other || 0))}</td>}
+                {showPrice && <td className="num fw-medium">{money(plainSale ? grossOf(l) : valueOf(l) + (taxOf(l)?.amount || 0) + (taxOf(l)?.other || 0))}</td>}
                 {!readOnly && <td><button type="button" className="btn btn-sm btn-outline-danger" onClick={() => remove(l.key)}><i className="ti ti-x" /></button></td>}
               </tr>
             ))}
