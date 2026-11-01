@@ -2,13 +2,14 @@ import { DateInput } from "@/components/ui/DateInput";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
-import { money } from "@/lib/format";
+import { date, money } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { Field } from "@/components/ui/Bits";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
+import { methodOptions } from "./BillingPages";
 
 const P = "/api/v1/platform";
 
@@ -23,7 +24,7 @@ export function TenantRowActions({ tenant, onDone, align = "end" }: { tenant: an
   const qc = useQueryClient();
   const { setTenant } = useAuth();
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<null | "suspend" | "reactivate" | "cancel" | "renew" | "discount" | "payment" | "message" | "reset">(null);
+  const [dialog, setDialog] = useState<null | "suspend" | "reactivate" | "cancel" | "renew" | "extend" | "discount" | "payment" | "message" | "reset">(null);
   const box = useRef<HTMLDivElement | null>(null);
   const btn = useRef<HTMLButtonElement | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -56,11 +57,12 @@ export function TenantRowActions({ tenant, onDone, align = "end" }: { tenant: an
     } catch (e: any) { toast.error(e.message); }
   };
   const live = !["cancelled", "archived"].includes(tenant.status);
-  const actionsCount = 8 + (tenant.impersonation_allowed && live ? 1 : 0) + (sub && live ? 3 : 0) + (tenant.status === "suspended" ? 1 : 0);
+  const actionsCount = 8 + (tenant.impersonation_allowed && live ? 1 : 0) + (sub && live ? 4 : 0) + (tenant.status === "suspended" ? 1 : 0);
   const actions: Action[] = [
     { key: "open", label: "Open company", icon: "ti-external-link", run: () => nav(`/admin/tenants/${tenant.id}`) },
     { key: "impersonate", label: "Log in as owner", icon: "ti-user-screen", hidden: !tenant.impersonation_allowed || !live, run: impersonate },
     { key: "renew", label: "Renew subscription", icon: "ti-refresh", hidden: !sub || !live, run: () => setDialog("renew") },
+    { key: "extend", label: "Extend expiry", icon: "ti-calendar-plus", hidden: !sub || !live, run: () => setDialog("extend") },
     { key: "plan", label: "Change plan", icon: "ti-stack-2", hidden: !sub || !live, run: () => nav(`/admin/tenants/${tenant.id}?tab=subscription&action=change`) },
     { key: "discount", label: sub?.discount_active ? "Edit discount" : "Give a discount", icon: "ti-discount-2", hidden: !sub || !live, run: () => setDialog("discount") },
     { key: "payment", label: "Record payment", icon: "ti-cash", hidden: !live, run: () => setDialog("payment") },
@@ -91,7 +93,7 @@ export function TenantRowActions({ tenant, onDone, align = "end" }: { tenant: an
       )}
 
       <ConfirmDialog open={dialog === "suspend"} title={`Suspend ${tenant.display_name}`} withReason danger confirmText="Suspend"
-        message="Users cannot sign in while the company is suspended. Data is kept."
+        message="Nobody but the owner can sign in while the company is suspended, and the owner only sees the payment screen. Data is kept."
         onClose={() => setDialog(null)} onConfirm={async (r) => { await call(`${P}/tenants/${tenant.id}/suspend`, { reason: r }, "Suspended"); setDialog(null); }} />
       <ConfirmDialog open={dialog === "reactivate"} title={`Reactivate ${tenant.display_name}`} withReason confirmText="Reactivate"
         onClose={() => setDialog(null)} onConfirm={async (r) => { await call(`${P}/tenants/${tenant.id}/reactivate`, { reason: r }, "Reactivated"); setDialog(null); }} />
@@ -99,6 +101,7 @@ export function TenantRowActions({ tenant, onDone, align = "end" }: { tenant: an
         message="The subscription stops at the end of the current period and the company becomes read-only."
         onClose={() => setDialog(null)} onConfirm={async (r) => { await call(`${P}/tenants/${tenant.id}/cancel`, { reason: r }, "Cancelled"); setDialog(null); }} />
       {dialog === "renew" && sub && <RenewDialog sub={sub} onClose={() => setDialog(null)} onDone={refresh} />}
+      {dialog === "extend" && sub && <ExtendDialog sub={sub} onClose={() => setDialog(null)} onDone={refresh} />}
       {dialog === "discount" && sub && <DiscountDialog sub={sub} onClose={() => setDialog(null)} onDone={refresh} />}
       {dialog === "payment" && <PaymentDialog tenant={tenant} onClose={() => setDialog(null)} onDone={refresh} />}
       {dialog === "reset" && <ResetDataDialog tenant={tenant} onClose={() => setDialog(null)} onDone={refresh} />}
@@ -163,41 +166,119 @@ export function DiscountDialog({ sub, onClose, onDone }: { sub: any; onClose: ()
   );
 }
 
-function RenewDialog({ sub, onClose, onDone }: { sub: any; onClose: () => void; onDone?: () => void }) {
+/** How the money for a renewal or extension is settled (owner, 1 Nov 2026: "renew a tenant with or without payment"). */
+function PaymentFields({ pay, set }: { pay: any; set: (p: any) => void }) {
+  return (
+    <div className="row g-2">
+      <Field label="Method" col="col-md-6"><select className="form-select" value={pay.method} onChange={(e) => set({ ...pay, method: e.target.value })}>{methodOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></Field>
+      <Field label="Amount" col="col-md-6"><input type="number" min="0" className="form-control" placeholder="the invoice total" value={pay.amount} onChange={(e) => set({ ...pay, amount: e.target.value })} /></Field>
+      <Field label="Reference" col="col-md-6"><input className="form-control" value={pay.reference} onChange={(e) => set({ ...pay, reference: e.target.value })} placeholder="transfer id / cheque no" /></Field>
+      <Field label="Paid on" col="col-md-6"><input type="date" className="form-control" value={pay.paid_at} onChange={(e) => set({ ...pay, paid_at: e.target.value })} /></Field>
+    </div>
+  );
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+const blankPay = () => ({ method: "bank_transfer", amount: "", reference: "", paid_at: today() });
+
+export function RenewDialog({ sub, onClose, onDone }: { sub: any; onClose: () => void; onDone?: () => void }) {
   const [periods, setPeriods] = useState(1);
-  const [pay, setPay] = useState(true);
+  const [fromToday, setFromToday] = useState(false);
+  const [charge, setCharge] = useState<"paid" | "invoice" | "free">("paid");
+  const [pay, setPay] = useState<any>(blankPay());
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const run = async () => {
     setBusy(true);
-    try { const r = await api.post(`${P}/subscriptions/${sub.id}/renew`, { periods, record_payment: pay ? {} : null }); toast.success(`Renewed — invoice ${r.invoice?.number || ""}`); onDone?.(); onClose(); }
-    catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+    try {
+      const r = await api.post(`${P}/subscriptions/${sub.id}/renew`, { periods, from_today: fromToday, charge, reason, payment: charge === "paid" ? { ...pay, amount: pay.amount || undefined } : undefined });
+      toast.success(`Renewed to ${date(r.subscription.end_date)}${r.invoice ? ` — invoice ${r.invoice.number} ${r.invoice.status}` : " — free of charge"}`);
+      onDone?.(); onClose();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
+  const radio = (k: typeof charge, label: string) => <div className="form-check"><input className="form-check-input" type="radio" id={`rc-${k}`} checked={charge === k} onChange={() => setCharge(k)} /><label className="form-check-label fs-13" htmlFor={`rc-${k}`}>{label}</label></div>;
   return (
-    <Modal open onClose={onClose} title={<><i className="ti ti-refresh me-2 text-primary" />Renew subscription</>} size="sm"
-      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy} onClick={run}>{busy ? "Renewing…" : "Renew"}</button></>}>
-      <Field label="Periods"><input type="number" min={1} className="form-control" value={periods} onChange={(e) => setPeriods(Number(e.target.value))} /></Field>
-      <div className="form-check"><input className="form-check-input" type="checkbox" id="rpay" checked={pay} onChange={(e) => setPay(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="rpay">Mark the invoice as paid</label></div>
-      {sub.discount_active && <div className="alert alert-info py-2 fs-12 mt-3 mb-0">The company's discount ({sub.discount_label}) is applied to this invoice.</div>}
+    <Modal open onClose={onClose} title={<><i className="ti ti-refresh me-2 text-primary" />Renew subscription</>} size="md"
+      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || periods < 1} onClick={run}>{busy ? "Renewing…" : "Renew"}</button></>}>
+      <div className="row">
+        <Field label={`Billing cycles (${sub.billing_cycle || "month"})`} col="col-md-6"><input type="number" min={1} className="form-control" value={periods} onChange={(e) => setPeriods(Number(e.target.value))} /></Field>
+        <Field label="Starts" col="col-md-6"><select className="form-select" value={fromToday ? "today" : "end"} onChange={(e) => setFromToday(e.target.value === "today")}><option value="end">at the current expiry ({date(sub.end_date)})</option><option value="today">today</option></select></Field>
+      </div>
+      <div className="mb-2">{radio("paid", "Paid — record the payment now")}{radio("invoice", "Bill later — leave the invoice open")}{radio("free", "Free of charge — no invoice")}</div>
+      {charge === "paid" && <PaymentFields pay={pay} set={setPay} />}
+      <Field label="Reason / note"><input className="form-control" value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+      {sub.discount_active && charge !== "free" && <div className="alert alert-info py-2 fs-12 mb-0">The company's discount ({sub.discount_label}) is applied to this invoice.</div>}
     </Modal>
   );
 }
 
-function PaymentDialog({ tenant, onClose, onDone }: { tenant: any; onClose: () => void; onDone?: () => void }) {
-  const [f, setF] = useState<any>({ amount: "", method: "bank", reference: "", notes: "" });
+/** Move the expiry by days or to a date, with or without a charge (owner, 1 Nov 2026). Reopens a suspended company. */
+export function ExtendDialog({ sub, onClose, onDone }: { sub: any; onClose: () => void; onDone?: () => void }) {
+  const [by, setBy] = useState<"days" | "until">("days");
+  const [days, setDays] = useState("7");
+  const [until, setUntil] = useState("");
+  const [charge, setCharge] = useState<"none" | "invoice" | "paid">("none");
+  const [amount, setAmount] = useState("");
+  const [pay, setPay] = useState<any>(blankPay());
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const run = async () => {
     setBusy(true);
-    try { await api.post(`${P}/payments`, { tenant: tenant.id, amount: Number(f.amount || 0), method: f.method, reference: f.reference, notes: f.notes }); toast.success("Payment recorded"); onDone?.(); onClose(); }
+    try {
+      const body: any = { reason, ...(by === "days" ? { days: Number(days) } : { until }) };
+      if (charge !== "none") body.amount = amount;
+      if (charge === "paid") body.payment = { ...pay, amount: pay.amount || amount };
+      const r = await api.post(`${P}/subscriptions/${sub.id}/extend`, body);
+      toast.success(`Expiry moved to ${date(r.subscription.end_date)}${r.invoice ? ` — invoice ${r.invoice.number}` : ""}`);
+      onDone?.(); onClose();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  const radio = (k: typeof charge, label: string) => <div className="form-check"><input className="form-check-input" type="radio" id={`ec-${k}`} checked={charge === k} onChange={() => setCharge(k)} /><label className="form-check-label fs-13" htmlFor={`ec-${k}`}>{label}</label></div>;
+  return (
+    <Modal open onClose={onClose} title={<><i className="ti ti-calendar-plus me-2 text-primary" />Extend expiry</>} size="md"
+      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || (by === "days" ? !Number(days) : !until) || (charge !== "none" && !Number(amount))} onClick={run}>{busy ? "Saving…" : "Extend"}</button></>}>
+      <p className="fs-13 text-muted">Now ends {date(sub.end_date)}.</p>
+      <div className="row">
+        <Field label="Extend" col="col-md-4"><select className="form-select" value={by} onChange={(e) => setBy(e.target.value as any)}><option value="days">by days</option><option value="until">to a date</option></select></Field>
+        {by === "days" ? <Field label="Days" col="col-md-4"><input type="number" min={1} className="form-control" value={days} onChange={(e) => setDays(e.target.value)} /></Field>
+          : <Field label="New expiry" col="col-md-4"><input type="date" className="form-control" value={until} onChange={(e) => setUntil(e.target.value)} /></Field>}
+      </div>
+      <div className="mb-2">{radio("none", "No charge")}{radio("invoice", "Charge — invoice it, pay later")}{radio("paid", "Charge — paid now")}</div>
+      {charge !== "none" && <Field label="Amount to charge *"><input type="number" min="0" className="form-control" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>}
+      {charge === "paid" && <PaymentFields pay={pay} set={setPay} />}
+      <Field label="Reason / note"><input className="form-control" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. promised to pay on Friday" /></Field>
+    </Modal>
+  );
+}
+
+/** A payment the platform received by hand — against one of the company's open invoices, or on account. */
+export function PaymentDialog({ tenant, invoiceId, onClose, onDone }: { tenant: any; invoiceId?: string; onClose: () => void; onDone?: () => void }) {
+  const invoices = useQuery({ queryKey: ["tenant-open-invoices", tenant.id], queryFn: () => api.list(`${P}/invoices`, { tenant: tenant.id, page_size: 50 }) });
+  const open = (invoices.data?.results || []).filter((i: any) => ["issued", "partial", "overdue"].includes(i.status));
+  const [f, setF] = useState<any>({ invoice: invoiceId || "", amount: "", method: "bank_transfer", reference: "", paid_at: today(), note: "" });
+  // opened from an invoice's row: the amount is what it still owes, once the list has loaded
+  useEffect(() => {
+    const inv = open.find((i: any) => i.id === f.invoice);
+    if (inv && !f.amount) setF((x: any) => ({ ...x, amount: String(Number(inv.balance)) }));
+  }, [invoices.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try { await api.post(`${P}/payments`, { tenant: tenant.id, invoice: f.invoice || null, amount: Number(f.amount || 0), method: f.method, reference: f.reference, paid_at: f.paid_at, note: f.note }); toast.success("Payment recorded"); onDone?.(); onClose(); }
     catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
   return (
-    <Modal open onClose={onClose} title={<><i className="ti ti-cash me-2 text-primary" />Record a payment from {tenant.display_name}</>} size="sm"
+    <Modal open onClose={onClose} title={<><i className="ti ti-cash me-2 text-primary" />Record a payment from {tenant.display_name}</>} size="md"
       footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !Number(f.amount)} onClick={run}>{busy ? "Saving…" : "Record payment"}</button></>}>
       <div className="row">
+        <Field label="Against invoice" col="col-md-12"><select className="form-select" value={f.invoice} onChange={(e) => { const inv = open.find((i: any) => i.id === e.target.value); setF({ ...f, invoice: e.target.value, amount: inv ? String(Number(inv.balance)) : f.amount }); }}><option value="">On account (no invoice)</option>{open.map((i: any) => <option key={i.id} value={i.id}>{i.number} · {i.purpose_label} · owes {money(i.balance, 0)}</option>)}</select></Field>
         <Field label="Amount" col="col-md-6"><input type="number" className="form-control" autoFocus value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
-        <Field label="Method" col="col-md-6"><select className="form-select" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{["bank", "cash", "cheque", "card", "online"].map((m) => <option key={m} value={m}>{m}</option>)}</select></Field>
-        <Field label="Reference" col="col-md-12"><input className="form-control" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} placeholder="transfer id / cheque no" /></Field>
+        <Field label="Method" col="col-md-6"><select className="form-select" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{methodOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></Field>
+        <Field label="Reference" col="col-md-6"><input className="form-control" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} placeholder="transfer id / cheque no" /></Field>
+        <Field label="Paid on" col="col-md-6"><input type="date" className="form-control" value={f.paid_at} onChange={(e) => setF({ ...f, paid_at: e.target.value })} /></Field>
+        <Field label="Note" col="col-md-12"><input className="form-control" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
       </div>
+      {f.invoice && <div className="fs-12 text-muted">A renewal invoice paid in full renews the subscription.</div>}
     </Modal>
   );
 }

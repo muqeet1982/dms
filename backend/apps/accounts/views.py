@@ -353,8 +353,13 @@ class MeView(APIView):
         }
         if tenant is not None:
             from apps.platform.serializers import TenantPublicSerializer
+            from apps.platform.services import BillingService, SubscriptionService
 
+            if tenant.status in ("trial", "active", "past_due"):
+                SubscriptionService.refresh_tenant(tenant)   # the daily check may not have run yet today
             data["tenant"] = TenantPublicSerializer(tenant).data
+            # the payment message, from 3 days before expiry through the grace days (owner, 1 Nov 2026)
+            data["billing"] = BillingService.notice(tenant)
             data["features"] = effective_features(tenant)
             # white-label: the stored branding only reaches the app when the platform allows it
             white_label = bool(data["features"].get("branding"))

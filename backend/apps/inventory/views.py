@@ -13,6 +13,7 @@ from apps.core.pagination import LedgerCursorPagination
 from apps.accounts.page_permissions import extra_perm, page_perms
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import DocumentViewSet, TenantModelViewSet, warehouse_scope
+from apps.core.plan_limits import PlanLimitService
 
 from .models import Batch, Bin, InventoryAlert, ReasonCode, StockAdjustment, StockCount, StockLevel, StockMovement, StockTransfer, Warehouse
 from .serializers import (
@@ -163,6 +164,8 @@ class StockLevelViewSet(viewsets.ReadOnlyModelViewSet):
     def lookup(self, request):
         """Quick stock lookup by scan: ?code=... → variant + per-warehouse/batch levels."""
         from apps.catalog.serializers import ProductVariantSerializer
+
+        PlanLimitService.require_feature(request.tenant, "barcode")
         from apps.catalog.services import BarcodeParser
 
         variant, packaging, batch = BarcodeParser.resolve(request.query_params.get("code", ""))

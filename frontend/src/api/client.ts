@@ -256,6 +256,8 @@ export async function request<T = any>(path: string, opts: RequestOptions = {}, 
       dropStaleTenant(problem?.detail);
       return request<T>(path, opts, false);
     }
+    // the company was suspended while this page was open: re-read /me, and the guard puts up the suspended screen
+    if (code.includes("tenant_suspended")) import("@/lib/queryClient").then(({ queryClient }) => queryClient.invalidateQueries({ queryKey: ["me"] }));
   }
   if (opts.raw) {
     if (!res.ok) throw new ApiError(await safeProblem(res));

@@ -24,6 +24,7 @@ router.register("app-releases", MobileAppReleaseViewSet, basename="platform-app-
 
 urlpatterns = [
     path("dashboard", views.PlatformDashboardView.as_view()),
+    path("billing-report", views.PlatformBillingReportView.as_view()),
     path("settings", views.PlatformSettingsView.as_view()),
     path("settings/email-test", views.EmailTestView.as_view(), name="platform-email-test"),
     path("settings/asset", views.PlatformSettingsView.as_view()),

@@ -30,10 +30,11 @@ import { RepCollectionsPage as RepPortalCollectionsPage, RepCustomerDetailPage, 
 import { MobileAppPage } from "@/features/platform/MobileAppPage";
 import { GetAppPage } from "@/features/platform/GetAppPage";
 import { AppLoginPage } from "@/features/platform/AppLoginPage";
-import { AnnouncementsPage, FeatureFlagsPage, HealthPage, LegalPage, NotificationLogPage, OutstandingPage, PlansPage, PlatformAuditPage, PlatformDashboardPage, PlatformInvoicesPage, PlatformPaymentsPage,  PlatformUsersPage, SubscriptionsPage, TemplatesPage, TenantDetailPage, TenantsPage, TicketsPage } from "@/features/platform/PlatformPages";
+import { AnnouncementsPage, FeatureFlagsPage, HealthPage, LegalPage, NotificationLogPage, OutstandingPage, PlansPage, PlatformAuditPage, PlatformDashboardPage, PlatformInvoicesPage, PlatformUsersPage, SubscriptionsPage, TemplatesPage, TenantDetailPage, TenantsPage, TicketsPage } from "@/features/platform/PlatformPages";
 import { PlatformSettingsPage } from "@/features/platform/PlatformSettingsPage";
 import { TenantCreatePage } from "@/features/platform/TenantCreatePage";
 import { FirewallPage, SecurityBansPage } from "@/features/platform/SecurityPages";
+import { BillingReportPage, PlatformPaymentsPage } from "@/features/platform/BillingPages";
 
 function NotFound() {
   return <div className="text-center py-5"><i className="ti ti-error-404 fs-1 text-muted" /><h5 className="mt-2">Page not found</h5></div>;
@@ -120,7 +121,7 @@ export const router = createBrowserRouter([
       path: "/admin", element: <AppShell sections={PLATFORM_MENU} notificationsTo="/admin/notifications" />,
       children: [
         { index: true, element: <PlatformDashboardPage /> }, { path: "tenants", element: <TenantsPage /> }, { path: "tenants/new", element: <TenantCreatePage /> }, { path: "tenants/:id", element: <TenantDetailPage /> }, { path: "subscriptions", element: <SubscriptionsPage /> }, { path: "plans", element: <PlansPage /> },
-        { path: "invoices", element: <PlatformInvoicesPage /> }, { path: "payments", element: <PlatformPaymentsPage /> }, { path: "outstanding", element: <OutstandingPage /> }, { path: "announcements", element: <AnnouncementsPage /> }, { path: "templates", element: <TemplatesPage /> }, { path: "tickets", element: <TicketsPage /> }, { path: "notification-log", element: <NotificationLogPage /> },
+        { path: "invoices", element: <PlatformInvoicesPage /> }, { path: "payments", element: <PlatformPaymentsPage /> }, { path: "outstanding", element: <OutstandingPage /> }, { path: "billing-report", element: <BillingReportPage /> }, { path: "announcements", element: <AnnouncementsPage /> }, { path: "templates", element: <TemplatesPage /> }, { path: "tickets", element: <TicketsPage /> }, { path: "notification-log", element: <NotificationLogPage /> },
         { path: "security", element: <SecurityBansPage /> }, { path: "firewall", element: <FirewallPage /> }, { path: "feature-flags", element: <FeatureFlagsPage /> }, { path: "mobile-app", element: <MobileAppPage /> }, { path: "users", element: <RequirePage page="users"><PlatformUsersPage /></RequirePage> }, { path: "settings", element: <PlatformSettingsPage /> }, { path: "legal", element: <LegalPage /> }, { path: "audit", element: <PlatformAuditPage /> }, { path: "health", element: <HealthPage /> }, { path: "notifications", element: <NotificationsPage /> }, { path: "profile", element: <ProfilePage /> }, { path: "*", element: <NotFound /> },
       ],
     }],

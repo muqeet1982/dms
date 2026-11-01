@@ -298,10 +298,25 @@ class SubscriptionViewSet(PlatformViewSet):
 
     @action(detail=True, methods=["post"])
     def renew(self, request, pk=None):
+        """{periods, from_today, charge: "paid"|"invoice"|"free", payment: {amount?, method, reference, paid_at, note}}
+        — renew with the payment recorded now, with the invoice left to pay, or free of charge (owner, 1 Nov 2026)."""
         sub = self.get_object()
-        pay = request.data.get("payment")
-        sub, invoice = SubscriptionService.renew(sub, periods=int(request.data.get("periods", 1)), from_today=bool(request.data.get("from_today", False)), actor=request.user, record_payment=pay, coupon_code=request.data.get("coupon_code"), reason=request.data.get("reason", ""))
-        return Response({"subscription": SubscriptionSerializer(sub).data, "invoice": PlatformInvoiceSerializer(invoice).data})
+        d = request.data
+        pay = d.get("payment") or d.get("record_payment")   # the old renew dialog sent `record_payment`
+        charge = d.get("charge") or ("paid" if pay else "invoice")
+        if charge not in ("paid", "invoice", "free"):
+            raise DomainError("charge is paid, invoice or free.", status_code=400)
+        sub, invoice = SubscriptionService.renew(sub, periods=max(int(d.get("periods", 1) or 1), 1), from_today=bool(d.get("from_today", False)), actor=request.user,
+                                                 record_payment=pay if charge == "paid" else None, coupon_code=d.get("coupon_code"), reason=d.get("reason", ""), charge=charge)
+        return Response({"subscription": SubscriptionSerializer(sub).data, "invoice": PlatformInvoiceSerializer(invoice).data if invoice else None})
+
+    @action(detail=True, methods=["post"])
+    def extend(self, request, pk=None):
+        """{days | until, amount?, payment?: {...}, reason} — move the expiry, with or without a charge (owner, 1 Nov 2026)."""
+        d = request.data
+        sub, invoice = SubscriptionService.extend(self.get_object(), days=d.get("days") or None, until=d.get("until") or None, amount=d.get("amount") or None,
+                                                  record_payment=d.get("payment") or None, actor=request.user, reason=d.get("reason", ""))
+        return Response({"subscription": SubscriptionSerializer(sub).data, "invoice": PlatformInvoiceSerializer(invoice).data if invoice else None})
 
     @action(detail=True, methods=["post", "delete"])
     def discount(self, request, pk=None):
@@ -411,7 +426,7 @@ class PlatformPaymentViewSet(PlatformViewSet):
     filterset_fields = ["status", "tenant", "method", "invoice"]
     search_fields = ["reference", "tenant__display_name", "invoice__number"]
     ordering_fields = ["paid_at", "amount"]
-    queryset = PlatformPayment.objects.select_related("tenant", "invoice", "recorded_by").all()
+    queryset = PlatformPayment.objects.select_related("tenant", "invoice", "recorded_by", "submitted_by", "reviewed_by").all()
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
@@ -438,6 +453,17 @@ class PlatformPaymentViewSet(PlatformViewSet):
     def refund(self, request, pk=None):
         r = BillingService.refund(self.get_object(), request.data["amount"], request.data.get("reason", ""), actor=request.user)
         return Response(PlatformRefundSerializer(r).data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """A payment the company submitted is genuine: it counts, and a paid renewal renews the subscription."""
+        pay = BillingService.approve_payment(self.get_object(), actor=request.user, periods=request.data.get("periods"), note=request.data.get("note", ""))
+        return Response(PlatformPaymentSerializer(pay, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        pay = BillingService.reject_payment(self.get_object(), actor=request.user, reason=request.data.get("reason", ""))
+        return Response(PlatformPaymentSerializer(pay, context={"request": request}).data)
 
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
@@ -574,6 +600,16 @@ class PlatformDashboardView(APIView):
         return Response(DashboardService.metrics())
 
 
+class PlatformBillingReportView(APIView):
+    """`GET /platform/billing-report?date_from&date_to` — payments received, pending, owed, renewals due, lapsed."""
+
+    permission_classes = [IsPlatformAdmin]
+
+    def get(self, request):
+        p = request.query_params
+        return Response(BillingService.report(p.get("date_from") or None, p.get("date_to") or None))
+
+
 class PlatformSettingsView(APIView):
     """
     Project-wide (not tenant) settings: branding, contact/SEO, defaults for new tenants, providers, security and
@@ -610,6 +646,10 @@ class PlatformSettingsView(APIView):
         # operations
         "maintenance_mode": False, "maintenance_message": "We are performing scheduled maintenance. Please try again shortly.",
         "backup_schedule": "0 2 * * *", "backup_retention_days": 14, "max_upload_mb": 25, "api_rate_limit_per_min": 60, "announcement_banner": "",
+        # billing (owner, 1 Nov 2026): how many days before expiry the company is asked to pay, where submitted
+        # payments are announced, and how the platform is paid — [{type: bank|wallet|other, name, account_title,
+        # account_number, iban, branch, instructions, active}] — shown on the company's payment screen
+        "payment_notice_days": 3, "billing_email": "", "payment_methods": [], "payment_instructions": "",
     }
     ASSETS = {"logo": "logo_url", "logo_dark": "logo_dark_url", "favicon": "favicon_url", "login_image": "login_image_url"}
 

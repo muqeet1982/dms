@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from apps.core.exceptions import DomainError
 from apps.accounts.page_permissions import extra_perm
 from apps.core.permissions import IsTenantUser, has_tenant_perm
-from apps.core.plan_limits import effective_features
+from apps.core.plan_limits import PlanLimitService, effective_features
 from apps.core.viewsets import TenantModelViewSet
 
 from .exporters import to_csv, to_pdf, to_xlsx
@@ -22,7 +22,8 @@ class ReportCatalogView(APIView):
     required_perm = "reports.view_report"  # the Reports page's View switch; each report still has its own
 
     def get(self, request):
-        return Response([r for r in catalog() if may_see(request, r["permission"])])
+        feats = effective_features(request.tenant)
+        return Response([r for r in catalog() if may_see(request, r["permission"]) and (not r.get("feature") or feats.get(r["feature"]))])
 
 
 class ReportRunView(APIView):
@@ -37,6 +38,8 @@ class ReportRunView(APIView):
             raise DomainError(f"Unknown report {key}", status_code=404)
         if not may_see(request, spec["perm"]):
             raise DomainError("You cannot view this report.", status_code=403)
+        if spec.get("feature"):
+            PlanLimitService.require_feature(request.tenant, spec["feature"])   # a plan without it does not run it
         from datetime import date
 
         params = {}

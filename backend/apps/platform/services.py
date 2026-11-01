@@ -175,24 +175,23 @@ class TenantService:
 
     @staticmethod
     def usage(tenant):
-        from apps.accounts.models import TenantMembership
-        from apps.catalog.models import ProductVariant
         from apps.core.models import Attachment
-        from apps.inventory.models import Warehouse
         from apps.integrations.models import ApiKey, ApiUsage
-        from apps.partners.models import Supplier, SupplierRep
-        from apps.sales.models import SalesOrder
 
         month_start = timezone.localdate().replace(day=1)
         storage = Attachment.all_objects.filter(tenant=tenant).aggregate(s=__import__("django.db.models", fromlist=["Sum"]).Sum("size"))["s"] or 0
         last = tenant.audit_logs.order_by("-at").values_list("at", flat=True).first()
+        from apps.core.plan_limits import PlanLimitService
+
+        count = PlanLimitService.COUNTERS   # the very counters the limits are checked against
         return {
-            "users": TenantMembership.objects.filter(tenant=tenant, status="active", user__user_type="TENANT").count(),
-            "reps": SupplierRep.all_objects.filter(tenant=tenant, is_active=True).count(),
-            "warehouses": Warehouse.all_objects.filter(tenant=tenant, is_active=True).count(),
-            "suppliers": Supplier.all_objects.filter(tenant=tenant, is_active=True).count(),
-            "products": ProductVariant.all_objects.filter(tenant=tenant).count(),
-            "orders_month": SalesOrder.all_objects.filter(tenant=tenant, created_at__date__gte=month_start).count(),
+            "users": count["max_users"](tenant),
+            "reps": count["max_reps"](tenant),
+            "warehouses": count["max_warehouses"](tenant),
+            "suppliers": count["max_suppliers"](tenant),
+            "products": count["max_products"](tenant),
+            "orders_month": count["max_orders_month"](tenant),
+            "custom_roles": count["max_custom_roles"](tenant),
             "storage_mb": round(storage / 1024 / 1024, 1),
             "api_calls_month": ApiUsage.objects.filter(api_key__tenant=tenant, at__date__gte=month_start).count(),
             "api_keys": ApiKey.all_objects.filter(tenant=tenant, is_active=True).count(),
@@ -311,12 +310,19 @@ class SubscriptionService:
 
     @staticmethod
     @transaction.atomic
-    def renew(sub, *, periods=1, from_today=False, actor=None, record_payment=None, coupon_code=None, reason=""):
+    def renew(sub, *, periods=1, from_today=False, actor=None, record_payment=None, coupon_code=None, reason="", charge=None, invoice=None):
+        """
+        `periods` more billing cycles. How it is paid (owner, 1 Nov 2026: "admin can renew a tenant with or without
+        payment"): charge="paid" invoices it and records the payment now, "invoice" leaves the invoice open to pay
+        later, "free" renews without charging at all. `invoice` is the renewal invoice an approved payment settled.
+        An open renewal invoice the company was already asked to pay is reused, never billed a second time.
+        """
         plan = sub.plan
         today = timezone.localdate()
         base = today if (from_today or sub.end_date < today) else sub.end_date
         new_end = SubscriptionService._period_end(base, plan, periods)
         before = {"status": sub.status, "end_date": sub.end_date.isoformat()}
+        charge = charge or ("paid" if record_payment else "invoice")
         sub.end_date = new_end
         sub.status = "active"
         sub.trial_end = None
@@ -326,11 +332,69 @@ class SubscriptionService:
         tenant.suspended_at = None
         tenant.suspended_reason = ""
         tenant.save()
-        invoice = BillingService.create_invoice(tenant, sub, base, new_end, periods=periods, coupon_code=coupon_code, actor=actor)
-        if record_payment:
-            BillingService.record_payment(tenant, invoice=invoice, actor=actor, **BillingService.clean_payment_input(record_payment, invoice))
-        SubscriptionEvent.objects.create(subscription=sub, event_type="renewed", from_data=before, to_data={"status": "active", "end_date": new_end.isoformat(), "invoice": invoice.number}, actor=actor, reason=reason)
-        AuditService.log("platform.subscription.renewed", sub, before=before, after={"end_date": new_end.isoformat()}, actor=actor)
+        open_inv = invoice or BillingService.open_renewal_invoice(sub)
+        if charge == "free":
+            invoice = None
+            if open_inv is not None and open_inv.paid_amount <= 0:
+                open_inv.status = "void"   # renewed free of charge: nothing is owed for it any more
+                open_inv.save(update_fields=["status"])
+        elif open_inv is not None and (invoice is not None or (open_inv.periods == periods and not coupon_code)):
+            invoice = open_inv
+            invoice.period_start, invoice.period_end = base, new_end
+            invoice.save(update_fields=["period_start", "period_end"])
+        else:
+            if open_inv is not None and open_inv.paid_amount <= 0:
+                open_inv.status = "void"
+                open_inv.save(update_fields=["status"])
+            invoice = BillingService.create_invoice(tenant, sub, base, new_end, periods=periods, coupon_code=coupon_code, actor=actor, purpose="renewal")
+        if charge == "paid" and invoice is not None and invoice.balance > 0:
+            BillingService.record_payment(tenant, invoice=invoice, actor=actor, **BillingService.clean_payment_input(record_payment or {}, invoice))
+        SubscriptionEvent.objects.create(subscription=sub, event_type="renewed", from_data=before,
+                                         to_data={"status": "active", "end_date": new_end.isoformat(), "invoice": invoice.number if invoice else None, "charge": charge},
+                                         actor=actor, reason=reason)
+        AuditService.log("platform.subscription.renewed", sub, before=before, after={"end_date": new_end.isoformat(), "charge": charge}, actor=actor)
+        return sub, invoice
+
+    @staticmethod
+    @transaction.atomic
+    def extend(sub, *, days=None, until=None, amount=None, record_payment=None, actor=None, reason=""):
+        """
+        Move the expiry — by `days` from the later of its end and today, or to the date `until` — with or without
+        a charge (owner, 1 Nov 2026: "he can extend expiry with or without payment"). `amount` invoices the
+        extension; `record_payment` also records it paid. A suspended or lapsed company is live again at once.
+        """
+        today = timezone.localdate()
+        if until:
+            new_end = date.fromisoformat(str(until)) if not isinstance(until, date) else until
+        elif days:
+            new_end = max(sub.end_date, today) + timedelta(days=int(days))
+        else:
+            raise DomainError("Give the number of days or the new expiry date.", status_code=400)
+        if new_end < today:
+            raise DomainError("The new expiry date has already passed.", status_code=400)
+        before = {"status": sub.status, "end_date": sub.end_date.isoformat()}
+        sub.end_date = new_end
+        if sub.status == "trial":
+            sub.trial_end = new_end
+        else:
+            sub.status = "active"
+        sub.save()
+        tenant = sub.tenant
+        if tenant.status in ("trial", "active", "past_due", "suspended"):
+            tenant.status = sub.status
+            tenant.suspended_at = None
+            tenant.suspended_reason = ""
+            tenant.save()
+        invoice = None
+        if amount not in (None, "") and Decimal(str(amount)) > 0:
+            invoice = BillingService.create_invoice(tenant, sub, max(date.fromisoformat(before["end_date"]), today), new_end,
+                                                    description=f"Subscription extended to {new_end:%d %b %Y}", override_total=amount, actor=actor, purpose="extension")
+            if record_payment:
+                BillingService.record_payment(tenant, invoice=invoice, actor=actor, **BillingService.clean_payment_input(record_payment, invoice))
+        SubscriptionEvent.objects.create(subscription=sub, event_type="extended", from_data=before,
+                                         to_data={"status": sub.status, "end_date": new_end.isoformat(), "invoice": invoice.number if invoice else None},
+                                         actor=actor, reason=reason)
+        AuditService.log("platform.subscription.extended", sub, before=before, after={"end_date": new_end.isoformat()}, actor=actor)
         return sub, invoice
 
     @staticmethod
@@ -385,7 +449,7 @@ class SubscriptionService:
         invoice = None
         amount = Decimal(net_amount) if net_amount is not None else Decimal(pr["net"])
         if amount != 0:
-            invoice = BillingService.create_invoice(sub.tenant, sub, timezone.localdate(), sub.end_date, description=f"Plan change to {new_plan.name} (pro-rata)", override_total=amount, actor=actor)
+            invoice = BillingService.create_invoice(sub.tenant, sub, timezone.localdate(), sub.end_date, description=f"Plan change to {new_plan.name} (pro-rata)", override_total=amount, actor=actor, purpose="plan_change")
             if record_payment and amount > 0:
                 BillingService.record_payment(sub.tenant, invoice=invoice, actor=actor, **BillingService.clean_payment_input(record_payment, invoice))
         SubscriptionEvent.objects.create(subscription=sub, event_type=kind, from_data=before, to_data=sub.plan_snapshot | {"prorata": pr}, actor=actor, reason=reason)
@@ -425,32 +489,60 @@ class SubscriptionService:
         return sub
 
     @staticmethod
+    def apply_status(sub, today=None):
+        """
+        Where one subscription stands today: past its end → past due; past its grace days too → suspended, and the
+        company with it (owner, 1 Nov 2026: "after grace period, tenant suspended all user logins"). Idempotent —
+        the daily job runs it, and so does every login, so a missed run never leaves a lapsed company open.
+        """
+        today = today or timezone.localdate()
+        tenant = sub.tenant
+        if not sub.auto_status_change or sub.status not in ("trial", "active", "past_due") or tenant.status in ("cancelled", "archived"):
+            return None
+        new = None
+        if sub.end_date < today:
+            new = "suspended" if (today - sub.end_date).days > sub.grace_days else "past_due"
+        if new and new != sub.status:
+            before = sub.status
+            sub.status = new
+            sub.save(update_fields=["status"])
+            tenant.status = new
+            if new == "suspended":
+                tenant.suspended_at = timezone.now()
+                tenant.suspended_reason = "Subscription payment overdue"
+            tenant.save()
+            SubscriptionEvent.objects.create(subscription=sub, event_type="status_changed", from_data={"status": before}, to_data={"status": new}, reason="automatic")
+            if new == "suspended":
+                BillingService.tell_owner(tenant, "suspension", f"{tenant.display_name} is suspended",
+                                          f"The subscription ended on {sub.end_date:%d %b %Y} and the {sub.grace_days} grace days have passed. "
+                                          "Sign in as the owner to pay and reactivate it.")
+            return new
+        if not new and tenant.status in ("trial", "active", "past_due") and tenant.status != sub.status:
+            tenant.status = sub.status   # the company reads what its subscription is (TDN read "trial" on an active plan)
+            tenant.save(update_fields=["status", "updated_at"])
+        return None
+
+    @staticmethod
     def run_status_checks():
         """Daily job: trial/active → past_due after end_date, → suspended after grace."""
         today = timezone.localdate()
         changed = []
         for sub in Subscription.objects.filter(status__in=["trial", "active", "past_due"], auto_status_change=True).select_related("tenant"):
-            tenant = sub.tenant
-            if tenant.status in ("cancelled", "archived"):
-                continue
-            new = None
-            if sub.end_date < today:
-                if (today - sub.end_date).days > sub.grace_days:
-                    new = "suspended"
-                else:
-                    new = "past_due"
-            if new and new != sub.status:
-                before = sub.status
-                sub.status = new
-                sub.save(update_fields=["status"])
-                tenant.status = new
-                if new == "suspended":
-                    tenant.suspended_at = timezone.now()
-                    tenant.suspended_reason = "Subscription expired"
-                tenant.save()
-                SubscriptionEvent.objects.create(subscription=sub, event_type="status_changed", from_data={"status": before}, to_data={"status": new}, reason="automatic")
-                changed.append((tenant.slug, new))
+            new = SubscriptionService.apply_status(sub, today)
+            if new:
+                changed.append((sub.tenant.slug, new))
+        # the renewal invoice is issued when the company is first told its payment is due
+        for sub in Subscription.objects.filter(status__in=["trial", "active", "past_due"]).select_related("tenant"):
+            if BillingService.notice(sub.tenant):
+                BillingService.renewal_invoice(sub)
         return changed
+
+    @staticmethod
+    def refresh_tenant(tenant):
+        """Bring one company's status up to date (at login): the daily job may not have run yet today."""
+        sub = tenant.active_subscription
+        if sub is not None:
+            SubscriptionService.apply_status(sub)
 
     @staticmethod
     def send_reminders():
@@ -477,6 +569,259 @@ class SubscriptionService:
 
 
 class BillingService:
+    OPEN = ("issued", "partial", "overdue")
+
+    # ------------------------------------------------- the company's side: what it owes, and paying it
+    @staticmethod
+    def open_renewal_invoice(sub):
+        if sub is None:
+            return None
+        return sub.invoices.filter(purpose="renewal", status__in=BillingService.OPEN, is_credit_note=False).order_by("-created_at").first()
+
+    @staticmethod
+    def renewal_invoice(sub, periods=1):
+        """The invoice the next renewal is paid against: issued when the company is first told its payment is
+        due, from its expiry (or today, once lapsed) for one billing cycle, due on the expiry date."""
+        inv = BillingService.open_renewal_invoice(sub)
+        if inv is not None:
+            return inv
+        today = timezone.localdate()
+        base = sub.end_date if sub.end_date >= today else today
+        return BillingService.create_invoice(sub.tenant, sub, base, SubscriptionService._period_end(base, sub.plan, periods), periods=periods,
+                                             purpose="renewal", due_date=max(sub.end_date, today))
+
+    @staticmethod
+    def open_balance(tenant):
+        rows = tenant.platform_invoices.filter(status__in=BillingService.OPEN, is_credit_note=False)
+        return sum((i.balance for i in rows), Decimal("0"))
+
+    @staticmethod
+    def notice(tenant):
+        """
+        The payment message a company is shown (owner, 1 Nov 2026: "message on login for payment 3 days before
+        payment due and until grace period"): `due` from N days before expiry, `overdue` through the grace days,
+        `suspended` after. None the rest of the time.
+        """
+        sub = tenant.active_subscription
+        if sub is None or tenant.status in ("cancelled", "archived"):
+            return None
+        today = timezone.localdate()
+        days = int(platform_setting("payment_notice_days", 3) or 3)
+        grace_until = sub.end_date + timedelta(days=sub.grace_days)
+        left = (sub.end_date - today).days
+        if tenant.status == "suspended":
+            level = "suspended"
+        elif sub.end_date < today:
+            level = "overdue"
+        elif left <= days:
+            level = "due"
+        else:
+            return None
+        inv = BillingService.open_renewal_invoice(sub)
+        owed = BillingService.open_balance(tenant)
+        amount = owed if owed > 0 else Decimal(SubscriptionService.price_breakdown(sub)["total"])
+        currency = sub.plan_snapshot.get("currency", "PKR")
+        pending = list(tenant.platform_payments.filter(status="pending"))
+        what = "trial" if sub.status == "trial" else f"{sub.plan.name} subscription"
+        money = f"{currency} {amount:,.0f}"
+        if level == "suspended":
+            text = f"{tenant.display_name} is suspended for non-payment. Pay {money} to reactivate every user's access."
+        elif level == "overdue":
+            text = f"Your {what} expired on {sub.end_date:%d %b %Y}. Pay {money} by {grace_until:%d %b %Y}, or access for every user stops."
+        else:
+            when = "today" if left == 0 else f"on {sub.end_date:%d %b %Y} ({left} day{'s' if left != 1 else ''} left)"
+            text = f"Your {what} ends {when}. Pay {money} to continue without interruption."
+        if pending:
+            text += f" Your payment of {currency} {sum((p.amount for p in pending), Decimal('0')):,.0f} is awaiting approval."
+        return {"level": level, "message": text, "end_date": sub.end_date, "grace_until": grace_until, "days_left": left,
+                "amount_due": str(amount), "currency": currency, "invoice": inv.number if inv else None,
+                "pending_payments": len(pending), "pending_amount": str(sum((p.amount for p in pending), Decimal("0")))}
+
+    @staticmethod
+    def payment_methods():
+        """How the platform is paid — bank accounts, wallets, anything else — as set in Platform settings → Billing."""
+        methods = [m for m in (platform_setting("payment_methods", []) or []) if isinstance(m, dict) and m.get("active", True)]
+        note = (platform_setting("payment_instructions", "") or "").strip()
+        return methods + ([{"type": "note", "name": "How to pay", "instructions": note}] if note else [])
+
+    @staticmethod
+    @transaction.atomic
+    def submit_payment(tenant, user, *, amount, method, reference="", paid_at=None, note="", receipt_file=None, invoice=None):
+        """
+        The company's owner says it has paid, with the screenshot to prove it (owner, 1 Nov 2026). It waits as
+        "awaiting approval" until a platform admin checks it; nothing renews before that.
+        """
+        if receipt_file is None:
+            raise DomainError("Attach the payment screenshot or receipt.", code="receipt_required", status_code=400)
+        if receipt_file.size > 10 * 1024 * 1024:
+            raise DomainError("The screenshot is over 10 MB — send a smaller picture or PDF.", status_code=400)
+        name = (receipt_file.name or "").lower()
+        if not name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf", ".heic")):
+            raise DomainError("Send the screenshot as a picture (PNG, JPG) or a PDF.", status_code=400)
+        amount = Decimal(str(amount or 0))
+        if amount <= 0:
+            raise DomainError("Enter the amount you paid.", status_code=400)
+        if method not in dict(PlatformPayment.METHODS):
+            raise DomainError("Choose how you paid.", status_code=400)
+        import os
+        import uuid
+
+        receipt_file.name = f"{uuid.uuid4().hex}{os.path.splitext(name)[1]}"   # a screenshot of a bank slip: no guessable link
+        sub = tenant.active_subscription
+        if invoice is None and sub is not None:
+            invoice = BillingService.renewal_invoice(sub)
+        pay = PlatformPayment.objects.create(tenant=tenant, invoice=invoice, amount=amount, currency=tenant.base_currency, method=method, reference=reference,
+                                             paid_at=paid_at or timezone.localdate(), receipt_file=receipt_file, note=note, status="pending", submitted_by=user)
+        if sub is not None:
+            SubscriptionEvent.objects.create(subscription=sub, event_type="payment_submitted", to_data={"amount": str(amount), "method": method, "reference": reference}, actor=user)
+        AuditService.log("platform.payment.submitted", pay, after={"amount": str(amount), "method": method, "invoice": invoice.number if invoice else None}, actor=user)
+        BillingService.tell_platform(f"Payment to approve: {tenant.display_name} — {pay.currency} {amount:,.0f}",
+                                     f"{tenant.display_name} submitted a {pay.get_method_display()} payment of {pay.currency} {amount:,.2f}"
+                                     f"{' (ref ' + reference + ')' if reference else ''}{' for ' + invoice.number if invoice else ''}. "
+                                     "Check the screenshot under Platform → Payments → Awaiting approval.")
+        return pay
+
+    @staticmethod
+    @transaction.atomic
+    def approve_payment(pay, *, actor=None, periods=None, note=""):
+        """
+        A platform admin accepts a submitted payment: it counts on its invoice, and a renewal invoice paid in full
+        renews the subscription — the company is live again (owner, 1 Nov 2026: "superadmin approves it to
+        reactivate the subscription plan").
+        """
+        if pay.status != "pending":
+            raise DomainError(f"This payment is {pay.get_status_display().lower()}, not awaiting approval.")
+        tenant = pay.tenant
+        sub = tenant.active_subscription
+        inv = pay.invoice
+        if inv is None and sub is not None:
+            inv = BillingService.renewal_invoice(sub, periods=int(periods or 1))
+            pay.invoice = inv
+        pay.status, pay.reviewed_by, pay.reviewed_at, pay.review_note = "paid", actor, timezone.now(), note
+        pay.save(update_fields=["invoice", "status", "reviewed_by", "reviewed_at", "review_note"])
+        renewed_to = None
+        if inv is not None:
+            inv.paid_amount += pay.amount
+            inv.status = "paid" if inv.paid_amount >= inv.total else "partial"
+            inv.save(update_fields=["paid_amount", "status"])
+            if inv.status == "partial":
+                pay.status = "partial"
+                pay.save(update_fields=["status"])
+            elif inv.purpose == "renewal" and sub is not None:
+                sub, _ = SubscriptionService.renew(sub, periods=inv.periods, actor=actor, charge="invoice", invoice=inv,
+                                                   reason=f"payment {pay.reference or pay.id} approved")
+                renewed_to = sub.end_date
+        if sub is not None:
+            SubscriptionEvent.objects.create(subscription=sub, event_type="payment_approved", to_data={"amount": str(pay.amount), "renewed_to": renewed_to.isoformat() if renewed_to else None}, actor=actor, reason=note)
+        AuditService.log("platform.payment.approved", pay, after={"amount": str(pay.amount), "renewed_to": str(renewed_to) if renewed_to else None}, actor=actor)
+        if renewed_to:
+            BillingService.tell_owner(tenant, "payment_receipt", "Payment approved — subscription renewed",
+                                      f"Your payment of {pay.currency} {pay.amount:,.2f} is approved. {tenant.display_name} is renewed until {renewed_to:%d %b %Y}.")
+        else:
+            left = inv.balance if inv is not None else Decimal("0")
+            BillingService.tell_owner(tenant, "payment_receipt", "Payment approved",
+                                      f"Your payment of {pay.currency} {pay.amount:,.2f} is approved." + (f" {pay.currency} {left:,.2f} is still due on {inv.number}." if left > 0 else ""))
+        return pay
+
+    @staticmethod
+    @transaction.atomic
+    def reject_payment(pay, *, actor=None, reason=""):
+        if pay.status != "pending":
+            raise DomainError(f"This payment is {pay.get_status_display().lower()}, not awaiting approval.")
+        if not (reason or "").strip():
+            raise DomainError("Say why the payment is turned down — the company is told.", status_code=400)
+        pay.status, pay.reviewed_by, pay.reviewed_at, pay.review_note = "rejected", actor, timezone.now(), reason.strip()
+        pay.save(update_fields=["status", "reviewed_by", "reviewed_at", "review_note"])
+        sub = pay.tenant.active_subscription
+        if sub is not None:
+            SubscriptionEvent.objects.create(subscription=sub, event_type="payment_rejected", to_data={"amount": str(pay.amount)}, actor=actor, reason=reason)
+        AuditService.log("platform.payment.rejected", pay, after={"reason": reason}, actor=actor)
+        BillingService.tell_owner(pay.tenant, "payment_rejected", "Payment not approved",
+                                  f"Your payment of {pay.currency} {pay.amount:,.2f}{' (ref ' + pay.reference + ')' if pay.reference else ''} was not approved: {reason.strip()}. "
+                                  "Check the details and submit it again.")
+        return pay
+
+    @staticmethod
+    def report(date_from=None, date_to=None):
+        """
+        The platform's billing record (owner, 1 Nov 2026: "keep record of payments and report"): money received in
+        the window by method, month and company, what waits for approval, what was turned down or refunded, what
+        is still owed, which renewals fall due in the next 30 days and which companies have lapsed.
+        """
+        today = timezone.localdate()
+        date_from = date.fromisoformat(str(date_from)) if date_from else today.replace(day=1)
+        date_to = date.fromisoformat(str(date_to)) if date_to else today
+        pays = list(PlatformPayment.objects.filter(paid_at__gte=date_from, paid_at__lte=date_to).select_related("tenant", "invoice", "recorded_by", "reviewed_by", "submitted_by").order_by("paid_at", "created_at"))
+        got = [p for p in pays if p.status in ("paid", "partial", "refunded")]
+        refunds = sum((r.amount for p in got for r in p.refunds.all() if date_from <= r.at.date() <= date_to), Decimal("0"))
+        by = lambda key: {k: str(sum((p.amount for p in got if key(p) == k), Decimal("0"))) for k in sorted({key(p) for p in got})}  # noqa: E731
+        invoiced = PlatformInvoice.objects.filter(created_at__date__gte=date_from, created_at__date__lte=date_to, is_credit_note=False).exclude(status="void")
+        pending = PlatformPayment.objects.filter(status="pending").select_related("tenant")
+        outstanding = {}
+        for inv in PlatformInvoice.objects.filter(status__in=BillingService.OPEN, is_credit_note=False).select_related("tenant"):
+            row = outstanding.setdefault(str(inv.tenant_id), {"tenant": inv.tenant.display_name, "tenant_id": str(inv.tenant_id), "invoices": 0, "balance": Decimal("0"), "oldest_due": inv.due_date})
+            row["invoices"] += 1
+            row["balance"] += inv.balance
+            if inv.due_date and (row["oldest_due"] is None or inv.due_date < row["oldest_due"]):
+                row["oldest_due"] = inv.due_date
+        soon, lapsed = [], []
+        for sub in Subscription.objects.filter(status__in=["trial", "active", "past_due", "suspended"]).select_related("tenant", "plan").order_by("end_date"):
+            if sub.tenant.status in ("cancelled", "archived") or sub != sub.tenant.active_subscription:
+                continue
+            row = {"tenant": sub.tenant.display_name, "tenant_id": str(sub.tenant_id), "plan": sub.plan.name, "status": sub.tenant.status, "end_date": sub.end_date,
+                   "days_left": (sub.end_date - today).days, "grace_until": sub.end_date + timedelta(days=sub.grace_days),
+                   "price": SubscriptionService.price_breakdown(sub)["total"]}
+            if sub.end_date < today or sub.tenant.status == "suspended":
+                lapsed.append(row)
+            elif (sub.end_date - today).days <= 30:
+                soon.append(row)
+        return {
+            "date_from": date_from, "date_to": date_to,
+            "summary": {"received": str(sum((p.amount for p in got), Decimal("0"))), "refunded": str(refunds), "payments": len(got),
+                        "invoiced": str(sum((i.total for i in invoiced), Decimal("0"))), "pending_count": pending.count(),
+                        "pending_amount": str(sum((p.amount for p in pending), Decimal("0"))),
+                        "rejected": sum(1 for p in pays if p.status == "rejected"),
+                        "outstanding": str(sum((r["balance"] for r in outstanding.values()), Decimal("0")))},
+            "by_method": {dict(PlatformPayment.METHODS).get(k, k): v for k, v in by(lambda p: p.method).items()},
+            "by_month": by(lambda p: p.paid_at.strftime("%Y-%m")),
+            "by_tenant": by(lambda p: p.tenant.display_name),
+            "payments": [{"id": str(p.id), "date": p.paid_at, "tenant": p.tenant.display_name, "tenant_id": str(p.tenant_id), "invoice": p.invoice.number if p.invoice_id else "",
+                          "method": p.get_method_display(), "reference": p.reference, "amount": str(p.amount), "status": p.status, "status_label": p.get_status_display(),
+                          "by": (p.reviewed_by or p.recorded_by).full_name if (p.reviewed_by_id or p.recorded_by_id) else "", "submitted_by": p.submitted_by.full_name if p.submitted_by_id else "",
+                          "note": p.review_note or p.note} for p in pays],
+            "pending": [{"id": str(p.id), "tenant": p.tenant.display_name, "amount": str(p.amount), "method": p.get_method_display(), "date": p.paid_at} for p in pending],
+            "outstanding": [{**r, "balance": str(r["balance"])} for r in sorted(outstanding.values(), key=lambda r: -r["balance"])],
+            "renewals_due": soon, "lapsed": lapsed,
+        }
+
+    @staticmethod
+    def tell_owner(tenant, ntype, title, body):
+        """The owner hears about their own billing: an inbox message and an email. Never raises."""
+        from apps.core.notifications import notify, send_email
+
+        owner = tenant.owner
+        if owner is None:
+            return
+        try:
+            notify(owner, f"billing.{ntype}", title, body, {"screen": "subscription"}, tenant_id=tenant.id)
+        except Exception:  # noqa: BLE001 — a notification must never undo the billing step it reports
+            pass
+        if owner.email:
+            send_email(owner.email, title, body)
+
+    @staticmethod
+    def tell_platform(title, body):
+        """The platform's billing desk: the address in Platform settings → Billing, and every admin who may bill."""
+        from apps.accounts.models import User
+        from apps.core.notifications import send_email
+
+        to = {platform_setting("billing_email", "") or ""}
+        for u in User.objects.filter(user_type="PLATFORM_ADMIN", is_active=True):
+            if u.email and "platform.manage_billing" in u.platform_perms():
+                to.add(u.email)
+        for addr in filter(None, to):
+            send_email(addr, title, body)
+
     @staticmethod
     def clean_payment_input(data, invoice):
         """Payment dict from the API: drop blanks, default amount to the invoice total, keep only known fields."""
@@ -493,7 +838,7 @@ class BillingService:
 
     @staticmethod
     @transaction.atomic
-    def create_invoice(tenant, sub, period_start, period_end, *, periods=1, description="", coupon_code=None, override_total=None, actor=None, is_credit_note=False):
+    def create_invoice(tenant, sub, period_start, period_end, *, periods=1, description="", coupon_code=None, override_total=None, actor=None, is_credit_note=False, purpose="manual", due_date=None):
         breakdown = SubscriptionService.price_breakdown(sub, periods=periods)
         lines = [{"description": description or line["label"], "amount": line["amount"]} for line in breakdown["lines"]]
         subtotal = Decimal(breakdown["subtotal"])
@@ -522,7 +867,8 @@ class BillingService:
         inv = PlatformInvoice.objects.create(
             tenant=tenant, subscription=sub, number=BillingService._next_invoice_number("PCN-" if is_credit_note else "PINV-"), period_start=period_start, period_end=period_end,
             description=description, subtotal=subtotal, discount=discount, tax=Decimal("0"), total=total, currency=sub.plan_snapshot.get("currency", "PKR"),
-            status="issued" if total > 0 else "paid", due_date=period_start + timedelta(days=7), lines=lines, is_credit_note=is_credit_note,
+            status="issued" if total > 0 else "paid", due_date=due_date or period_start + timedelta(days=7), lines=lines, is_credit_note=is_credit_note,
+            purpose=purpose, periods=periods,
         )
         AuditService.log("platform.invoice.created", inv, after={"number": inv.number, "total": str(total)}, actor=actor)
         return inv
@@ -604,6 +950,10 @@ class DashboardService:
             "payments_month": str(payments_month), "past_due_amount": str(past_due), "top_tenants_by_orders": top,
             "api_calls_month": ApiUsage.objects.filter(at__date__gte=month_start).count(),
             "tenants_by_status": tenants_by_status,
+            # the billing desk's to-do (owner, 1 Nov 2026): payments to approve, renewals coming up
+            "pending_payments": PlatformPayment.objects.filter(status="pending").count(),
+            "pending_amount": str(PlatformPayment.objects.filter(status="pending").aggregate(s=Sum("amount"))["s"] or 0),
+            "expiring_7_days": Subscription.objects.filter(status__in=["trial", "active"], end_date__gte=today, end_date__lte=today + timedelta(days=7)).count(),
         }
 
 

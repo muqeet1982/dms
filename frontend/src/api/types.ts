@@ -15,6 +15,8 @@ export type Tenant = {
 export type Me = {
   user: User; memberships: Membership[]; tenant: Tenant | null; permissions: string[]; features: Record<string, any>; limits: Record<string, any>; is_owner: boolean;
   impersonating: boolean; impersonation_expires_at?: string | null; platform_permissions: string[];
+  /** the payment message from 3 days before expiry through the grace days, or suspended (owner, 1 Nov 2026) */
+  billing?: { level: "due" | "overdue" | "suspended"; message: string; end_date: string; grace_until: string; days_left: number; amount_due: string; currency: string; invoice: string | null; pending_payments: number; pending_amount: string } | null;
   /** the distinct role_type of the roles this login holds, and whether any of them (or ownership) is an office one */
   role_types?: ("internal" | "external" | "platform")[]; has_office_role?: boolean;
   /** per-page switches: { users: { view, add, edit, delete, extras } } — see apps/accounts/page_permissions.py */

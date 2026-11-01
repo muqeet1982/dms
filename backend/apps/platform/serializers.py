@@ -174,6 +174,8 @@ class TenantCreateSerializer(serializers.Serializer):
 class PlatformInvoiceSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.display_name", read_only=True)
     balance = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    purpose_label = serializers.CharField(source="get_purpose_display", read_only=True)
 
     class Meta:
         model = PlatformInvoice
@@ -191,6 +193,10 @@ class PlatformPaymentSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.display_name", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default="")
     recorded_by_name = serializers.CharField(source="recorded_by.full_name", read_only=True, default="")
+    submitted_by_name = serializers.CharField(source="submitted_by.full_name", read_only=True, default="")
+    reviewed_by_name = serializers.CharField(source="reviewed_by.full_name", read_only=True, default="")
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    method_label = serializers.CharField(source="get_method_display", read_only=True)
     refunds = PlatformRefundSerializer(many=True, read_only=True)
 
     class Meta:

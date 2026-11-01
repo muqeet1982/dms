@@ -56,6 +56,8 @@ class SupplierViewSet(TenantModelViewSet):
         from apps.core.plan_limits import PlanLimitService
 
         PlanLimitService.check(self.request.tenant, "max_suppliers")
+        if Supplier.objects.filter(is_active=True).exists():
+            PlanLimitService.require_feature(self.request.tenant, "multi_supplier")   # more than one principal is a plan feature
         if not serializer.validated_data.get("code"):
             serializer.validated_data["code"] = next_number("supplier", unique_for=(Supplier, "code"))
         opening = serializer.validated_data.pop("opening_balance", None)

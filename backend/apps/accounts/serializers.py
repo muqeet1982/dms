@@ -63,8 +63,31 @@ class LoginSerializer(TokenObtainPairSerializer):
         return open_session(user, self.context.get("request"), device_name=attrs.get("device_name"), platform=attrs.get("platform") or "web", context=self.context)
 
 
+def refuse_if_suspended(user):
+    """
+    A company suspended for non-payment signs nobody in but its owner, who lands on the payment screen (owner,
+    1 Nov 2026: "after grace period, tenant suspended all user logins"). Each company's standing is brought up to
+    date first, so a daily check that has not run yet does not leave a lapsed company open.
+    """
+    if user.is_platform_admin:
+        return
+    from apps.platform.services import SubscriptionService
+
+    memberships = list(TenantMembership.objects.filter(user=user, status="active").select_related("tenant", "tenant__owner"))
+    for m in memberships:
+        if m.tenant.status in ("trial", "active", "past_due"):
+            SubscriptionService.refresh_tenant(m.tenant)
+            m.tenant.refresh_from_db(fields=["status"])
+    if memberships and all(m.tenant.status == "suspended" and not m.is_owner for m in memberships):
+        t = memberships[0].tenant
+        who = t.owner.full_name if t.owner_id and t.owner.full_name else "your company's owner"
+        raise DomainError(f"{t.display_name} is suspended for non-payment. Ask {who} to renew the subscription — "
+                          "you can sign in again as soon as it is paid.", code="tenant_suspended", status_code=403)
+
+
 def open_session(user, request, *, device_name=None, platform="web", context=None):
     """Issue a refresh-token family + UserSession for `user` and build the login response (password login and QR login)."""
+    refuse_if_suspended(user)
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login_ip = getattr(request, "client_ip", None)

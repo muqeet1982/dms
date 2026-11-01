@@ -10,6 +10,7 @@ import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { SIDE_SWITCH } from "./menu";
 import type { MenuSection } from "./menu";
+import { BillingNotice } from "@/features/settings/Billing";
 
 export function AppShell({ sections, notificationsTo }: { sections: MenuSection[]; notificationsTo?: string }) {
   const brand = useBranding();
@@ -78,6 +79,7 @@ export function AppShell({ sections, notificationsTo }: { sections: MenuSection[
           }}><i className="ti ti-arrow-back-up me-1" />Back to owner</button>
         </div>
       )}
+      <BillingNotice />
       {announcements.data?.filter((a: any) => !dismissed.includes(a.id)).map((a: any) => (
         <div key={a.id} className={`alert alert-${a.level === "danger" ? "danger" : a.level === "warning" ? "warning" : "info"} border-0 rounded-0 mb-0 d-flex align-items-center justify-content-between py-2`} style={{ marginLeft: "var(--sidebar-width, 0)" }}>
           <div className="fs-13"><strong>{a.title}</strong> — {a.body}</div>

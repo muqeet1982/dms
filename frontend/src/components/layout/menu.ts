@@ -32,7 +32,7 @@ export const TENANT_MENU: MenuSection[] = [
     title: "INVENTORY", items: [
       { label: "Products", icon: "ti-package", children: [
         { label: "All products", to: "/app/catalog/products", page: "products" }, { label: "Discounts & schemes", to: "/app/catalog/discounts", page: "products" }, { label: "Categories", to: "/app/catalog/categories", page: "categories" }, { label: "Brands", to: "/app/catalog/brands", page: "brands" }, { label: "Units", to: "/app/catalog/uoms", page: "uoms" },
-        { label: "Price lists", to: "/app/catalog/price-lists", page: "price_lists" }, { label: "Barcode labels", to: "/app/catalog/labels", page: "labels" },
+        { label: "Price lists", to: "/app/catalog/price-lists", page: "price_lists" }, { label: "Barcode labels", to: "/app/catalog/labels", page: "labels", feature: "barcode" },
       ] },
       { label: "Stock", icon: "ti-chart-arrows", children: [
         { label: "Stock levels", to: "/app/inventory/stock", page: "stock" }, { label: "Scan lookup", to: "/app/inventory/lookup", page: "stock" }, { label: "Stock ledger", to: "/app/inventory/movements", page: "movements" }, { label: "Batches & expiry", to: "/app/inventory/batches", page: "batches" },
@@ -48,7 +48,7 @@ export const TENANT_MENU: MenuSection[] = [
   {
     title: "ACCOUNTS", items: [
       { label: "Accounting", icon: "ti-report-money", children: [
-        { label: "Accounts", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals" },
+        { label: "Accounts", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals", feature: "advanced_accounting" },
         { label: "Opening balances", to: "/app/accounting/opening-balances", page: "opening_balances" }, { label: "Periods & year end", to: "/app/accounting/periods", page: "periods" },
         { label: "Transactions", to: "/app/accounting/payments", page: "payments" }, { label: "Cheques", to: "/app/accounting/cheques", page: "cheques" }, { label: "Cheque books", to: "/app/accounting/cheque-books", page: "cheque_books" }, { label: "Expenses", to: "/app/accounting/expenses", page: "expenses" }, { label: "Expense categories", to: "/app/accounting/expense-categories", page: "accounts" },
         { label: "Cash & bank", to: "/app/accounting/bank", page: "bank_cash" }, { label: "Bank reconciliation", to: "/app/accounting/reconciliation", page: "reconciliation" },
@@ -77,7 +77,7 @@ export const TENANT_MENU: MenuSection[] = [
 
 export const PLATFORM_MENU: MenuSection[] = [
   { title: "PLATFORM", items: [{ label: "Dashboard", to: "/admin", end: true, icon: "ti-smart-home" }, { label: "Tenants", to: "/admin/tenants", icon: "ti-building" }, { label: "Subscriptions", to: "/admin/subscriptions", icon: "ti-refresh" }, { label: "Plans & add-ons", to: "/admin/plans", icon: "ti-stack-2" }] },
-  { title: "TENANT BILLING", items: [{ label: "Subscription invoices", to: "/admin/invoices", icon: "ti-file-invoice" }, { label: "Payments received", to: "/admin/payments", icon: "ti-cash" }, { label: "Outstanding", to: "/admin/outstanding", icon: "ti-alert-circle" }] },
+  { title: "TENANT BILLING", items: [{ label: "Subscription invoices", to: "/admin/invoices", icon: "ti-file-invoice" }, { label: "Payments & approvals", to: "/admin/payments", icon: "ti-cash" }, { label: "Outstanding", to: "/admin/outstanding", icon: "ti-alert-circle" }, { label: "Billing report", to: "/admin/billing-report", icon: "ti-report-money" }] },
   { title: "COMMUNICATION", items: [{ label: "Announcements", to: "/admin/announcements", icon: "ti-speakerphone" }, { label: "Message templates", to: "/admin/templates", icon: "ti-template" }, { label: "Support tickets", to: "/admin/tickets", icon: "ti-lifebuoy" }, { label: "Notification log", to: "/admin/notification-log", icon: "ti-mail" }] },
   { title: "SYSTEM", items: [{ label: "Feature flags", to: "/admin/feature-flags", icon: "ti-flag" }, { label: "Banned IPs", to: "/admin/security", icon: "ti-shield-lock" }, { label: "Firewall", to: "/admin/firewall", icon: "ti-shield-check" }, { label: "Mobile app (APK)", to: "/admin/mobile-app", icon: "ti-device-mobile" }, { label: "Platform users", to: "/admin/users", icon: "ti-user-shield" }, { label: "Settings", to: "/admin/settings", icon: "ti-settings" }, { label: "Legal documents", to: "/admin/legal", icon: "ti-gavel" }, { label: "Audit log", to: "/admin/audit", icon: "ti-history" }, { label: "Health", to: "/admin/health", icon: "ti-heartbeat" }] },
 ];

@@ -13,6 +13,7 @@ from apps.core.exceptions import DomainError
 from apps.core.numbering import next_number
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import DocumentViewSet, TenantModelViewSet
+from apps.core.plan_limits import PlanLimitService
 
 from .coa_template import ensure_fiscal_year
 from .models import GL_LIVE, Account, AccountingPeriod, BankAccount, BankStatementLine, CashAccount, ChequeBook, ChequeLeaf, CostCentre, Expense, FiscalYear, JournalEntry, JournalLine, OpeningBalanceBatch, Payment, PostingRule
@@ -107,6 +108,7 @@ class JournalEntryViewSet(DocumentViewSet):
         return qs.distinct()
 
     def perform_create(self, serializer):
+        PlanLimitService.require_feature(self.request.tenant, "advanced_accounting")   # manual journals are advanced accounting
         d = serializer.validated_data
         lines = d.pop("lines")
         vt = str(self.request.data.get("voucher_type") or d.get("voucher_type") or "jv").lower()
@@ -292,6 +294,10 @@ class CostCentreViewSet(TenantModelViewSet):
     perm_map = page_perms("accounts")
     pagination_class = None
     queryset = CostCentre.objects.all()
+
+    def perform_create(self, serializer):
+        PlanLimitService.require_feature(self.request.tenant, "advanced_accounting")   # cost centres are advanced accounting
+        super().perform_create(serializer)
 
 
 class BankAccountViewSet(TenantModelViewSet):

@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
 import type { Me } from "@/api/types";
 import { Spinner } from "@/components/ui/Bits";
+import { SuspendedScreen } from "@/features/settings/Billing";
 
 /** The two tenant front ends behind one login: the office app at /app and the rep portal at /rep. */
 export type Side = "office" | "rep";
@@ -120,6 +121,9 @@ export function RequireAuth({ mode }: { mode: "tenant" | "platform" | "rep" | "a
   // the shell's own root, so a deep link into the other side still opens what it points at.
   const saved = landing && !admin && sides.dual ? savedSide() : null;
   if (side && saved && saved !== side && loc.pathname === (side === "rep" ? "/rep" : "/app")) return <Navigate to={saved === "rep" ? "/rep" : "/app"} replace />;
+  // suspended for non-payment (owner, 1 Nov 2026): no app at all — the owner gets the payment screen, the rest are
+  // told who can pay. A platform admin working inside the company still sees it as it is.
+  if (side && !admin && cur.tenant?.status === "suspended") return <SuspendedScreen me={cur} />;
   return <Outlet />;
 }
 

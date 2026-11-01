@@ -72,6 +72,15 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    key: "billing", label: "Billing",
+    hint: "How companies pay the platform. The methods below are shown on a company's payment screen from the notice days before its expiry; a payment they send waits under Payments & approvals.",
+    fields: [
+      { name: "payment_notice_days", label: "Ask to pay this many days before expiry", type: "number", col: "col-md-4" },
+      { name: "billing_email", label: "Send new payments to (email)", type: "email", col: "col-md-4", hint: "plus every platform admin who may record payments" },
+      { name: "payment_instructions", label: "General instructions", type: "textarea", col: "col-md-12", hint: "e.g. write your company name in the transfer remarks" },
+    ],
+  },
+  {
     key: "ops", label: "Operations", fields: [
       { name: "maintenance_mode", label: "Maintenance mode", type: "checkbox", col: "col-md-3" }, { name: "maintenance_message", label: "Maintenance message", col: "col-md-9" },
       { name: "backup_schedule", label: "Backup schedule (cron)", col: "col-md-3" }, { name: "backup_retention_days", label: "Backup retention (days)", type: "number", col: "col-md-2" },
@@ -164,6 +173,8 @@ export function PlatformSettingsPage() {
         )}
         </div>
 
+        {tab === "billing" && <PaymentMethodsEditor value={values.payment_methods || []} onChange={(v) => set("payment_methods", v)} />}
+
         {tab === "branding" && (
           <div className="row g-3 mt-1">
             {ASSETS.map((a) => (
@@ -189,5 +200,37 @@ export function PlatformSettingsPage() {
       <div className="d-flex justify-content-end mt-3"><button className="btn btn-primary" disabled={saving} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save changes"}</button></div>
       <Alert kind="info">These settings apply to the whole product (login page, emails, QR codes, security limits). Company-specific settings — logo on invoices, taxes, warehouses — live inside each tenant under Settings.</Alert>
     </>
+  );
+}
+
+
+const KINDS = [{ value: "bank", label: "Bank account" }, { value: "wallet", label: "Mobile wallet (JazzCash / Easypaisa)" }, { value: "other", label: "Other" }];
+
+/** The platform's ways to be paid (owner, 1 Nov 2026: "showing bank information and all payment methods"). */
+function PaymentMethodsEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
+  const set = (i: number, patch: any) => onChange(value.map((m, k) => (k === i ? { ...m, ...patch } : m)));
+  const blank = { type: "bank", name: "", account_title: "", account_number: "", iban: "", branch: "", instructions: "", active: true };
+  return (
+    <div className="border-top mt-3 pt-3">
+      <div className="d-flex justify-content-between align-items-center mb-2"><h6 className="fs-13 mb-0">Payment methods</h6><button className="btn btn-sm btn-outline-primary" onClick={() => onChange([...value, blank])}><i className="ti ti-plus me-1" />Add a method</button></div>
+      {!value.length && <p className="text-muted fs-13">No methods yet — add your bank account and wallets, then Save changes.</p>}
+      {value.map((m, i) => (
+        <div key={i} className="border rounded p-3 mb-2">
+          <div className="row g-2">
+            <Field label="Kind" col="col-md-3"><select className="form-select" value={m.type} onChange={(e) => set(i, { type: e.target.value })}>{KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}</select></Field>
+            <Field label={m.type === "bank" ? "Bank name" : m.type === "wallet" ? "Wallet" : "Name"} col="col-md-3"><input className="form-control" value={m.name} onChange={(e) => set(i, { name: e.target.value })} placeholder={m.type === "bank" ? "Meezan Bank" : m.type === "wallet" ? "JazzCash" : ""} /></Field>
+            <Field label="Account title" col="col-md-3"><input className="form-control" value={m.account_title} onChange={(e) => set(i, { account_title: e.target.value })} /></Field>
+            <Field label={m.type === "wallet" ? "Mobile number" : "Account number"} col="col-md-3"><input className="form-control" value={m.account_number} onChange={(e) => set(i, { account_number: e.target.value })} /></Field>
+            {m.type === "bank" && <Field label="IBAN" col="col-md-4"><input className="form-control" value={m.iban} onChange={(e) => set(i, { iban: e.target.value })} /></Field>}
+            {m.type === "bank" && <Field label="Branch" col="col-md-4"><input className="form-control" value={m.branch} onChange={(e) => set(i, { branch: e.target.value })} /></Field>}
+            <Field label="Instructions" col={m.type === "bank" ? "col-md-4" : "col-md-12"}><input className="form-control" value={m.instructions} onChange={(e) => set(i, { instructions: e.target.value })} /></Field>
+          </div>
+          <div className="d-flex justify-content-between align-items-center mt-1">
+            <div className="form-check form-switch mb-0"><input className="form-check-input" type="checkbox" id={`pm-${i}`} checked={m.active !== false} onChange={(e) => set(i, { active: e.target.checked })} /><label className="form-check-label fs-12" htmlFor={`pm-${i}`}>Shown to companies</label></div>
+            <button className="btn btn-sm btn-outline-danger" onClick={() => onChange(value.filter((_, k) => k !== i))}><i className="ti ti-trash me-1" />Remove</button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

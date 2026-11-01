@@ -85,9 +85,9 @@ REPORTS = {
     "general_ledger": {"title": "General ledger", "area": "financial", "params": DATE_RANGE + [{"name": "account", "type": "account"}], "query": fin.general_ledger, "perm": FIN},
     "journal_register": {"title": "Journal register", "area": "financial", "params": DATE_RANGE + [{"name": "type", "type": "select", "options": ["", "manual", "auto", "opening", "closing"]}], "query": fin.journal_register, "perm": FIN},
     "day_book": {"title": "Day book", "area": "financial", "params": [{"name": "date", "type": "date"}], "query": fin.day_book, "perm": FIN},
-    "profit_and_loss": {"title": "Profit & loss", "area": "financial", "params": DATE_RANGE + [{"name": "cost_centre", "type": "cost_centre"}, {"name": "compare_from", "type": "date"}, {"name": "compare_to", "type": "date"}], "query": fin.profit_and_loss, "perm": FIN},
-    "balance_sheet": {"title": "Balance sheet", "area": "financial", "params": AS_OF, "query": fin.balance_sheet, "perm": FIN},
-    "cash_flow": {"title": "Cash flow (indirect)", "area": "financial", "params": DATE_RANGE, "query": fin.cash_flow, "perm": FIN},
+    "profit_and_loss": {"feature": "advanced_accounting", "title": "Profit & loss", "area": "financial", "params": DATE_RANGE + [{"name": "cost_centre", "type": "cost_centre"}, {"name": "compare_from", "type": "date"}, {"name": "compare_to", "type": "date"}], "query": fin.profit_and_loss, "perm": FIN},
+    "balance_sheet": {"feature": "advanced_accounting", "title": "Balance sheet", "area": "financial", "params": AS_OF, "query": fin.balance_sheet, "perm": FIN},
+    "cash_flow": {"feature": "advanced_accounting", "title": "Cash flow (indirect)", "area": "financial", "params": DATE_RANGE, "query": fin.cash_flow, "perm": FIN},
     "cash_bank_book": {"title": "Cash & bank book", "area": "financial", "params": DATE_RANGE + [{"name": "account", "type": "account"}], "query": fin.cash_bank_book, "perm": FIN},
     "tax_summary": {"title": "Tax summary per tax type", "area": "financial", "params": DATE_RANGE, "query": fin.tax_summary, "perm": FIN},
     "advance_tax_register": {"title": "Advance income tax register (236G / 236H)", "area": "financial", "params": DATE_RANGE, "query": ops.advance_tax_register, "perm": FIN},
@@ -100,4 +100,4 @@ REPORTS = {
 
 
 def catalog():
-    return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"]} for k, v in REPORTS.items()]
+    return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"], "feature": v.get("feature")} for k, v in REPORTS.items()]

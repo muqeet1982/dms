@@ -20,5 +20,7 @@ urlpatterns = [
     path("settings/branding", tenant_settings.BrandingView.as_view()),
     path("settings/branding/asset", tenant_settings.BrandingView.as_view()),
     path("subscription", views.TenantSubscriptionView.as_view()),
+    path("billing/payments", views.TenantBillingPaymentView.as_view()),
+    path("billing/invoices/<uuid:pk>/pdf", views.TenantBillingInvoicePdfView.as_view()),
     path("announcements", views.TenantAnnouncementsView.as_view()),
 ] + router.urls

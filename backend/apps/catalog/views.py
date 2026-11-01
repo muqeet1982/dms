@@ -10,6 +10,7 @@ from apps.accounts.page_permissions import extra_perm, page_perms
 from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import TenantModelViewSet
+from apps.core.plan_limits import PlanLimitService
 
 from .models import Barcode, Brand, Category, Packaging, PriceList, PriceListItem, Product, ProductOffer, ProductVariant, Scheme, TaxClass, TaxRate, TaxType, UnitOfMeasure
 from .serializers import (
@@ -252,6 +253,7 @@ class VariantViewSet(TenantModelViewSet):
     @action(detail=True, methods=["post"])
     @require_perm("catalog.change_product")
     def barcodes(self, request, pk=None):
+        PlanLimitService.require_feature(request.tenant, "barcode")
         s = BarcodeSerializer(data={**request.data, "variant": pk})
         s.is_valid(raise_exception=True)
         if s.validated_data.get("is_primary"):
@@ -400,6 +402,7 @@ class LabelPrintView(APIView):
     required_perm = extra_perm("products", "print_barcode")
 
     def post(self, request):
+        PlanLimitService.require_feature(request.tenant, "barcode")   # "Barcodes & labels" is a plan feature
         from apps.inventory.models import Batch
 
         items = []

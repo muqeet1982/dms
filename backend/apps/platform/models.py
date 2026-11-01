@@ -283,7 +283,8 @@ class SubscriptionAddOn(models.Model):
 
 
 class SubscriptionEvent(models.Model):
-    TYPES = [("created", "Created"), ("discount", "Discount changed"), ("renewed", "Renewed"), ("upgraded", "Upgraded"), ("downgraded", "Downgraded"), ("suspended", "Suspended"), ("reactivated", "Reactivated"), ("cancelled", "Cancelled"), ("trial_extended", "Trial extended"), ("trial_converted", "Trial converted"), ("limit_override", "Limit override"), ("status_changed", "Status changed"), ("addon_changed", "Add-on changed")]
+    TYPES = [("created", "Created"), ("discount", "Discount changed"), ("renewed", "Renewed"), ("upgraded", "Upgraded"), ("downgraded", "Downgraded"), ("suspended", "Suspended"), ("reactivated", "Reactivated"), ("cancelled", "Cancelled"), ("trial_extended", "Trial extended"), ("trial_converted", "Trial converted"), ("limit_override", "Limit override"), ("status_changed", "Status changed"), ("addon_changed", "Add-on changed"),
+             ("extended", "Expiry extended"), ("payment_submitted", "Payment submitted"), ("payment_approved", "Payment approved"), ("payment_rejected", "Payment rejected")]
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     subscription = models.ForeignKey(Subscription, on_delete=models.CASCADE, related_name="events")
     event_type = models.CharField(max_length=20, choices=TYPES)
@@ -317,6 +318,11 @@ class PlatformInvoice(models.Model):
     lines = models.JSONField(default=list, blank=True)
     pdf_file = models.FileField(upload_to="platform/invoices/", null=True, blank=True)
     is_credit_note = models.BooleanField(default=False)
+    # what the invoice is for: a renewal pays for `periods` more billing cycles, and paying it in full renews the
+    # subscription (owner, 1 Nov 2026: "superadmin approves it to reactivate the subscription plan")
+    PURPOSES = [("renewal", "Renewal"), ("extension", "Extension"), ("plan_change", "Plan change"), ("manual", "Manual")]
+    purpose = models.CharField(max_length=12, choices=PURPOSES, default="manual")
+    periods = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -329,7 +335,9 @@ class PlatformInvoice(models.Model):
 
 class PlatformPayment(models.Model):
     METHODS = [("bank_transfer", "Bank transfer"), ("cash", "Cash"), ("cheque", "Cheque"), ("jazzcash", "JazzCash"), ("easypaisa", "Easypaisa"), ("card", "Card"), ("other", "Other")]
-    STATUS = [("paid", "Paid"), ("partial", "Partial"), ("pending", "Pending"), ("refunded", "Refunded"), ("failed", "Failed")]
+    # "pending" is a payment the company submitted (with its screenshot) that a platform admin has not checked yet;
+    # approving makes it "paid", turning it down makes it "rejected" (owner, 1 Nov 2026)
+    STATUS = [("paid", "Paid"), ("partial", "Partial"), ("pending", "Awaiting approval"), ("rejected", "Rejected"), ("refunded", "Refunded"), ("failed", "Failed")]
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="platform_payments")
     invoice = models.ForeignKey(PlatformInvoice, null=True, blank=True, on_delete=models.SET_NULL, related_name="payments")
@@ -342,6 +350,10 @@ class PlatformPayment(models.Model):
     receipt_file = models.FileField(upload_to="platform/receipts/", null=True, blank=True)
     note = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=STATUS, default="paid")
+    submitted_by = models.ForeignKey(django_settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    reviewed_by = models.ForeignKey(django_settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.CharField(max_length=300, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

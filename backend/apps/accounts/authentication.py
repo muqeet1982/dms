@@ -109,6 +109,53 @@ class TenantJWTAuthentication(JWTAuthentication):
         if tenant is not None:
             if tenant.status in ("cancelled", "archived") and not user.is_platform_admin:
                 raise exceptions.PermissionDenied("This company account is closed.")
+            if tenant.status in ("trial", "active", "past_due") and not user.is_platform_admin:
+                _lapsed_now(tenant)   # past its grace days today, even if the scheduled check has not run yet
+            if tenant.status == "suspended" and not user.is_platform_admin:
+                _suspended_gate(request, user, tenant)
+            # a rep's own login is the plan's "Rep portal" feature (Features & white-label)
+            m = getattr(request, "membership", None)
+            if m is not None and m.supplier_rep_id and not user.is_platform_admin and not getattr(request, "impersonating", False):
+                from apps.core.plan_limits import effective_features
+
+                if not effective_features(tenant).get("rep_portal"):
+                    from apps.core.exceptions import DomainError
+
+                    raise DomainError(f"Rep logins are not part of {tenant.display_name}'s plan.", code="feature_disabled", status_code=403)
             request.tenant = tenant
             set_current_tenant(tenant)
         return user, token
+
+
+# A suspended company (owner, 1 Nov 2026: "tenant suspended all user logins"): every user may still ask who they
+# are and sign out, so the app can say why it stopped; the owner may also reach the payment screen — the
+# subscription, paying, the platform's announcements and support — to pay and reactivate it. Nothing else.
+SUSPENDED_OPEN = ("/api/v1/me", "/api/v1/auth/")
+SUSPENDED_OWNER = SUSPENDED_OPEN + ("/api/v1/subscription", "/api/v1/billing", "/api/v1/announcements", "/api/v1/support-tickets")
+
+
+def _lapsed_now(tenant):
+    from datetime import timedelta
+
+    sub = tenant.active_subscription
+    if sub is not None and sub.auto_status_change and sub.end_date + timedelta(days=sub.grace_days) < timezone.localdate():
+        from apps.platform.services import SubscriptionService
+
+        SubscriptionService.apply_status(sub)
+        tenant.status = sub.tenant.status
+
+
+def _suspended_gate(request, user, tenant):
+    from apps.core.exceptions import DomainError
+
+    from .models import TenantMembership
+
+    owner = TenantMembership.objects.filter(user=user, tenant=tenant, is_owner=True, status="active").exists()
+    if request.path.startswith(SUSPENDED_OWNER if owner else SUSPENDED_OPEN):
+        return
+    if owner:
+        msg = f"{tenant.display_name} is suspended for non-payment. Open Subscription to pay and reactivate it."
+    else:
+        who = tenant.owner.full_name if tenant.owner_id and tenant.owner.full_name else "your company's owner"
+        msg = f"{tenant.display_name} is suspended for non-payment. Ask {who} to renew the subscription."
+    raise DomainError(msg, code="tenant_suspended", status_code=403)

@@ -220,14 +220,66 @@ class TenantSubscriptionView(APIView):
         from apps.platform.serializers import PlatformInvoiceSerializer, PlatformPaymentSerializer, SubscriptionSerializer
         from apps.platform.services import TenantService
 
+        from apps.platform.models import PlatformPayment
+        from apps.platform.services import BillingService
+
         t = request.tenant
         sub = t.active_subscription
+        notice = BillingService.notice(t)
+        if notice and sub is not None:
+            BillingService.renewal_invoice(sub)   # the company is asked to pay: there is an invoice to pay against
+        m = getattr(request, "membership", None)
         return Response({
             "subscription": SubscriptionSerializer(sub).data if sub else None,
             "limits": effective_limits(t), "features": effective_features(t), "usage": TenantService.usage(t),
-            "invoices": PlatformInvoiceSerializer(t.platform_invoices.all()[:50], many=True).data,
-            "payments": PlatformPaymentSerializer(t.platform_payments.all()[:50], many=True).data,
+            "invoices": PlatformInvoiceSerializer(t.platform_invoices.all()[:50], many=True, context={"request": request}).data,
+            "payments": PlatformPaymentSerializer(t.platform_payments.select_related("invoice", "submitted_by", "reviewed_by").all()[:50], many=True, context={"request": request}).data,
+            # paying (owner, 1 Nov 2026): what is owed, how to pay it, and whether this login may submit a payment
+            "notice": BillingService.notice(t), "balance": str(BillingService.open_balance(t)),
+            "payment_methods": BillingService.payment_methods(), "method_choices": [{"value": k, "label": v} for k, v in PlatformPayment.METHODS],
+            "can_pay": bool(m and m.is_owner),
         })
+
+
+class TenantBillingPaymentView(APIView):
+    """`POST /api/v1/billing/payments` (multipart): the owner submits a payment with its screenshot — it waits for
+    a platform admin's approval, which renews the subscription (owner, 1 Nov 2026)."""
+
+    permission_classes = [IsTenantUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        from apps.platform.models import PlatformInvoice
+        from apps.platform.serializers import PlatformPaymentSerializer
+        from apps.platform.services import BillingService
+
+        m = getattr(request, "membership", None)
+        if not (m and m.is_owner):
+            raise DomainError("Only the company's owner can submit a subscription payment.", status_code=403)
+        d = request.data
+        inv = PlatformInvoice.objects.filter(pk=d.get("invoice"), tenant=request.tenant).first() if d.get("invoice") else None
+        pay = BillingService.submit_payment(request.tenant, request.user, amount=d.get("amount"), method=d.get("method", ""), reference=d.get("reference", ""),
+                                            paid_at=d.get("paid_at") or None, note=d.get("note", ""), receipt_file=request.FILES.get("receipt"), invoice=inv)
+        return Response(PlatformPaymentSerializer(pay, context={"request": request}).data, status=201)
+
+
+class TenantBillingInvoicePdfView(APIView):
+    """`GET /api/v1/billing/invoices/<id>/pdf` — the company's own platform invoice."""
+
+    permission_classes = [IsTenantUser]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+
+        from apps.platform.models import PlatformInvoice
+        from apps.platform.services import BillingService
+
+        inv = PlatformInvoice.objects.filter(pk=pk, tenant=request.tenant).first()
+        if inv is None:
+            raise DomainError("No such invoice.", status_code=404)
+        resp = HttpResponse(BillingService.invoice_pdf(inv), content_type="application/pdf")
+        resp["Content-Disposition"] = f'inline; filename="{inv.number}.pdf"'
+        return resp
 
 
 class TenantAnnouncementsView(APIView):

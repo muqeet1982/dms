@@ -164,11 +164,11 @@ class UserService:
                 code="duplicate", errors={"phone": [f"Already used by {taken_phone.full_name or phone}."]}, status_code=400,
             )
         user = taken or taken_phone
+        # an office login takes a seat on the plan, whether the person is new or already has an account elsewhere;
+        # a rep's login does not — the rep record it belongs to is what max_reps counts (create_rep checks it)
+        if (user.user_type if user is not None else user_type) == "TENANT":
+            PlanLimitService.check(tenant, "max_users")
         if user is None:
-            if user_type != "EXTERNAL":
-                PlanLimitService.check(tenant, "max_users")
-            else:
-                PlanLimitService.check(tenant, "max_reps")
             user = User(email=email or None, phone=phone or None, full_name=full_name, user_type=user_type)
             if password:
                 user.set_password(password)
@@ -237,6 +237,8 @@ class UserService:
         if status is not None and status != membership.status:
             if membership.is_owner:
                 raise DomainError("The owner cannot be deactivated. Transfer ownership first.")
+            if status == "active" and user.user_type == "TENANT":
+                PlanLimitService.check(membership.tenant, "max_users")   # switching a user back on takes a seat again
             membership.status = status
             if status == "suspended":
                 SessionService.revoke_all(user, reason="deactivated")

@@ -245,7 +245,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_TIMEZONE = "Asia/Karachi"      # so a nightly task fires at night here, not at five in the morning
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
-    "subscription-status-daily": {"task": "apps.platform.tasks.check_subscription_statuses", "schedule": 60 * 60 * 24},
+    "subscription-status-daily": {"task": "apps.platform.tasks.check_subscription_statuses", "schedule": 60 * 60 * 6},  # 4× a day: a run lost in a restart costs hours, not a day
     "renewal-reminders-daily": {"task": "apps.platform.tasks.send_renewal_reminders", "schedule": 60 * 60 * 24},
     "stock-cache-recompute-nightly": {"task": "apps.inventory.tasks.recompute_stock_levels", "schedule": 60 * 60 * 24},
     "expire-reservations": {"task": "apps.sales.tasks.expire_reservations", "schedule": 60 * 15},
