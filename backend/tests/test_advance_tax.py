@@ -139,7 +139,7 @@ def test_print_excel_preview_and_reports_show_it(api, tenant, world):
     with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         assert api.get(f"/api/v1/invoices/{inv['id']}/pdf").status_code == 200
     html = seen["html"]
-    assert "Advance Income Tax (0.5%)" in html and "3.72" in html and seen["grand_total"] == D("744")
+    assert "Advance Income Tax (0.5%)" in html and "236G/H" in html and "3.72" in html and seen["grand_total"] == D("744")
     assert html.index("Grand Total") < html.index("Advance Income Tax") < html.index("Total Payable")
     with mock.patch("apps.sales.documents.render_doc", side_effect=capture):
         assert api.get(f"/api/v1/sales-orders/{order['id']}/pdf").status_code == 200

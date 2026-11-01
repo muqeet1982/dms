@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { money } from "@/lib/format";
 
 /** " (15%)" after a discount label — the document's own % (owner, 27 Oct 2026: "in total discount text also show (%)"). */
@@ -7,7 +8,8 @@ const pctNote = (p: any) => (Number(p) > 0 ? ` (${Number(p)}%)` : "");
  * `advance_income_tax`, for live previews; a saved document carries its own figure (owner, 31 Oct 2026). */
 export const advanceTax = (grand: number, rate?: number | string | null) =>
   Number(rate) > 0 && grand > 0 ? Math.round((grand * Number(rate) / 100 + Number.EPSILON) * 100) / 100 : 0;
-const advanceLabel = (rate?: number | string | null) => `Advance Income Tax${Number(rate) > 0 ? ` (${Number(rate)}%)` : ""}`;
+// the section code under the label (owner, 1 Nov 2026: "under advance income tax show its code like 236G/H")
+const advanceLabel = (rate?: number | string | null) => <>Advance Income Tax{Number(rate) > 0 ? ` (${Number(rate)}%)` : ""}<div className="fs-11 text-muted">236G/H</div></>;
 
 /**
  * A tax document's footer — the owner's sample (26 Oct 2026), the same on every screen and print:
@@ -24,7 +26,7 @@ export function TaxFooterRows({ span, trail = 0, sub, discount = 0, discountLabe
   const totalTax = gst + fed + extra + further;
   const grand = net + totalTax;
   const adv = advance ?? advanceTax(grand, advanceRate);
-  const row = (label: string, v: string, bold = false) => (
+  const row = (label: ReactNode, v: string, bold = false) => (
     <tr className={bold ? "fw-bold" : ""}><td colSpan={span} className={`text-end ${className}`}>{label}</td><td className={`num ${className}`}>{v}</td>{Array.from({ length: trail }, (_, i) => <td key={i} />)}</tr>
   );
   return <>
@@ -56,7 +58,7 @@ export function PlainFooterRows({ span, trail = 0, sub, discount = 0, discountPc
 }) {
   const grand = sub - discount;
   const adv = advance ?? advanceTax(grand, advanceRate);
-  const row = (label: string, v: string, bold = false) => (
+  const row = (label: ReactNode, v: string, bold = false) => (
     <tr className={bold ? "fw-bold" : ""}><td colSpan={span} className={`text-end ${className}`}>{label}</td><td className={`num ${className}`}>{v}</td>{Array.from({ length: trail }, (_, i) => <td key={i} />)}</tr>
   );
   return <>
