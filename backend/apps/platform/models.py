@@ -203,6 +203,12 @@ class Tenant(models.Model):
         "tracking_retention_days": 90,
         "tracking_notice": "Your location is recorded during working hours so the office can plan routes and confirm visits.",
         "invoice_footer": "",
+        # purchases (owner, 1 Nov 2026): a PO's Expected date and a supplier bill's payment Due date default to
+        # this many days after the order / bill date
+        "purchase_due_days": 45,
+        # a product is due for reorder when its stock falls below this % of its Max stock (owner, 1 Nov 2026);
+        # its Min stock, when higher, still counts
+        "reorder_point_pct": 30,
     }
 
     def setting(self, key):

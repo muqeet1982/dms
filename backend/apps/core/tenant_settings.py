@@ -97,7 +97,12 @@ class CompanyProfileView(APIView):
                 setattr(tenant, field, value)
                 changed.append(field)
         if "settings" in request.data and isinstance(request.data["settings"], dict):
-            tenant.settings = {**(tenant.settings or {}), **{k: v for k, v in request.data["settings"].items() if k in SETTINGS_KEYS}}
+            # every rule the system reads (Tenant.DEFAULT_SETTINGS) besides the document options: the Rules tab's
+            # credit policy, stock reservation, dispatch, count tolerance … were dropped on save (audit, 1 Nov 2026)
+            from apps.platform.models import Tenant
+
+            known = set(SETTINGS_KEYS) | set(Tenant.DEFAULT_SETTINGS)
+            tenant.settings = {**(tenant.settings or {}), **{k: v for k, v in request.data["settings"].items() if k in known}}
             changed.append("settings")
         if changed:
             tenant.save(update_fields=[*{f for f in changed if f != "settings"}, *(["settings"] if "settings" in changed else []), "updated_at"] if hasattr(tenant, "updated_at") else None)

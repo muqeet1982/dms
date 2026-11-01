@@ -121,6 +121,7 @@ export function OrderDetailPage() {
           {o.status === "draft" && page.add && <button className="btn btn-primary" disabled={!!busy} onClick={() => run("submit")}>Submit</button>}
           {o.status === "submitted" && page.can("confirm") && <button className="btn btn-outline-info" disabled={!!busy} onClick={() => run("review")}>Mark under review</button>}
           {confirmable && page.can("confirm") && <button className="btn btn-success" disabled={!!busy} onClick={() => (o.status === "on_hold_credit" ? setDlg("confirm") : run("confirm", {}, { success: "Order confirmed" }))}><i className="ti ti-circle-check me-1" />Confirm</button>}
+          {o.status === "on_hold_stock" && page.can("confirm") && <button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("confirm", { allow_partial: true }, { success: "Confirmed with the stock there is — the rest stays on the order as a backorder" })}><i className="ti ti-package me-1" />Confirm with available stock</button>}
           {confirmable && page.can("confirm") && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setDlg("hold")}>Hold</button>}
           {confirmable && page.can("hold") && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("reject")}>Reject</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}

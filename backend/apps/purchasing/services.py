@@ -61,7 +61,10 @@ class PurchaseOrderService:
     @staticmethod
     @transaction.atomic
     def create(*, supplier, warehouse, lines, date=None, expected_date=None, notes="", freight=Decimal("0"), supplier_ref="", reference=""):
-        po = PurchaseOrder.objects.create(number=next_number("purchase_order"), supplier=supplier, warehouse=warehouse, date=date or timezone.localdate(), expected_date=expected_date, notes=notes, freight=freight or 0, supplier_ref=supplier_ref, reference=reference, currency=supplier.tenant.base_currency)
+        date = date or timezone.localdate()
+        if expected_date in (None, ""):
+            expected_date = date + timezone.timedelta(days=int(supplier.tenant.setting("purchase_due_days") or 45))
+        po = PurchaseOrder.objects.create(number=next_number("purchase_order"), supplier=supplier, warehouse=warehouse, date=date, expected_date=expected_date, notes=notes, freight=freight or 0, supplier_ref=supplier_ref, reference=reference, currency=supplier.tenant.base_currency)
         PurchaseOrderService.write_lines(po, lines)
         AuditService.log("created", po, after={"supplier": supplier.name, "total": str(po.total)})
         return po
@@ -464,7 +467,7 @@ class PurchaseBillService:
     @transaction.atomic
     def create(*, supplier, grns=(), bill_date=None, due_date=None, supplier_invoice_no="", lines=None, discount=Decimal("0"), freight=Decimal("0"), notes="", tax1_type=None, tax2_type=None, tax1_total=None, tax2_total=None):
         bill_date = bill_date or timezone.localdate()
-        bill = PurchaseBill.objects.create(number=derived_number(grns[0].po.number if grns and grns[0].po_id else None, "purchase_bill", PurchaseBill), supplier=supplier, bill_date=bill_date, due_date=due_date or (bill_date + timezone.timedelta(days=supplier.payment_terms_days or 0)), supplier_invoice_no=supplier_invoice_no, notes=notes, discount=discount or 0, freight=freight or 0)
+        bill = PurchaseBill.objects.create(number=derived_number(grns[0].po.number if grns and grns[0].po_id else None, "purchase_bill", PurchaseBill), supplier=supplier, bill_date=bill_date, due_date=due_date or (bill_date + timezone.timedelta(days=int(supplier.tenant.setting("purchase_due_days") or 45))), supplier_invoice_no=supplier_invoice_no, notes=notes, discount=discount or 0, freight=freight or 0)
         snapshot, subtotal, t1, t2 = [], Decimal("0"), Decimal("0"), Decimal("0")
         if grns:
             for g in grns:

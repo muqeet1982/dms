@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
@@ -121,6 +123,19 @@ class ProductOfferViewSet(TenantModelViewSet):
         return qs
 
 
+
+def _below_reorder_point(qs, tenant):
+    """Products whose stock is under their reorder point: the tenant's % of Max stock, or Min stock when higher."""
+    from django.db.models import DecimalField, ExpressionWrapper, F, Value
+    from django.db.models.functions import Coalesce, Greatest
+
+    from apps.inventory.services import AlertService
+
+    pct = AlertService.reorder_pct(tenant) / 100
+    point = Greatest(F("min_stock"), ExpressionWrapper(F("max_stock") * Value(pct), output_field=DecimalField(max_digits=18, decimal_places=3)))
+    return (qs.annotate(_rp_on_hand=Coalesce(Sum("variants__stock_levels__qty_on_hand"), Value(Decimal("0"))), _rp_point=point)
+            .filter(_rp_point__gt=0, _rp_on_hand__lt=F("_rp_point")))
+
 class ProductViewSet(TenantModelViewSet):
     # whoever may delete a product may bring it back (owner, 29 Oct 2026: "option to undelete from a table")
     perm_map = page_perms("products", {"variants": "catalog.change_product", "stats": "catalog.view_product", "restore": "catalog.delete_product"})
@@ -142,12 +157,17 @@ class ProductViewSet(TenantModelViewSet):
         if self.request.query_params.get("with_stock") == "1" or "stock_on_hand" in self.request.query_params.get("ordering", ""):
             qs = qs.annotate(stock_on_hand=Sum("variants__stock_levels__qty_on_hand"))
         if self.request.query_params.get("low_stock") == "1":
-            from django.db.models import F
-
-            qs = qs.annotate(stock_on_hand=Sum("variants__stock_levels__qty_on_hand")).filter(stock_on_hand__lt=F("min_stock"))
-        # a deleted product leaves the list (its documents keep it); Products → Deleted products asks for it by name
-        if self.action in ("list", "export") and not self.request.query_params.get("status"):
-            qs = qs.exclude(status="archived")
+            qs = _below_reorder_point(qs, self.request.tenant)
+        # the list opens on ACTIVE products (owner, 1 Nov 2026: "by default active products should show in product
+        # list"); status=inactive / archived (Deleted products) ask for the others, status_view=all for active + inactive
+        if self.action in ("list", "export"):
+            view = self.request.query_params.get("status_view")   # the list's Status filter: inactive | all | archived
+            if view == "all":
+                qs = qs.exclude(status="archived")
+            elif view in ("inactive", "archived"):
+                qs = qs.filter(status=view)
+            elif not self.request.query_params.get("status"):
+                qs = qs.filter(status="active")
         return qs.distinct()
 
     def perform_create(self, serializer):
@@ -208,7 +228,7 @@ class ProductViewSet(TenantModelViewSet):
         from django.db.models import F
 
         qs = Product.objects.exclude(status="archived")   # deleted products are not counted
-        low = qs.annotate(s=Sum("variants__stock_levels__qty_on_hand")).filter(s__lt=F("min_stock")).count()
+        low = _below_reorder_point(qs.filter(status="active"), request.tenant).count()
         return Response({"total": qs.count(), "active": qs.filter(status="active").count(), "inactive": qs.exclude(status="active").count(), "low_stock": low, "variants": ProductVariant.objects.count()})
 
 
@@ -236,6 +256,11 @@ class VariantViewSet(TenantModelViewSet):
         supplier = self.request.query_params.get("for_supplier")
         if supplier:
             qs = qs.filter(Q(product__supplier_id=supplier) | Q(product__supplier__isnull=True))
+        # the item search on orders, purchase orders, invoices and returns (is_active=true) offers only items of an
+        # ACTIVE product — an inactive product keeps its variants switched on, so the variant flag alone let it through
+        # (owner, 1 Nov 2026: "inactive products should not show in sale order search item, PO etc")
+        if str(self.request.query_params.get("is_active", "")).lower() in ("true", "1") and self.request.query_params.get("include_inactive") != "1":
+            qs = qs.filter(product__status="active")
         return qs.distinct()
 
     def perform_destroy(self, instance):

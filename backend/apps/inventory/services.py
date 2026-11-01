@@ -611,11 +611,13 @@ class AlertService:
         InventoryAlert.all_objects.filter(tenant=tenant, resolved_at__isnull=True).exclude(type="drift").update(resolved_at=timezone.now())
         today = timezone.localdate()
         out = []
-        for v in ProductVariant.all_objects.filter(tenant=tenant, is_active=True).select_related("product"):
+        pct = AlertService.reorder_pct(tenant)
+        for v in ProductVariant.all_objects.filter(tenant=tenant, is_active=True, product__status="active").select_related("product"):
             on_hand = StockLevel.all_objects.filter(tenant=tenant, variant=v).aggregate(s=Sum("qty_on_hand"))["s"] or Decimal("0")
             p = v.product
-            if p.min_stock and on_hand < p.min_stock:
-                out.append(InventoryAlert(tenant=tenant, type="low_stock", variant=v, message=f"{v.name}: {on_hand} on hand, below minimum {p.min_stock}", data={"on_hand": str(on_hand), "min": str(p.min_stock), "reorder": str(max(p.max_stock - on_hand, p.reorder_qty))}))
+            point = AlertService.reorder_point(p, pct)
+            if point and on_hand < point:
+                out.append(InventoryAlert(tenant=tenant, type="low_stock", variant=v, message=f"{v.name}: {on_hand} on hand, below its reorder point {point:g}", data={"on_hand": str(on_hand), "min": str(point), "reorder": str(AlertService.reorder_qty(p, on_hand))}))
             if on_hand < 0:
                 out.append(InventoryAlert(tenant=tenant, type="negative", variant=v, message=f"{v.name}: negative stock {on_hand}", data={"on_hand": str(on_hand)}))
             last = StockMovement.all_objects.filter(tenant=tenant, variant=v).order_by("-occurred_at").values_list("occurred_at", flat=True).first()
@@ -631,14 +633,37 @@ class AlertService:
         return len(out)
 
     @staticmethod
+    def reorder_pct(tenant=None):
+        from apps.core.tenancy import get_current_tenant
+
+        tenant = tenant or get_current_tenant()
+        return Decimal(str(tenant.setting("reorder_point_pct") if tenant is not None else 30))
+
+    @staticmethod
+    def reorder_point(p, pct):
+        """
+        Below this a product is due for reorder (owner, 1 Nov 2026: "reorder qty 30% for all products" — "alert at
+        30% of max stock"): the set % of its Max stock, or its Min stock when that is higher. 0 = never.
+        """
+        by_pct = (Decimal(p.max_stock or 0) * pct / 100).quantize(Decimal("0.001")) if p.max_stock else Decimal("0")
+        return max(by_pct, Decimal(p.min_stock or 0))
+
+    @staticmethod
+    def reorder_qty(p, on_hand):
+        """Order back up to Max stock — at least the product's own Reorder qty."""
+        return max(Decimal(p.max_stock or 0) - on_hand, Decimal(p.reorder_qty or 0), Decimal("0"))
+
+    @staticmethod
     def reorder_suggestions():
         from apps.catalog.models import ProductVariant
 
         rows = []
-        for v in ProductVariant.objects.filter(is_active=True).select_related("product", "product__supplier"):
+        pct = AlertService.reorder_pct()
+        for v in ProductVariant.objects.filter(is_active=True, product__status="active").select_related("product", "product__supplier"):
             on_hand = StockLevel.objects.filter(variant=v).aggregate(s=Sum("qty_on_hand"))["s"] or Decimal("0")
             p = v.product
-            if p.min_stock and on_hand < p.min_stock:
-                qty = max(p.max_stock - on_hand, p.reorder_qty, Decimal("0"))
-                rows.append({"variant_id": str(v.id), "sku": v.sku, "name": v.name, "supplier_id": str(p.supplier_id) if p.supplier_id else None, "supplier": p.supplier.name if p.supplier else "", "on_hand": str(on_hand), "min_stock": str(p.min_stock), "max_stock": str(p.max_stock), "suggested_qty": str(qty), "cost": str(v.avg_cost or v.cost_price)})
+            point = AlertService.reorder_point(p, pct)
+            if point and on_hand < point:
+                qty = AlertService.reorder_qty(p, on_hand)
+                rows.append({"variant_id": str(v.id), "sku": v.sku, "name": v.name, "supplier_id": str(p.supplier_id) if p.supplier_id else None, "supplier": p.supplier.name if p.supplier else "", "on_hand": str(on_hand), "min_stock": str(p.min_stock), "max_stock": str(p.max_stock), "reorder_point": str(point), "suggested_qty": str(qty), "cost": str(v.avg_cost or v.cost_price)})
         return rows

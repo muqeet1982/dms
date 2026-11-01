@@ -111,13 +111,15 @@ class ExtBase(APIView):
             )
         return qs
 
-    def _resolve_lines(self, rows):
+    def _resolve_lines(self, rows, order=None):
         """
         Order lines as the app sends them — by barcode, SKU or variant id — into what `OrderService` wants.
 
         Shared by creating an order and correcting one, so the two cannot drift: a scanned carton has to mean
-        the same quantity on a correction as it did on the original.
+        the same quantity on a correction as it did on the original. A product made inactive is not sold any more
+        (owner, 1 Nov 2026) — refused, unless it is already on the order being corrected.
         """
+        keep = set(order.lines.values_list("variant_id", flat=True)) if order is not None else set()
         lines = []
         for l in rows or []:
             variant, packaging = None, None
@@ -129,6 +131,8 @@ class ExtBase(APIView):
                 variant = ProductVariant.objects.filter(pk=l["variant_id"], is_active=True).first()
             if variant is None:
                 raise DomainError(f"Unknown product in line {l}", status_code=400)
+            if variant.product.status != "active" and variant.pk not in keep:
+                raise DomainError(f"{variant.name} is no longer sold (inactive). Refresh the product list.", code="product_inactive", status_code=400)
             if l.get("packaging"):
                 packaging = Packaging.objects.filter(variant=variant, name__iexact=l["packaging"]).first() or packaging
             lines.append({"variant": variant, "packaging": packaging, "qty": Decimal(str(l.get("qty", 1))),
@@ -339,7 +343,7 @@ class ExtOrderPreviewView(ExtBase):
             order = qs.first()
             if order is None:
                 raise DomainError("Not your order.", status_code=404)
-        lines = self._resolve_lines(d.get("lines"))
+        lines = self._resolve_lines(d.get("lines"), order=order)
         if not lines:
             raise DomainError("No lines.", status_code=400)
         return Response(OrderService.preview(customer, lines, order=order))
@@ -396,7 +400,7 @@ class ExtOrderDetailView(ExtBase):
         d = request.data if isinstance(request.data, dict) else {}
         lines = None
         if d.get("lines") is not None:
-            lines = self._resolve_lines(d["lines"])
+            lines = self._resolve_lines(d["lines"], order=order)
         order = OrderService.edit_by_rep(
             order, lines=lines,
             notes=d.get("notes"),
@@ -733,8 +737,14 @@ class ExtProductsView(ExtBase):
         p = request.query_params
         if p.get("search"):
             qs = qs.filter(Q(name__icontains=p["search"]) | Q(sku__icontains=p["search"]) | Q(barcodes__code=p["search"])).distinct()
+        removed = []
         if p.get("since"):
-            qs = qs.filter(updated_at__gte=p["since"])
+            # a product edited (name, price, status) counts as changed for each of its items, not only an edited item
+            qs = qs.filter(Q(updated_at__gte=p["since"]) | Q(product__updated_at__gte=p["since"]))
+            # and what left the catalogue since — deleted or made inactive (owner, 1 Nov 2026) — so a phone that only
+            # syncs changes drops it instead of offering it forever
+            gone = ProductVariant.objects.filter(Q(is_active=False) | ~Q(product__status="active")).filter(Q(updated_at__gte=p["since"]) | Q(product__updated_at__gte=p["since"]))
+            removed = [str(i) for i in gone.values_list("id", flat=True)]
         customer = Customer.objects.filter(pk=p.get("customer")).first() if p.get("customer") else None
         # `stock_on_hand` is declared on the serializer and annotated only by the staff views, so it came back
         # null on every row here — a field that is always empty is worse than no field. Fill it for a role that
@@ -761,7 +771,7 @@ class ExtProductsView(ExtBase):
                 row.pop("sale_price", None)
                 row.pop("retail_price", None)
             rows.append(row)
-        return Response({"results": rows})
+        return Response({"results": rows, "removed": removed})
 
 
 class ExtStockView(ExtBase):

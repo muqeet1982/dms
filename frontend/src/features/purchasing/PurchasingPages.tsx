@@ -16,6 +16,16 @@ import { DocTabs } from "@/components/documents/DocTabs";
 import { ImportButton } from "@/components/documents/ImportPanel";
 import { EditLine, LinesEditor } from "@/components/documents/LinesEditor";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
+import { useAuth } from "@/lib/auth";
+
+/** A purchase date's default due date: the company's "purchase due days" (45 unless changed) after it (owner, 1 Nov 2026). */
+const plusDueDays = (d: string) => {
+  const days = Number((useAuth.getState().me as any)?.tenant?.settings?.purchase_due_days ?? 45) || 45;
+  const t = new Date(`${d}T00:00:00`);
+  if (isNaN(t.getTime())) return "";
+  t.setDate(t.getDate() + days);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+};
 
 /** Add up one column of a line table — the totals row at the end of a document. */
 const sumBy = (rows: any[], pick: (r: any) => any) => (rows || []).reduce((n, r) => n + (Number(pick(r)) || 0), 0);
@@ -97,7 +107,7 @@ export function PurchaseOrderFormPage() {
     const o = existing.data;
     // freight and supplier_ref are no longer typed here, but an edit keeps whatever the document already has
     // (an imported supplier order sheet carries its S.O. number in supplier_ref)
-    setForm(o ? { supplier: o.supplier, warehouse: o.warehouse, date: o.date, expected_date: o.expected_date || "", freight: o.freight, supplier_ref: o.supplier_ref, reference: o.reference || "", notes: o.notes, version: o.version } : { supplier: sp.get("supplier") || firstSupplier.data?.results?.[0]?.id || null, warehouse: "", date: new Date().toISOString().slice(0, 10), expected_date: "", reference: "", notes: "" });
+    setForm(o ? { supplier: o.supplier, warehouse: o.warehouse, date: o.date, expected_date: o.expected_date || "", freight: o.freight, supplier_ref: o.supplier_ref, reference: o.reference || "", notes: o.notes, version: o.version } : { supplier: sp.get("supplier") || firstSupplier.data?.results?.[0]?.id || null, warehouse: "", date: new Date().toISOString().slice(0, 10), expected_date: plusDueDays(new Date().toISOString().slice(0, 10)), reference: "", notes: "" });
     if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: null, packagings: [], qty: String(Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
     return <Spinner />;
   }
@@ -123,7 +133,7 @@ export function PurchaseOrderFormPage() {
       <div className="card mb-3"><div className="card-body"><div className="row">
         <Field label="Supplier *" col="col-md-4"><EntitySelect endpoint="/api/v1/suppliers" query={{ is_active: true }} value={form.supplier} onChange={(v) => setForm({ ...form, supplier: v })} mapOption={(s) => ({ id: s.id, label: s.name, sub: s.code })} /></Field>
         <Field label="Deliver to warehouse *" col="col-md-3"><select className="form-select" value={form.warehouse || warehouses.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
-        <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field><Field label="Expected (optional)" col="col-md-2"><DateInput className="form-control" value={form.expected_date} onChange={(e) => setForm({ ...form, expected_date: e.target.value })} /></Field>
+        <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value, expected_date: !form.expected_date || form.expected_date === plusDueDays(form.date) ? plusDueDays(e.target.value) : form.expected_date })} /></Field><Field label="Due date" col="col-md-2"><DateInput className="form-control" value={form.expected_date} onChange={(e) => setForm({ ...form, expected_date: e.target.value })} /></Field>
         <Field label="Reference / title" col="col-md-4"><input className="form-control" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="e.g. Lahore Distribution Order" /></Field><Field label="Notes" col="col-md-8"><input className="form-control" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div>
         {/* Scoped to this supplier, but `for_supplier` also lets through anything nobody has assigned a supplier
             to: the strict filter hid every such product, and a catalogue imported from a price list has no
@@ -321,6 +331,7 @@ export function GrnFormPage() {
   const [scans, setScans] = useState(0);
   const [askExpiry, setAskExpiry] = useState<string | null>(null);
   const [addManual, setAddManual] = useState(false);
+  const [manualQ, setManualQ] = useState("");   // the add-by-hand window's search (owner, 1 Nov 2026)
   const [confirming, setConfirming] = useState(false);
   /** The deliberate stop before stock moves: post, save without posting, or go back. */
   const [posting, setPosting] = useState(false);
@@ -781,17 +792,23 @@ export function GrnFormPage() {
       <Modal open={addManual} onClose={() => setAddManual(false)} title="Add a line by hand" size="md"
         footer={<button className="btn btn-light" onClick={() => setAddManual(false)}>Close</button>}>
         <p className="fs-13 text-muted">For a carton whose barcode will not read. Pick the item from the order and type the quantity in the table.</p>
-        <div className="list-group">
-          {orderLines.map((l: any) => {
+        <div className="input-group mb-2">
+          <span className="input-group-text"><i className="ti ti-search" /></span>
+          <input className="form-control" autoFocus placeholder="Search name, SKU or item code" value={manualQ} onChange={(e) => setManualQ(e.target.value)} />
+          {manualQ && <button className="btn btn-outline-secondary" onClick={() => setManualQ("")}><i className="ti ti-x" /></button>}
+        </div>
+        <div className="list-group" style={{ maxHeight: "55vh", overflowY: "auto" }}>
+          {orderLines.filter((l: any) => { const q = manualQ.trim().toLowerCase(); return !q || [l.variant_name, l.variant_sku, l.item_code].some((x) => String(x || "").toLowerCase().includes(q)); }).map((l: any) => {
             const s = statFor(l.id, l.variant);
             return (
-              <button key={l.id} className="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onClick={() => { addRow(l); setAddManual(false); }}>
+              <button key={l.id} className="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onClick={() => { addRow(l); setAddManual(false); setManualQ(""); }}>
                 <span>{l.variant_name}<div className="text-muted fs-11 font-monospace">{l.item_code || l.variant_sku}</div></span>
                 <span className="fs-12 text-muted">due {boxes(l.qty_pending, l.packing)}{s && s.counted > 0 ? ` · ${boxes(s.counted, s.packing)} counted, ${leftText(s)}` : ""}</span>
               </button>
             );
           })}
           {!orderLines.length && <div className="list-group-item text-muted">Pick the purchase order first.</div>}
+          {orderLines.length > 0 && manualQ.trim() && !orderLines.some((l: any) => [l.variant_name, l.variant_sku, l.item_code].some((x) => String(x || "").toLowerCase().includes(manualQ.trim().toLowerCase()))) && <div className="list-group-item text-muted">No item on this order matches “{manualQ}”.</div>}
         </div>
       </Modal>
 
@@ -1034,7 +1051,7 @@ export function BillFormPage() {
   const [err, setErr] = useState<string | null>(null);
   const nav = useNavigate();
   const [sp] = useSearchParams();
-  const [form, setForm] = useState<any>({ supplier: sp.get("supplier") || null, grns: sp.get("grn") ? [sp.get("grn")] : [], bill_date: new Date().toISOString().slice(0, 10), due_date: "", supplier_invoice_no: "", discount: "0", freight: "0", notes: "" });
+  const [form, setForm] = useState<any>({ supplier: sp.get("supplier") || null, grns: sp.get("grn") ? [sp.get("grn")] : [], bill_date: new Date().toISOString().slice(0, 10), due_date: plusDueDays(new Date().toISOString().slice(0, 10)), supplier_invoice_no: "", discount: "0", freight: "0", notes: "" });
   const grns = useQuery({ queryKey: ["unbilled-grns", form.supplier], queryFn: () => api.list("/api/v1/goods-receipts", { supplier: form.supplier, status: "posted", billed: false, page_size: 100 }), enabled: Boolean(form.supplier) });
   return (
     <>
@@ -1042,7 +1059,7 @@ export function BillFormPage() {
       <SaveError error={err} what="purchase bill" />
       <div className="card mb-3"><div className="card-body"><div className="row">
         <Field label="Supplier *" col="col-md-4"><EntitySelect endpoint="/api/v1/suppliers" value={form.supplier} onChange={(v) => setForm({ ...form, supplier: v, grns: [] })} mapOption={(s) => ({ id: s.id, label: s.name })} /></Field>
-        <Field label="Bill date" col="col-md-2"><DateInput className="form-control" value={form.bill_date} onChange={(e) => setForm({ ...form, bill_date: e.target.value })} /></Field><Field label="Due date" col="col-md-2" hint="blank = supplier terms"><DateInput className="form-control" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
+        <Field label="Bill date" col="col-md-2"><DateInput className="form-control" value={form.bill_date} onChange={(e) => setForm({ ...form, bill_date: e.target.value, due_date: !form.due_date || form.due_date === plusDueDays(form.bill_date) ? plusDueDays(e.target.value) : form.due_date })} /></Field><Field label="Due date" col="col-md-2"><DateInput className="form-control" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
         <Field label="Supplier invoice #" col="col-md-2"><input className="form-control" value={form.supplier_invoice_no} onChange={(e) => setForm({ ...form, supplier_invoice_no: e.target.value })} /></Field><Field label="Freight on bill" col="col-md-2"><input type="number" step="0.01" className="form-control" value={form.freight} onChange={(e) => setForm({ ...form, freight: e.target.value })} /></Field>
         <Field label="Discount" col="col-md-2"><input type="number" step="0.01" className="form-control" value={form.discount} onChange={(e) => setForm({ ...form, discount: e.target.value })} /></Field><Field label="Notes" col="col-md-10"><input className="form-control" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div>
         <h6 className="fs-13">Unbilled goods receipts</h6>
@@ -1120,7 +1137,7 @@ export function PurchaseReturnFormPage() {
         <Field label=" " col="col-md-3"><div className="form-check form-check-md mt-2"><input className="form-check-input" type="checkbox" id="dn" checked={form.is_debit_note_only} onChange={(e) => setForm({ ...form, is_debit_note_only: e.target.checked })} /><label htmlFor="dn" className="form-check-label">Claim only (no stock leaves)</label></div></Field>
         <Field label="Reason *" col="col-md-4"><select className="form-select" value={form.reason_code} onChange={(e) => setForm({ ...form, reason_code: e.target.value })}><option value="">Select a reason…</option>{reasons.data?.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field>
         <Field label="Details" col="col-md-8"><input className="form-control" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="e.g. expired stock from June batch, damaged cartons on arrival…" /></Field></div>
-        <LinesEditor lines={lines} onChange={setLines} priceFor="cost" showDiscount={false} variantQuery={{ with_stock: 1 }} reasons={(reasons.data || []).map((r: any) => ({ id: r.id, name: r.name }))} />
+        <LinesEditor lines={lines} onChange={setLines} priceFor="cost" showDiscount={false} variantQuery={{ with_stock: 1, include_inactive: 1 }} reasons={(reasons.data || []).map((r: any) => ({ id: r.id, name: r.name }))} />
       </div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" onClick={async () => { const valid = lines.filter((l) => l.variant && Number(l.qty) > 0); if (!form.supplier || !form.warehouse || !form.reason_code || !valid.length) { const m = "Please fill in: supplier, warehouse, reason and at least one line."; setErr(m); return toast.error(m); } setErr(null); try { const r = await api.post("/api/v1/purchase-returns", { ...form, post: true, lines: valid.map((l) => ({ variant: l.variant, batch: l.batch || null, qty: l.qty, unit_cost: l.unit_price || null, reason_code: l.extra?.reason_code || form.reason_code, reason: "" })) }, true); toast.success("Return posted"); nav(`/app/purchasing/returns/${r.id}`); } catch (e: any) { setErr(e.message); toast.error(e.message); } }}>Save & post</button></div>
     </>

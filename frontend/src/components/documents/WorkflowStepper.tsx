@@ -1,11 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { hasPerm } from "@/lib/auth";
 import { datetime } from "@/lib/format";
-import { toast } from "@/lib/toast";
 
 type Step = {
   key: string; title: string; state: "done" | "current" | "todo" | "blocked" | "skipped";
@@ -33,8 +30,9 @@ const TONE: Record<Step["state"], { ring: string; text: string; bg: string }> = 
 
 /**
  * The order's journey: sales order → load form → warehouse issue → invoice → dispatch → out for delivery →
- * delivery confirmation. Each step carries its documents and the one action that moves it along, so the whole
- * sequence can be run from the order without hunting through menus.
+ * delivery confirmation. Each step shows where it stands and links its documents. It only SHOWS the flow (owner,
+ * 1 Nov 2026: "just show the flow here, create button should not be visible for any step") — each step is done on
+ * its own page: the load form, the warehouse issue, the invoice, the trip, the delivery note.
  */
 export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", title = "Order to delivery", compact, onData }: {
   orderId: string;
@@ -44,23 +42,8 @@ export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", ti
   compact?: boolean;
   onData?: (data: any) => void;
 }) {
-  const qc = useQueryClient();
-  const nav = useNavigate();
   const [open, setOpen] = useState(!compact);
   const q = useQuery<{ steps: Step[] }>({ queryKey: ["workflow", endpoint, orderId], queryFn: () => api.get(`${endpoint}/${orderId}/workflow`) });
-  const act = useMutation({
-    mutationFn: (v: { path: string; body?: any; then?: string }) => api.post(v.path, v.body || {}, true),
-    onSuccess: (d: any, v) => {
-      toast.success("Done");
-      // a step that CREATES a document opens it for review instead of finishing it (owner, 27 Oct 2026)
-      if (v.then && d?.id) nav(v.then.replace("{id}", d.id));
-      qc.invalidateQueries({ queryKey: ["workflow", endpoint, orderId] });
-      qc.invalidateQueries({ queryKey: ["doc"] });
-      qc.invalidateQueries({ queryKey: ["list"] });
-      if (v.path.endsWith("/load-form")) qc.invalidateQueries({ queryKey: ["list", "/api/v1/pick-lists"] });
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
   const steps = q.data?.steps || [];
   if (q.data && onData) onData(q.data);
   if (!steps.length) return null;
@@ -80,7 +63,6 @@ export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", ti
           <div className="d-flex flex-wrap flex-lg-nowrap align-items-stretch gap-2">
             {steps.map((s, i) => {
               const tone = TONE[s.state];
-              const allowed = !s.action?.perm || hasPerm(s.action.perm);
               return (
                 <div key={s.key} className="flex-grow-1 position-relative" style={{ minWidth: 150, flexBasis: 0 }}>
                   {i > 0 && <span className="d-none d-lg-block position-absolute" style={{ left: -8, top: 18, width: 16, height: 2, background: steps[i - 1].state === "done" ? "#16a34a" : "#E5E7EB" }} />}
@@ -97,24 +79,6 @@ export function WorkflowStepper({ orderId, endpoint = "/api/v1/sales-orders", ti
                     {s.detail && <div className="fs-11 text-muted" title={s.detail} style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{s.detail}</div>}
                     {s.at && <div className="fs-11 text-muted mt-1"><i className="ti ti-clock me-1" />{datetime(s.at)}{s.by ? ` · ${s.by}` : ""}</div>}
                     {s.docs.map((d) => <div key={d.to} className="fs-11 mt-1"><Link to={d.to}><i className="ti ti-external-link me-1" />{d.label}</Link></div>)}
-                    {s.action && allowed && (
-                      <button
-                        className={`btn btn-sm w-100 mt-2 ${s.state === "current" ? "btn-primary" : "btn-outline-primary"}`}
-                        disabled={act.isPending}
-                        onClick={() => (s.action!.post ? act.mutate({ path: s.action!.post!, then: s.action!.then }) : nav(s.action!.to!))}
-                      >
-                        {s.action.label}
-                      </button>
-                    )}
-                    {s.action?.alt && allowed && (
-                      <button
-                        className="btn btn-sm btn-link w-100 p-0 mt-1 fs-11 text-decoration-none"
-                        disabled={act.isPending}
-                        onClick={() => act.mutate({ path: s.action!.alt!.post, body: s.action!.alt!.body })}
-                      >
-                        {s.action.alt.label}
-                      </button>
-                    )}
                   </div>
                 </div>
               );

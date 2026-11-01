@@ -15,6 +15,7 @@ import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { FieldDef, ResourceForm, ResourceModal } from "@/components/ui/ResourceForm";
 import { AttachmentsTab, HistoryTab } from "@/components/documents/DocTabs";
 import { ImportButton } from "@/components/documents/ImportPanel";
+import { useAuth } from "@/lib/auth";
 
 /** Location picker backed by the warehouse locations (bins) list, with inline "add location". */
 function LocationField({ value, onChange }: { value: string | null; onChange: (id: string | null) => void }) {
@@ -110,6 +111,10 @@ function DeleteProductDialog({ product, onClose, onDone }: { product: any; onClo
     }} />;
 }
 
+
+/** Under this a product is due for reorder: the company's % of its Max stock (30 unless changed), or Min stock when higher. */
+const reorderPoint = (p: any) => Math.max(Number(p.min_stock || 0), (Number(p.max_stock || 0) * Number((useAuth.getState().me as any)?.tenant?.settings?.reorder_point_pct ?? 30)) / 100);
+
 export function ProductsPage() {
   const productsPage = usePage("products");
   const qc = useQueryClient();
@@ -122,7 +127,7 @@ export function ProductsPage() {
     { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <span className="fw-semibold">{money(p.sale_price)}</span> },
     { key: "location_name", header: "Location", sortKey: "location__name", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
     { key: "fbr_ready", header: "FBR", render: (p) => p.fbr_hs_code || p.fbr_rate_desc ? (p.fbr_ready ? <span className="badge bg-success-light text-success" title="Classified — can go on an FBR tax invoice">ready</span> : <span className="badge bg-warning-light text-warning" title="Classification started but incomplete">incomplete</span>) : <span className="text-muted fs-11">—</span> },
-    { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < Number(p.min_stock) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
+    { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < reorderPoint(p) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
     { key: "status", header: "Status", sortKey: "status", render: (p) => <><StatusBadge status={p.status} />{p.is_batch_tracked && <span className="badge bg-secondary-light text-secondary ms-1">batch</span>}</> },
     ...(productsPage.delete ? [{ key: "_delete", header: "", render: (p: any) => <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2" title="Delete product" onClick={() => setDel(p)}><i className="ti ti-trash" /></button> }] : []),
   ];
@@ -130,7 +135,7 @@ export function ProductsPage() {
     <>
     <DeleteProductDialog product={del} onClose={() => setDel(null)} onDone={() => { setDel(null); qc.invalidateQueries({ queryKey: ["list", "/api/v1/products"] }); qc.invalidateQueries({ queryKey: ["product-stats"] }); }} />
     <ListPage title="Products" endpoint="/api/v1/products" exports={false} columns={cols} rowLink={(p) => `/app/catalog/products/${p.id}`} page="products" createTo="/app/catalog/products/new" createLabel="Add product" defaultOrdering="name" extraQuery={{ with_stock: 1 }} searchPlaceholder="Search name, SKU, barcode…"
-      filters={[{ name: "brand", label: "Brand", type: "entity", endpoint: "/api/v1/brands", mapOption: (b) => ({ id: b.id, label: b.name }) }, { name: "category", label: "Category", type: "entity", endpoint: "/api/v1/categories", mapOption: (c) => ({ id: c.id, label: c.name }) }, { name: "supplier", label: "Supplier", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }) }, { name: "location", label: "Location", type: "entity", endpoint: "/api/v1/settings/bins", mapOption: (b) => ({ id: b.id, label: b.label || b.code, sub: b.warehouse_name }) }, { name: "status", label: "Status", type: "select", options: ["active", "inactive", "archived"].map((s) => ({ value: s, label: s })) }, { name: "low_stock", label: "Low stock", type: "toggle" }]}
+      filters={[{ name: "brand", label: "Brand", type: "entity", endpoint: "/api/v1/brands", mapOption: (b) => ({ id: b.id, label: b.name }) }, { name: "category", label: "Category", type: "entity", endpoint: "/api/v1/categories", mapOption: (c) => ({ id: c.id, label: c.name }) }, { name: "supplier", label: "Supplier", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }) }, { name: "location", label: "Location", type: "entity", endpoint: "/api/v1/settings/bins", mapOption: (b) => ({ id: b.id, label: b.label || b.code, sub: b.warehouse_name }) }, { name: "status_view", label: "Status", type: "select", emptyLabel: "Active", options: [{ value: "inactive", label: "Inactive" }, { value: "all", label: "Active and inactive" }, { value: "archived", label: "Deleted" }] }, { name: "low_stock", label: "Low stock", type: "toggle" }]}
       actions={<>{productsPage.add && <ImportButton type="products" label="Import price list (Excel)" />}{productsPage.delete && <Link to="/app/catalog/products/deleted" className="btn btn-outline-secondary"><i className="ti ti-trash me-1" />Deleted products</Link>}</>}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Products" value={stats.data.total} icon="ti-box" color="primary" sub={`${stats.data.variants} variants`} /></div><div className="col-6 col-md-3"><StatCard label="Active" value={stats.data.active} icon="ti-circle-check" color="success" /></div><div className="col-6 col-md-3"><StatCard label="Inactive / archived" value={stats.data.inactive} icon="ti-ban" color="secondary" /></div><div className="col-6 col-md-3"><StatCard label="Low stock" value={stats.data.low_stock} icon="ti-alert-triangle" color="warning" to="/app/inventory/alerts" /></div></div>} />
     </>

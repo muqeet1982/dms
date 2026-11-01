@@ -9,7 +9,7 @@ import { Column, DataTable, Pagination } from "./DataTable";
 import { EntitySelect, Select } from "./EntitySelect";
 
 export type FilterDef =
-  | { name: string; label?: string; type: "select"; options: { value: string; label: string }[] }
+  | { name: string; label?: string; type: "select"; options: { value: string; label: string }[]; /** what "nothing chosen" means, when it is not "All" */ emptyLabel?: string }
   | { name: string; label?: string; type: "date" }
   | { name: string; label?: string; type: "entity"; endpoint: string; mapOption: (r: any) => { id: string; label: string; sub?: string }; query?: Record<string, any> }
   | { name: string; label?: string; type: "toggle" };
@@ -42,7 +42,7 @@ export function FilterBar({ filters, values, onChange, searchPlaceholder = "Sear
           <div className="col-md-4 col-12"><input className="form-control" placeholder={searchPlaceholder} value={text} onChange={(e) => setText(e.target.value)} /></div>
           {filters?.map((f) => (
             <div className="col-md-2 col-6" key={f.name}>
-              {f.type === "select" && <Select value={values[f.name]} onChange={(v) => onChange({ [f.name]: v })} options={f.options} empty={f.label ? `All ${f.label.toLowerCase()}` : "All"} />}
+              {f.type === "select" && <Select value={values[f.name]} onChange={(v) => onChange({ [f.name]: v })} options={f.options} empty={f.emptyLabel || (f.label ? `All ${f.label.toLowerCase()}` : "All")} />}
               {f.type === "date" && <DateInput className="form-control" value={values[f.name] || ""} onChange={(e) => onChange({ [f.name]: e.target.value })} title={f.label} />}
               {f.type === "entity" && <EntitySelect endpoint={f.endpoint} query={f.query} value={values[f.name]} onChange={(v) => onChange({ [f.name]: v })} mapOption={f.mapOption} placeholder={f.label || "Select"} />}
               {f.type === "toggle" && <div className="form-check form-check-md mb-0"><input className="form-check-input" type="checkbox" id={`f-${f.name}`} checked={values[f.name] === "1"} onChange={(e) => onChange({ [f.name]: e.target.checked ? "1" : "" })} /><label className="form-check-label" htmlFor={`f-${f.name}`}>{f.label}</label></div>}

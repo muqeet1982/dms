@@ -335,7 +335,7 @@ def low_stock(**_):
     from apps.inventory.services import AlertService
 
     rows = AlertService.reorder_suggestions()
-    return {"columns": ["sku", "name", "supplier", "on_hand", "min_stock", "max_stock", "suggested_qty"], "rows": rows, "totals": {"count": len(rows)}}
+    return {"columns": ["sku", "name", "supplier", "on_hand", "min_stock", "max_stock", "reorder_point", "suggested_qty"], "rows": rows, "totals": {"count": len(rows)}}
 
 
 def dead_stock(days=90, **_):
