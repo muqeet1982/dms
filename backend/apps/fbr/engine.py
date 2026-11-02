@@ -260,6 +260,10 @@ def product_fbr_problems(p) -> list:
             problems.append(f"Rate {rate} needs the SRO item serial too.")
     if is_mrp_sale_type(p.fbr_sale_type) and not (p.mrp_ex_tax or 0):
         problems.append("3rd Schedule goods need the printed retail price (MRP, per unit).")
+    # the invoice charges the product's own Tax %; FBR recomputes from the rate on its card — they must be one rate
+    own = getattr(p, "tax_pct", None)
+    if rate and own is not None and gst_rate_num(rate) != Decimal(str(own)):
+        problems.append(f"Its Tax % ({Decimal(str(own)).normalize():f}%) is not its FBR rate ({rate}) — make them the same.")
     return problems
 
 

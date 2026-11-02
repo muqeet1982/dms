@@ -1170,9 +1170,9 @@ class InvoiceService:
         arithmetic on 26 Oct 2026 (INVOICE_TAX_FLOW_GUIDE.md): the amount comes from the SAME
         engine.compute_line the filing calls, so a compound rate keeps its rupee part, a fixed rate
         ("Rs.700/MT") is no longer invoiced at zero, and 3rd Schedule goods tax on max(MRP × qty,
-        taxable). A % typed on the line overrides as a plain percentage — the human's word. No dated
-        rates, no product Tax %, no invoice-level rate: an unclassified product simply carries no
-        tax, and an FBR "Exempt"/"0%" product stays at zero on purpose.
+        taxable). A % typed on the line overrides as a plain percentage — the human's word. Since 2 Nov
+        2026 the rate is the product's own Tax % (default 25), else its FBR card's — see Product.tax_rate.
+        No dated rates, no invoice-level rate; an FBR "Exempt"/"0%" product stays at zero on purpose.
         """
         t = InvoiceService.line_taxes(product, qty=qty, unit_price=unit_price, discount_amount=discount_amount, override=override)
         return t["rate"], t["gst"]
@@ -1203,6 +1203,19 @@ class InvoiceService:
                 break
             price = nxt
         return q4(price)
+
+    @staticmethod
+    def order_line_ex(order, line):
+        """
+        A tax order's line as its invoice will read it (owner, 2 Nov 2026: "show price without tax and tax and total
+        price with tax"): (price without tax, discount on it), so Qty × Price − Disc = Taxable. The order keeps the TP
+        as its unit price; None when the TP does not include the tax (a plain order, or tax added on top).
+        """
+        if not getattr(order, "charge_tax", False) or not InvoiceService.tp_includes_tax() or not line.variant_id:
+            return None
+        unit = InvoiceService.ex_tax_price(line.variant.product, line.unit_price)
+        taxable = line.line_total - line.tax1_amount - line.tax2_amount - line.fed_amount - line.extra_tax_amount - line.further_tax_amount
+        return unit, round2(line.qty_ordered * unit) - taxable
 
     @staticmethod
     def fit_within_tp(product, *, qty, unit, disc, target, override=None):
@@ -1245,7 +1258,7 @@ class InvoiceService:
     def line_taxes(product, *, qty, unit_price, discount_amount, override=None):
         """
         EVERY tax one tax-document line carries, from the same engine.compute_line the FBR filing calls:
-        {"rate", "gst", "fed", "extra", "further", "wht"}. GST is forced_line_tax's (a typed % overrides it);
+        {"rate", "gst", "fed", "extra", "further", "wht"}. GST is at the product's `tax_rate` (a typed % overrides it);
         FED, Extra Tax, Further Tax and WHT are the product's FBR-card rates on the line's TAXABLE value
         (guide §4 — never on taxable + GST, never on the MRP base), owner 26 Oct 2026.
         """
@@ -1255,8 +1268,9 @@ class InvoiceService:
         rates = ({"fed_rate": product.fbr_fed_rate, "extra_rate": product.fbr_extra_tax_rate,
                   "further_rate": product.fbr_further_tax_rate, "withheld_rate": product.fbr_wht_rate}
                  if product is not None else {})
-        rate_str = product.fbr_rate_desc if product is not None else ""
-        mrp = product.mrp_ex_tax if product is not None and engine.is_mrp_sale_type(product.fbr_sale_type) else None
+        # the product's own Tax % (owner, 2 Nov 2026), else its FBR card's rate, else the company default
+        rate_str = product.tax_rate if product is not None else ""
+        mrp = product.retail_base if product is not None else None
         money = engine.compute_line(quantity=qty, unit_price=unit_price, discount_amount=discount_amount,
                                     rate_str=rate_str, sale_type=product.fbr_sale_type if product is not None else "",
                                     mrp=mrp, **rates)
@@ -1359,11 +1373,11 @@ class InvoiceService:
                 raise DomainError("No sales tax type exists — create one under Settings → Taxes first.", code="no_tax_type")
             # a switch that would charge zero on every line is a misconfiguration, not a tax — say so
             # instead of printing "Tax 0.00" (the silent-zero bug, owner 25 Oct 2026)
-            if not any(l.tax_pct_override is not None or (l.variant_id and l.variant.product.fbr_rate_desc)
+            if not any(l.tax_pct_override is not None or (l.variant_id and l.variant.product.tax_rate)
                        for l in inv.lines.select_related("variant__product")):
                 raise DomainError(
-                    "Tax is on but none of these products carries an FBR rate — classify them on the "
-                    "product's FBR card (HS code → sale type → rate) first.", code="no_tax_rate")
+                    "Tax is on but none of these products carries a tax rate — set the Tax % on the product "
+                    "(or a default under Settings → Rules) first.", code="no_tax_rate")
             # 3rd Schedule goods tax on the PRINTED retail price (guide §5) — without it the invoice
             # would quietly under-tax on the charged price, and the filing would refuse anyway
             from apps.fbr import engine

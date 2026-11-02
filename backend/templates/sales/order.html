@@ -66,10 +66,10 @@ read higher than Taxable × rate — the law taxes those on the printed retail p
       <td class="r">{{ l.qty_delivered|qty }}</td>
       <td class="r">{% if l.pending %}<strong>{{ l.pending|qty }}</strong>{% else %}—{% endif %}</td>
     {% endif %}
-    <td class="r">{{ l.unit_price|num }}</td>
-    <td class="r">{% if l.discount_amount or l.scheme_discount %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
+    <td class="r">{{ l.rate_shown|num }}</td>
+    <td class="r">{% if l.discount_total %}{{ l.discount_total|num }}{% else %}—{% endif %}</td>
     <td class="r">{{ l.taxable|num }}</td>
-    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{{ l.variant.product.fbr_rate_desc|fbr_rate }}</span></td>
+    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{{ l.variant.product.tax_rate|fbr_rate }}</span></td>
     {% if show_other %}<td class="r">{% if l.other_tax %}{{ l.other_tax|num }}<span class="sku">{{ l.other_label }}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.line_total|num }}</td>
   </tr>{% endfor %}

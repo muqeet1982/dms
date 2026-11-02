@@ -36,6 +36,12 @@ def _product_fbr(tenant, variant, rate_str, **fields):
         Product.objects.filter(pk=variant.product_id).update(fbr_rate_desc=rate_str, **fields)
 
 
+def _no_default_tax(tenant):
+    """No company default Tax % (owner's default is 25, 2 Nov 2026): a product with no rate of its own carries none."""
+    tenant.settings = {**(tenant.settings or {}), "default_tax_pct": 0}
+    tenant.save(update_fields=["settings"])
+
+
 @pytest.fixture
 def taxed_world(api, tenant):
     from django.utils import timezone
@@ -129,21 +135,21 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         assert "FBR: Unregistered" in html
 
 
-def test_only_the_fbr_rate_counts_not_tax_pct_or_typed_percent(api, tenant, taxed_world):
-    """Owner, 25 Oct 2026: "no dated rate need. if tax on then use fbr rate via hs code." A product
-    Tax % or a typed invoice percent no longer makes a line taxable — only the FBR classification."""
+def test_the_products_tax_pct_counts_and_an_invoice_percent_does_not(api, tenant, taxed_world):
+    """Owner, 2 Nov 2026 ("add tax … 25% is default 25 and option to change"), superseding 25 Oct's FBR-only rule:
+    the product's own Tax % is the rate — even over its FBR card's; a percent typed for the whole invoice is not."""
     wh, cust, v, tt = taxed_world
-    _product_tax(tenant, v, 25)  # the old field is dead weight now
+    _no_default_tax(tenant)
+    _product_tax(tenant, v, 25)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
-    refused = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
-    assert refused.status_code in (400, 422), refused.content
-    assert "FBR" in str(refused.data)
+    on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True, "percent": "10"}, format="json")
+    assert on.status_code == 200 and Decimal(on.data["tax1_total"]) == Decimal("150"), on.content  # 600 × 25, not 10
 
     _product_fbr(tenant, v, "17%")
-    on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
-    assert Decimal(on.data["tax1_total"]) == Decimal("102"), on.content  # 600 × FBR 17, not 25, not 10
+    again = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert Decimal(again.data["tax1_total"]) == Decimal("150"), again.content  # its own 25 still, not the card's 17
 
 
 def test_a_lines_typed_tax_pct_beats_product_and_invoice(api, tenant, taxed_world):
@@ -249,20 +255,20 @@ def test_reopen_is_the_owners_unless_granted_and_paid_refuses(api, tenant, taxed
 
 def test_a_dated_rate_does_not_rescue_an_unclassified_product(api, tenant, taxed_world):
     """Owner, 25 Oct 2026: "no dated rate need" — the type's dated 18% exists in this fixture, but an
-    unclassified product still refuses the switch; only the FBR classification makes a line taxable."""
+    product with no rate of its own (and no company default) still refuses the switch."""
     wh, cust, v, tt = taxed_world
+    _no_default_tax(tenant)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
     assert on.status_code in (400, 422), on.content
-    assert "FBR" in str(on.data)
+    assert "Tax %" in str(on.data)
 
 
-def test_the_fbr_rate_is_the_switchs_first_source(api, tenant, taxed_world):
-    """"If tax on then use FBR tax" (owner, 25 Oct 2026): an FBR-classified product taxes at its FBR
-    GST rate — beating its own Tax % and the company's dated rate — so the invoice shows the same tax
-    an FBR filing will compute."""
+def test_the_fbr_rate_counts_when_the_product_names_no_tax_pct(api, tenant, taxed_world):
+    """The product's own Tax % first (owner, 2 Nov 2026), then its FBR card's rate — beating the company's default
+    and its dated rate. A Tax % that differs from the card is refused at filing (test_product_tax_pct.py)."""
     from apps.catalog.models import Product
 
     wh, cust, v, tt = taxed_world
@@ -271,7 +277,11 @@ def test_the_fbr_rate_is_the_switchs_first_source(api, tenant, taxed_world):
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False, "apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
-    assert Decimal(inv["tax1_total"]) == Decimal("150"), inv["tax1_total"]  # 600 × FBR's 25%, not 10
+    assert Decimal(inv["tax1_total"]) == Decimal("60"), inv["tax1_total"]  # 600 × its own 10%
+    with tenant_context(tenant, tenant.owner):
+        Product.objects.filter(pk=v.product_id).update(tax_pct=None)
+    again = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert Decimal(again.data["tax1_total"]) == Decimal("150"), again.content  # 600 × the card's 25%, not the default
 
 
 def test_without_the_switch_an_invoice_carries_no_tax_even_with_classes(api, tenant, taxed_world):
@@ -299,12 +309,13 @@ def test_tax_on_with_no_rate_anywhere_refuses_with_directions(api, tenant):
     wh, sup, v, cust = seed_basic(tenant)
     with tenant_context(tenant, tenant.owner):
         TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")  # NO dated rate
+    _no_default_tax(tenant)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
     assert r.status_code in (400, 422), r.content
-    assert "FBR" in str(r.data), r.data
+    assert "Tax %" in str(r.data), r.data
     fresh = api.get(f"/api/v1/invoices/{inv['id']}")
     assert fresh.data["force_tax_type"] is None and Decimal(fresh.data["tax1_total"]) == 0
 
@@ -356,10 +367,11 @@ def test_a_fixed_rupee_rate_no_longer_invoices_zero(api, tenant, taxed_world):
 
 def test_third_schedule_taxes_the_printed_retail_price_when_higher(api, tenant, taxed_world):
     """Guide examples B and C: GST base = max(MRP × qty, taxable) — per-unit MRP times quantity,
-    never the bare MRP, and never 'always MRP'."""
+    never the bare MRP, and never 'always MRP'. The PRINTED price includes the tax (2 Nov 2026), so the base is
+    printed ÷ (1 + rate): 236 printed at 18% is a retail price of 200."""
     wh, cust, v, tt = taxed_world
     # B: MRP 200 beats the charged 150 → tax on 10 × 200 = 2000
-    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("200"))
+    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("236"))
     oid = _issued_order(api, wh, cust, v, qty="10")  # 10 × 150 = 1500 charged
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -467,6 +479,7 @@ def test_a_flagged_order_with_unclassified_products_still_bills_and_notifies(api
     """An automatic billing must never block the delivery: no FBR rate → the invoice goes out untaxed
     and the office is told to classify and reopen."""
     wh, cust, v, tt = taxed_world  # product carries NO fbr_rate_desc
+    _no_default_tax(tenant)
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                           "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
@@ -597,6 +610,7 @@ def test_tax_on_a_posted_invoice_is_one_atomic_call(api, tenant, taxed_world):
     """POST /invoices/{id}/tax on a posted, unpaid invoice reopens and switches in one request —
     and a refusal rolls the reopen back, so the invoice is never stranded off the ledger."""
     wh, cust, v, tt = taxed_world
+    _no_default_tax(tenant)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {}, format="json")  # posted, no tax
     inv = made.data[0] if isinstance(made.data, list) else made.data
@@ -604,7 +618,7 @@ def test_tax_on_a_posted_invoice_is_one_atomic_call(api, tenant, taxed_world):
 
     # unclassified product: the switch refuses AND the invoice stays posted (nothing half-done)
     r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
-    assert r.status_code in (400, 422) and "FBR" in str(r.data), r.content
+    assert r.status_code in (400, 422) and "Tax %" in str(r.data), r.content
     assert api.get(f"/api/v1/invoices/{inv['id']}").data["status"] == "posted"
 
     # classified: one call → reopened draft carrying the tax, ready to review and re-post

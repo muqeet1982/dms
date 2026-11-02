@@ -136,8 +136,9 @@ class Product(TenantModel):
     discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))  # T.P — trade price (what we charge salons / retailers)
     # the standard discount only bites from this many units on a line (owner's rule, 21 Oct 2026); 0 = always
     discount_min_qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0"))
-    # this product's own sales-tax % (owner, 24 Oct 2026): used when an invoice's tax switch is ON, beating
-    # the invoice-level rate for its lines; null = the invoice's rate. It does nothing while the switch is off.
+    # the sales-tax % inside this product's TP (owner, 2 Nov 2026: "current price is including 25% tax"): a tax
+    # order or invoice charges it on the price without tax, TP × 100 ÷ (100 + %). Null = the rate on its FBR card,
+    # else the company's default_tax_pct (25). See `tax_rate`.
     tax_pct = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     # ── FBR Digital Invoicing classification (FBR_INTEGRATION_GUIDE.md §5.3) — all from reference data,
     # chained: transaction type → rate → SRO schedule → SRO item. A product missing HS code or rate
@@ -160,6 +161,44 @@ class Product(TenantModel):
     fbr_extra_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
     fbr_further_tax_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
     fbr_wht_rate = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
+
+    @property
+    def tax_rate(self):
+        """
+        The rate a tax document charges this product, as FBR prose ("25%", "18% along with rupees 60 per kilogram"):
+        its own Tax % when set; else its FBR card's rate; else the company's default_tax_pct; "" for none. The FBR
+        card's prose is kept whenever its % is the product's, so a compound rate keeps its rupee part.
+        """
+        from apps.fbr import engine
+
+        card = (self.fbr_rate_desc or "").strip()
+        if self.tax_pct is None:
+            if card:
+                return card
+            from apps.core.tenancy import get_current_tenant
+
+            tenant = get_current_tenant() or self.tenant
+            pct = Decimal(str(tenant.setting("default_tax_pct") or 0))
+        else:
+            pct = Decimal(str(self.tax_pct))
+            if card and engine.gst_rate_num(card) == pct:
+                return card
+        return f"{format(pct.normalize(), 'f')}%" if pct > 0 else ""
+
+    @property
+    def retail_base(self):
+        """
+        3rd Schedule goods only: the retail price per unit FBR taxes, without the sales tax. `mrp_ex_tax` holds the
+        price PRINTED on the pack, which includes it (Sales Tax Act s.2(27): the retail price is "inclusive of all
+        duties, charges and taxes (other than sales tax)"), so it is worked back at the product's own rate — a TP
+        typed there taxes as 25% of TP ÷ 1.25, as the owner reckons it (2 Nov 2026). None otherwise.
+        """
+        from apps.fbr import engine
+
+        if not engine.is_mrp_sale_type(self.fbr_sale_type) or not self.mrp_ex_tax:
+            return None
+        pct = engine.gst_rate_num(self.tax_rate)
+        return (Decimal(str(self.mrp_ex_tax)) * 100 / (100 + pct)).quantize(Decimal("0.0001"))
 
     @property
     def fbr_ready(self):

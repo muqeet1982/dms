@@ -66,7 +66,7 @@ The HS code rides under the item name, where the classification belongs.
     <td class="r">{{ l.unit_price|num }}</td>
     <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
     <td class="r">{{ l.taxable|num }}</td>
-    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.fbr_rate_desc|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span></td>
+    <td class="r">{% if l.tax_amount %}{{ l.tax_amount|num }}{% else %}—{% endif %}<span class="sku">{% if l.tax_pct_override == None %}{{ l.variant.product.tax_rate|fbr_rate }}{% else %}{{ l.tax1_rate|num }}%{% endif %}</span></td>
     {% if show_other %}<td class="r">{% if l.other_tax %}{{ l.other_tax|num }}<span class="sku">{{ l.other_label }}</span>{% else %}—{% endif %}</td>{% endif %}
     <td class="r b">{{ l.line_total|num }}</td>
   </tr>{% endfor %}

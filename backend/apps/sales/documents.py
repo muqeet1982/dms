@@ -17,6 +17,11 @@ def order_pdf(request, o):
         l.tax_amount = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
         l.taxable = Decimal(str(l.line_total or 0)) - l.tax_amount - l.other_tax
         l.gross = Decimal(str(l.qty_ordered or 0)) * Decimal(str(l.unit_price or 0))
+        # a tax order reads like its invoice: the price without tax, the discount on it, Taxable, GST, the TP total
+        ex = InvoiceService.order_line_ex(o, l)
+        l.rate_shown = ex[0] if ex else l.unit_price
+        if ex:
+            l.discount_total = ex[1]
     return render_doc(request, "sales/order.html", {
         "o": o, "lines": lines, **other,
         # the tax face follows the customer's flag alone (owner 26 Oct 2026: "if customer tax is off then do not

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, money, qty, titleCase } from "@/lib/format";
+import { date, datetime, fbrRateParts, money, qty, titleCase } from "@/lib/format";
 import { useDoc, useOptions } from "@/lib/hooks";
 import { pageRights, usePage } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -45,7 +45,13 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "category", label: "Category", type: "entity", endpoint: "/api/v1/categories", mapOption: (c) => ({ id: c.id, label: c.path || c.name }), col: "col-md-3" }, { name: "brand", label: "Brand", type: "entity", endpoint: "/api/v1/brands", mapOption: (b) => ({ id: b.id, label: b.name }), col: "col-md-3" },
   { name: "supplier", label: "Supplier (manufacturer)", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }), col: "col-md-3" }, { name: "base_uom", label: "Base unit", type: "entity", endpoint: "/api/v1/uoms", mapOption: (u) => ({ id: u.id, label: `${u.code} — ${u.name}` }), required: true, col: "col-md-3" },
   { name: "unit_size", label: "Unit / size", col: "col-md-3", placeholder: "60ml, 1L, 500g, pcs" }, { name: "packing", label: "Units per box", type: "number", col: "col-md-3", default: 1, hint: "How many units in one box / carton" }, { name: "box_upc", label: "Box UPC (barcode on the box)", col: "col-md-3", hint: "One scan = one box", inputMode: "numeric", autoComplete: "off", showIf: (v) => Number(v.packing) > 1 }, { name: "location", label: "Location (rack / shelf / bin)", type: "custom", col: "col-md-3", render: (v, set) => <LocationField value={v || null} onChange={set} /> },
-  { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: "T.P — trade price", type: "money", col: "col-md-3", default: 0 }, { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
+  { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: tpIncludesTax() ? "T.P — trade price (incl. tax)" : "T.P — trade price", type: "money", col: "col-md-3", default: 0 },
+  // the TP includes the tax (owner, 2 Nov 2026): the product's Tax % — blank follows its FBR rate, else the company's
+  // default — and the price without tax worked back from the TP; typing that price sets the TP instead
+  { name: "tax_pct", label: "Tax %", type: "custom", col: "col-md-3", render: (_v: any, set: any, values: any) => <TaxPctInput values={values} set={set} /> },
+  ...(tpIncludesTax() ? [{ name: "price_ex_tax", label: "Price without tax", type: "custom", col: "col-md-3",
+    render: (_v: any, _set: any, values: any, setField: any) => <ExTaxPriceInput values={values} setField={setField} /> } as FieldDef] : []),
+  { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
   { name: "offers_write", label: "Dated offers (override the standard discount while they match)", type: "custom", col: "col-md-12", default: [],
     render: (v: any, set: any) => <OffersEditor value={Array.isArray(v) ? v : []} onChange={set} /> },
   ...(isNew
@@ -76,6 +82,32 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "is_batch_tracked", label: "Batch (lot) tracked", type: "checkbox", col: "col-md-3", hint: "Stock is held per batch (lot) number, and movements have to say which batch. On a goods receipt a blank batch falls back to the supplier challan number." },
   { name: "description", label: "Description", type: "textarea", col: "col-md-6" },
 ];
+
+const tpIncludesTax = () => (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false;
+
+/** The product's tax %, as the server's Product.tax_rate picks it: its own, else its FBR card's rate, else the company default. */
+function productTaxPct(values: any): number {
+  if (values.tax_pct !== null && values.tax_pct !== undefined && values.tax_pct !== "") return Number(values.tax_pct) || 0;
+  if (values.fbr_rate_desc) return fbrRateParts(String(values.fbr_rate_desc)).pct;
+  return Number((useAuth.getState().me as any)?.tenant?.settings?.default_tax_pct ?? 25) || 0;
+}
+
+/** Shows the % the product is taxed at; cleared, it follows the FBR rate / company default again. */
+function TaxPctInput({ values, set }: { values: any; set: (v: any) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return <input type="number" step="0.01" min="0" max="99" className="form-control" value={draft ?? productTaxPct(values)}
+    onChange={(e) => { setDraft(e.target.value); set(e.target.value === "" ? null : e.target.value); }} onBlur={() => setDraft(null)} />;
+}
+
+/** TP ÷ (1 + tax) — FED / Extra / Further sit inside the TP too. Typing here sets the TP from it. */
+function ExTaxPriceInput({ values, setField }: { values: any; setField: (name: string, v: any) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const factor = 1 + (productTaxPct(values) + ["fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate"].reduce((s, k) => s + (Number(values[k]) || 0), 0)) / 100;
+  const shown = Math.round((Number(values.sale_price || 0) / factor) * 100) / 100;
+  return <input type="number" step="0.01" min="0" className="form-control" value={draft ?? shown.toFixed(2)}
+    onChange={(e) => { setDraft(e.target.value); setField("sale_price", e.target.value === "" ? 0 : Math.round(Number(e.target.value) * factor * 100) / 100); }}
+    onBlur={() => setDraft(null)} />;
+}
 
 function OffersEditor({ value, onChange }: { value: any[]; onChange: (v: any[]) => void }) {
   const row = (r: any, i: number, patch: any) => { const next = [...value]; next[i] = { ...r, ...patch }; onChange(next); };
@@ -124,7 +156,7 @@ export function ProductsPage() {
     { key: "name", header: "Product", sortKey: "name", render: (p) => <><span className="fw-semibold text-dark">{p.name}</span><div className="text-muted fs-11 font-monospace">{[p.upc, p.item_code && p.item_code !== p.upc ? p.item_code : null].filter(Boolean).join(" · ") || p.sku}{Number(p.packing) > 1 ? ` · ${p.packing}/box` : ""}{p.variants_count > 1 ? ` · ${p.variants_count} variants` : ""}</div></> },
     { key: "brand_name", header: "Brand", sortKey: "brand__name", render: (p) => (p.brand_name ? <span className="badge bg-info-light text-info">{p.brand_name}</span> : "—") }, { key: "category_name", header: "Category", sortKey: "category__name" },
     { key: "unit_size", header: "Unit", sortKey: "unit_size", render: (p) => p.unit_size || <span className="text-muted">{p.base_uom_code}</span> }, { key: "packing", header: "Packing", num: true, sortKey: "packing", render: (p) => (p.packing > 1 ? p.packing : <span className="text-muted">1</span>) },
-    { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <span className="fw-semibold">{money(p.sale_price)}</span> },
+    { key: "sale_price", header: "T.P", num: true, sortKey: "sale_price", render: (p) => <><span className="fw-semibold">{money(p.sale_price)}</span>{p.tax_rate && <div className="text-muted fs-11">{money(p.price_ex_tax)} + {p.tax_rate}</div>}</> },
     { key: "location_name", header: "Location", sortKey: "location__name", render: (p) => (p.location_name ? <span className="badge bg-secondary-light text-secondary">{p.location_name}</span> : <span className="text-muted">—</span>) },
     { key: "fbr_ready", header: "FBR", render: (p) => p.fbr_hs_code || p.fbr_rate_desc ? (p.fbr_ready ? <span className="badge bg-success-light text-success" title="Classified — can go on an FBR tax invoice">ready</span> : <span className="badge bg-warning-light text-warning" title="Classification started but incomplete">incomplete</span>) : <span className="text-muted fs-11">—</span> },
     { key: "stock_on_hand", header: "Stock", num: true, sortKey: "stock_on_hand", render: (p) => <span className={Number(p.stock_on_hand || 0) < reorderPoint(p) ? "text-danger fw-semibold" : ""}>{qty(p.stock_on_hand || 0)} <span className="text-muted fs-11">{p.base_uom_code}</span></span> },
@@ -210,7 +242,7 @@ export function ProductDetailPage() {
         }}><i className={`ti ${p.status === "active" ? "ti-toggle-right" : "ti-toggle-left"} me-1`} />{p.status === "active" ? "Set inactive" : "Activate"}</button>}{page.delete && p.status !== "archived" && <button className="btn btn-outline-danger" onClick={() => setDeleting(true)}><i className="ti ti-trash me-1" />Delete</button>}{page.delete && p.status === "archived" && <button className="btn btn-success" onClick={async () => {
           try { await api.post(`/api/v1/products/${p.id}/restore`, {}); toast.success(`${p.name} restored`); refreshAll(); } catch (e: any) { toast.error(e.message); }
         }}><i className="ti ti-arrow-back-up me-1" />Restore</button>}{page.can("print_barcode") && <Link to={`/app/catalog/labels?product=${p.id}`} className="btn btn-outline-secondary"><i className="ti ti-barcode me-1" />Labels</Link>}{pageRights("products").edit && <Link to={`/app/catalog/products/${p.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}{pageRights("products").edit && <button className="btn btn-primary" onClick={() => setVariantModal({ open: true })}><i className="ti ti-plus me-1" />Add variant</button>}</>} />
-      <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="T.P — trade price" value={money(p.sale_price)} icon="ti-tag" color="primary" sub={p.price_effective_date ? `price list of ${date(p.price_effective_date)}` : undefined} /></div><div className="col-6 col-md-3"><StatCard label="Stock on hand" value={qty(totalStock)} icon="ti-box" color={totalStock < Number(p.min_stock) ? "danger" : "success"} sub={`min ${qty(p.min_stock)} · max ${qty(p.max_stock)} ${p.base_uom_code}`} /></div><div className="col-6 col-md-3"><StatCard label="Variants" value={p.variants.length} icon="ti-color-swatch" color="info" /></div><div className="col-6 col-md-3"><StatCard label="Tracking" value={p.is_batch_tracked ? "Batch" + (p.is_expiry_tracked ? " + expiry" : "") : "None"} icon="ti-calendar-event" color="secondary" sub={p.shelf_life_days ? `${p.shelf_life_days} days shelf life` : ""} /></div></div>
+      <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label={tpIncludesTax() ? "T.P — trade price (incl. tax)" : "T.P — trade price"} value={money(p.sale_price)} icon="ti-tag" color="primary" sub={[p.tax_rate ? `${money(p.price_ex_tax)} + ${p.tax_rate} tax` : "", p.price_effective_date ? `price list of ${date(p.price_effective_date)}` : ""].filter(Boolean).join(" · ") || undefined} /></div><div className="col-6 col-md-3"><StatCard label="Stock on hand" value={qty(totalStock)} icon="ti-box" color={totalStock < Number(p.min_stock) ? "danger" : "success"} sub={`min ${qty(p.min_stock)} · max ${qty(p.max_stock)} ${p.base_uom_code}`} /></div><div className="col-6 col-md-3"><StatCard label="Variants" value={p.variants.length} icon="ti-color-swatch" color="info" /></div><div className="col-6 col-md-3"><StatCard label="Tracking" value={p.is_batch_tracked ? "Batch" + (p.is_expiry_tracked ? " + expiry" : "") : "None"} icon="ti-calendar-event" color="secondary" sub={p.shelf_life_days ? `${p.shelf_life_days} days shelf life` : ""} /></div></div>
       <div className="card mb-3"><div className="card-body"><div className="row g-3"><InfoItem label="UPC (unit)">{p.upc || p.sku}</InfoItem><InfoItem label="Item code">{p.item_code || "—"}</InfoItem><InfoItem label="Box">{Number(p.packing) > 1 ? <>{p.packing} per box{p.box_upc ? <div className="fs-11 text-muted font-monospace">{p.box_upc}</div> : null}</> : "loose units"}</InfoItem><InfoItem label="Brand / category">{p.brand_name || "—"}<div className="fs-12 text-muted">{p.category_name}</div></InfoItem><InfoItem label="Unit · packing">{p.unit_size || p.base_uom_code}<div className="fs-12 text-muted">{p.packing > 1 ? `${p.packing} per carton` : "sold per unit"}</div></InfoItem><InfoItem label="Location">{p.location_name || "—"}</InfoItem><InfoItem label="Supplier">{p.supplier_name ? <Link to={`/app/suppliers/${p.supplier}`}>{p.supplier_name}</Link> : "—"}</InfoItem><InfoItem label="Tax class">{p.tax_class_name || "default"}</InfoItem></div>{p.description && <p className="fs-13 text-muted mt-3 mb-0">{p.description}</p>}</div></div>
       <div className="card"><div className="card-body">
         <Tabs tabs={[{ key: "variants", label: "Variants, packaging & barcodes", count: p.variants.length }, { key: "stock", label: "Stock by warehouse" }, { key: "movements", label: "Movements" }, { key: "prices", label: "Price lists" }, { key: "attachments", label: "Images & files" }, { key: "history", label: "History" }]} active={tab} onChange={setTab} />
@@ -473,7 +505,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
     const rs = rates.data?.results || [];
     if (values.fbr_trans_type_id && !values.fbr_rate_id && rs.length) {
       const pick = rs.length === 1 ? rs[0] : rs.find((r: any) => String(r.description).trim() === "18%");
-      if (pick) { setField("fbr_rate_id", pick.key); setField("fbr_rate_desc", pick.description); }
+      if (pick) { setField("fbr_rate_id", pick.key); setField("fbr_rate_desc", pick.description); setField("tax_pct", fbrRateParts(String(pick.description)).pct); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rates.data, values.fbr_trans_type_id]);
@@ -529,7 +561,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <FBRCombo value={values.fbr_rate_desc || ""} disabled={!values.fbr_trans_type_id}
           placeholder={!values.fbr_trans_type_id ? "— Select Sale Type first —" : values.fbr_rate_desc || "— Select rate —"}
           options={rates.data?.results || []} loading={rates.isFetching}
-          onPick={(r) => { setField("fbr_rate_id", r.key); setField("fbr_rate_desc", r.description); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
+          onPick={(r) => { setField("fbr_rate_id", r.key); setField("fbr_rate_desc", r.description); setField("tax_pct", fbrRateParts(String(r.description)).pct); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
           onClear={() => { setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }} />
         {Boolean(values.fbr_trans_type_id) && rates.data && (rates.data.results || []).length === 0 && (
           <div className="form-text text-warning">{rates.data.hint || "No rates cached for this sale type yet — save the IRIS token and sync under Settings → FBR."}</div>)}
@@ -555,7 +587,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
           onClear={() => { setField("fbr_sro_item", ""); setSroQ(""); }} />
       </div>
       {third && <div className="col-md-3">
-        <div className="form-label fs-12 mb-1">Printed retail price (MRP, per unit)</div>
+        <div className="form-label fs-12 mb-1">Printed Retail Price Incl. Tax (MRP, Per Unit)</div>
         <input type="number" step="0.01" className="form-control" value={values.mrp_ex_tax ?? ""} onChange={(e) => setField("mrp_ex_tax", e.target.value === "" ? null : Number(e.target.value))} />
       </div>}
       {/* the payload's money fields beside GST (owner, 26-27 Oct 2026; INVOICE_TAX_FLOW_GUIDE §4). Discount % is the
@@ -586,6 +618,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         const rate = String(values.fbr_rate_desc || "").trim();
         if (rate && rate !== "18%") { if (!values.fbr_sro_schedule) probs.push(`SRO schedule (mandatory at ${rate})`); if (!values.fbr_sro_item) probs.push("SRO item serial"); }
         if (third && !values.mrp_ex_tax) probs.push("printed retail price (MRP)");
+        if (rate && values.tax_pct !== null && values.tax_pct !== undefined && values.tax_pct !== "" && Number(values.tax_pct) !== fbrRateParts(rate).pct) probs.push(`Tax % ${Number(values.tax_pct)} to match the FBR rate ${rate}`);
         return probs.length === 0
           ? <span className="text-success"><i className="ti ti-check me-1" />FBR-ready — this product can go on an FBR tax invoice.</span>
           : <span className="text-warning">Not FBR-ready — missing: {probs.join(", ")}.</span>;

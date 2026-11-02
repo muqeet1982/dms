@@ -44,7 +44,7 @@ def test_line_taxes_reproduce_the_guides_worked_example_f(tenant):
     taxable 900, never on taxable + GST."""
     from apps.sales.services import InvoiceService
 
-    p = SimpleNamespace(fbr_rate_desc="18%", fbr_sale_type="", mrp_ex_tax=None, fbr_fed_rate=D("2"),
+    p = SimpleNamespace(fbr_rate_desc="18%", tax_rate="18%", retail_base=None, fbr_sale_type="", mrp_ex_tax=None, fbr_fed_rate=D("2"),
                         fbr_extra_tax_rate=D("0"), fbr_further_tax_rate=D("3"), fbr_wht_rate=D("5"))
     t = InvoiceService.line_taxes(p, qty=D("4"), unit_price=D("250"), discount_amount=D("100"))
     assert (t["gst"], t["fed"], t["extra"], t["further"], t["wht"]) == (D("162.00"), D("18.00"), D("0.00"), D("27.00"), D("45.00"))
