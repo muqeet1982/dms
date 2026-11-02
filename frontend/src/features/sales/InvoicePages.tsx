@@ -10,7 +10,7 @@ import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
-import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError } from "@/components/ui/Bits";
+import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError, Tabs } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ListPage } from "@/components/ui/ListPage";
@@ -54,6 +54,7 @@ export function InvoiceDetailPage() {
   const [cancel, setCancel] = useState(false);
   const [reopen, setReopen] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [fbrView, setFbrView] = useState(false);
   const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
@@ -109,6 +110,7 @@ export function InvoiceDetailPage() {
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
           {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.tp != null ? l.tp_discount : l.discount_amount), within: (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false && l.tp != null, unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(l.tp != null ? l.tp_discount : l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", fbr_sale_type: l.fbr_sale_type || "", mrp: l.mrp, others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {inv.force_tax_type && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -263,6 +265,7 @@ export function InvoiceDetailPage() {
           </> : <div className="col-12"><Alert kind="info">The amounts cannot be changed here. This invoice is already in the ledger and owed by the customer, so a wrong figure is corrected with a <strong>credit note</strong>, which the customer also receives.</Alert></div>}
         </div>}
       </Modal>
+      {fbrView && <FbrDataModal invoiceId={inv.id} number={inv.number} onClose={() => setFbrView(false)} />}
       <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); }} />
       <ConfirmDialog open={rejecting} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
         message={<>The sale of <strong>{inv.number}</strong> is reversed: the goods come back to stock once, its entries come off the books and its order closes as Rejected. No return and no payment are recorded.</>}
@@ -608,5 +611,85 @@ export function RepSettlementsPage() {
           <tbody>{(unsettled.data?.collections || []).map((c: any) => <tr key={c.id}><td><input type="checkbox" className="form-check-input" checked={selected.includes(c.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, c.id] : selected.filter((x) => x !== c.id))} /></td><td>{c.number}</td><td>{date(c.date)}</td><td>{c.customer_name}</td><td>{c.method}</td><td className="num">{money(c.amount)}</td></tr>)}{unsettled.data && !unsettled.data.collections.length && <tr><td colSpan={6} className="text-muted text-center">Nothing to settle for this rep</td></tr>}</tbody></table>}
       </Modal>
     </>
+  );
+}
+
+
+/**
+ * A tax invoice as FBR sees it (owner, 2 Nov 2026: "option to view tax invoice, also json data format option to view
+ * and response got from FBR after submission"): the filed fields as a table, the JSON exactly as sent — or as it
+ * would be sent, before any filing — and FBR's validation and posting replies.
+ */
+function FbrDataModal({ invoiceId, number, onClose }: { invoiceId: string; number: string; onClose: () => void }) {
+  const q = useQuery({ queryKey: ["fbr-data", invoiceId], queryFn: () => api.get(`/api/v1/invoices/${invoiceId}/fbr-data`) });
+  const [tab, setTab] = useState("invoice");
+  const d: any = q.data;
+  const p: any = d?.payload;
+  const items: any[] = p?.items || [];
+  const json = (v: any) => JSON.stringify(v, null, 2);
+  const copy = (v: any) => { navigator.clipboard?.writeText(json(v)); toast.success("Copied"); };
+  const download = (v: any, name: string) => {
+    const url = URL.createObjectURL(new Blob([json(v)], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+  };
+  const sum = (k: string) => items.reduce((a, it) => a + (Number(it[k]) || 0), 0);
+  const JsonBlock = ({ v, name }: { v: any; name: string }) => (
+    <>
+      <div className="d-flex gap-2 justify-content-end mb-1">
+        <button className="btn btn-sm btn-outline-secondary" onClick={() => copy(v)}><i className="ti ti-copy me-1" />Copy</button>
+        <button className="btn btn-sm btn-outline-secondary" onClick={() => download(v, name)}><i className="ti ti-download me-1" />Download .json</button>
+      </div>
+      <pre className="bg-light border rounded p-2 fs-11 mb-0" style={{ maxHeight: "55vh", overflow: "auto", whiteSpace: "pre-wrap" }}>{typeof v === "string" ? v : json(v)}</pre>
+    </>
+  );
+  const party = (title: string, ntn: any, name: any, province: any, address: any, reg?: any) => (
+    <div className="col-md-6"><div className="border rounded p-2 h-100 fs-12">
+      <div className="fw-semibold mb-1">{title}</div>
+      <div><span className="text-muted">NTN / CNIC</span> {ntn || "—"}</div>
+      <div><span className="text-muted">Name</span> {name || "—"}</div>
+      <div><span className="text-muted">Province</span> {province || "—"}</div>
+      <div><span className="text-muted">Address</span> {address || "—"}</div>
+      {reg !== undefined && <div><span className="text-muted">Registration</span> {reg || "—"}</div>}
+    </div></div>
+  );
+  return (
+    <Modal open onClose={onClose} size="xl" title={<><i className="ti ti-building-bank me-2 text-info" />FBR — {number}</>}
+      footer={<button className="btn btn-light" onClick={onClose}>Close</button>}>
+      {q.isLoading || !d ? <Spinner /> : <>
+        <div className="d-flex flex-wrap gap-3 align-items-center fs-13 mb-3">
+          <StatusBadge status={d.status === "none" ? "draft" : d.status === "submitted" ? "posted" : d.status === "failed" ? "failed" : "pending"} label={d.status_label} />
+          {d.sandbox ? <span className="badge bg-warning-light text-warning">SANDBOX — test filing</span> : <span className="badge bg-success-light text-success">PRODUCTION</span>}
+          {d.fbr_invoice_number && <span>FBR No. <span className="font-monospace fw-semibold">{d.fbr_invoice_number}</span></span>}
+          {d.validated_at && <span className="text-muted">validated {datetime(d.validated_at)}</span>}
+          {d.submitted_at && <span className="text-muted">filed {datetime(d.submitted_at)}</span>}
+        </div>
+        {d.error && <Alert kind="danger">FBR: {d.error}</Alert>}
+        <Tabs tabs={[{ key: "invoice", label: "Tax invoice" }, { key: "json", label: d.payload_source === "preview" ? "JSON (preview)" : "JSON sent" }, { key: "response", label: "FBR response" }]} active={tab} onChange={setTab} />
+        {tab !== "response" && d.payload_source === "preview" && <Alert kind="info">Not sent to FBR yet — this is what will be sent, from today's seller and buyer details.</Alert>}
+        {tab !== "response" && d.preview_error && <Alert kind="warning">{d.preview_error}</Alert>}
+        {tab !== "response" && d.buyer_problems?.length > 0 && <Alert kind="warning">{d.buyer_problems.join(" ")}</Alert>}
+        {tab === "invoice" && p && <>
+          <div className="row g-2 mb-3 fs-12">
+            <div className="col-md-4"><span className="text-muted">Type</span> {p.invoiceType} · <span className="text-muted">Date</span> {p.invoiceDate}{p.scenarioId ? <> · <span className="text-muted">Scenario</span> {p.scenarioId}</> : null}</div>
+            <div className="col-md-8"><span className="text-muted">Reference</span> {p.invoiceRefNo || "—"}</div>
+            {party("Seller", p.sellerNTNCNIC, p.sellerBusinessName, p.sellerProvince, p.sellerAddress)}
+            {party("Buyer", p.buyerNTNCNIC, p.buyerBusinessName, p.buyerProvince, p.buyerAddress, p.buyerRegistrationType)}
+          </div>
+          <div className="table-responsive"><table className="table table-sm fs-11 mb-0">
+            <thead className="table-light"><tr><th>#</th><th>HS code</th><th>Description</th><th>Sale type</th><th>Rate</th><th>UoM</th><th className="num">Qty</th><th className="num">Value excl. ST</th><th className="num">Sales tax</th><th className="num">FED</th><th className="num">Extra</th><th className="num">Further</th><th className="num">Withheld</th><th className="num">Discount</th><th className="num">Total</th></tr></thead>
+            <tbody>{items.map((it, i) => <tr key={i}><td>{i + 1}</td><td className="font-monospace">{it.hsCode}</td><td>{it.productDescription}{it.sroScheduleNo ? <div className="text-muted">SRO {it.sroScheduleNo} {it.sroItemSerialNo}</div> : null}</td><td>{it.saleType}</td><td>{it.rate}</td><td>{it.uoM}</td>
+              <td className="num">{qty(it.quantity)}</td><td className="num">{money(it.valueSalesExcludingST)}</td><td className="num">{money(it.salesTaxApplicable)}</td><td className="num">{money(it.fedPayable)}</td><td className="num">{money(it.extraTax || 0)}</td><td className="num">{money(it.furtherTax)}</td><td className="num">{money(it.salesTaxWithheldAtSource)}</td><td className="num">{money(it.discount)}</td><td className="num fw-medium">{money(it.totalValues)}</td></tr>)}</tbody>
+            <tfoot><tr className="fw-bold"><td colSpan={7} className="text-end">Totals</td>{["valueSalesExcludingST", "salesTaxApplicable", "fedPayable", "extraTax", "furtherTax", "salesTaxWithheldAtSource", "discount", "totalValues"].map((k) => <td key={k} className="num">{money(sum(k))}</td>)}</tr></tfoot>
+          </table></div>
+        </>}
+        {tab === "json" && p && <JsonBlock v={p} name={`${number}-fbr-${d.payload_source === "preview" ? "preview" : "sent"}.json`} />}
+        {tab === "response" && <>
+          <h6 className="fs-13">Validation {d.validate_code && <span className="badge bg-light text-dark ms-1">code {d.validate_code}</span>} {d.validated_at && <span className="fs-12 text-muted fw-normal">{datetime(d.validated_at)}</span>}</h6>
+          {d.validate_response ? <JsonBlock v={d.validate_response} name={`${number}-fbr-validation.json`} /> : <p className="text-muted fs-13">Not validated yet.</p>}
+          <h6 className="fs-13 mt-3">Submission {d.response_code && <span className="badge bg-light text-dark ms-1">code {d.response_code}</span>} {d.submitted_at && <span className="fs-12 text-muted fw-normal">{datetime(d.submitted_at)}</span>}</h6>
+          {d.submit_response ? <JsonBlock v={d.submit_response} name={`${number}-fbr-response.json`} /> : <p className="text-muted fs-13">Not submitted yet.</p>}
+        </>}
+      </>}
+    </Modal>
   );
 }

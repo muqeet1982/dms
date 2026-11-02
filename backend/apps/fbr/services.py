@@ -279,6 +279,47 @@ def refresh_snapshot(inv) -> FBRFiling:
     return filing
 
 
+def filing_view(inv):
+    """
+    What FBR got for this invoice and what it said (owner, 2 Nov 2026: "option to view tax invoice, also json data
+    format … and response got from FBR after submission"): the payload exactly as sent, or — before any filing — the
+    one that WOULD be sent, built now from today's seller and buyer details and saved nowhere; FBR's validation and
+    posting replies; the number it issued. Tokens are never part of it.
+    """
+    filing = FBRFiling.objects.filter(invoice=inv).first()
+
+    def parsed(text):
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
+
+    out = {"status": filing.status if filing else "none", "status_label": filing.get_status_display() if filing else "Not filed",
+           "sandbox": filing.sandbox if filing else settings_for().use_sandbox,
+           "fbr_invoice_number": filing.fbr_invoice_number if filing else "", "validated_at": filing.validated_at if filing else None,
+           "submitted_at": filing.submitted_at if filing else None, "validate_code": filing.validate_code if filing else "",
+           "response_code": filing.response_code if filing else "", "error": filing.error_text if filing else "",
+           "validate_response": parsed(filing.validate_response) if filing else None, "submit_response": parsed(filing.response) if filing else None,
+           "payload": parsed(filing.last_payload) if filing and filing.last_payload else None, "payload_source": "sent" if filing and filing.last_payload else None,
+           "preview_error": "", "buyer_problems": []}
+    if out["payload"] is None:
+        # nothing sent yet: the payload as it would go now — an unsaved snapshot, the same builder the filing uses
+        fbr = settings_for()
+        c = inv.customer
+        snap = FBRFiling(invoice=inv, seller_ntn_cnic=fbr.ntn or fbr.cnic or "", seller_business_name=fbr.business_name, seller_province=fbr.province,
+                         seller_address=fbr.address, buyer_ntn_cnic=(c.ntn or c.cnic or "").strip(), buyer_business_name=c.business_name or c.name,
+                         buyer_province=getattr(c, "province", "") or "", buyer_address=" ".join(filter(None, [c.address, c.city])),
+                         buyer_registration_type=c.fbr_registration_type or "Unregistered")
+        out["buyer_problems"] = engine.party_fbr_problems(c)
+        try:
+            out["payload"], out["payload_source"] = build_payload(inv, snap, use_sandbox=fbr.use_sandbox), "preview"
+        except DomainError as e:
+            out["preview_error"] = str(e.detail)
+    return out
+
+
 def _call(url, token, payload):
     try:
         resp = requests.post(url, json=payload, headers=_headers(token), timeout=TX_TIMEOUT)

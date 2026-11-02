@@ -324,3 +324,23 @@ def test_post_to_fbr_stops_at_a_failed_validation_and_refuses_drafts(api, tenant
     assert reopened.status_code == 200 and reopened.data["status"] == "draft"
     draft = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
     assert draft.status_code in (400, 422) and "ledger first" in str(draft.content)
+
+
+def test_the_fbr_view_shows_the_json_before_and_after_filing_and_fbrs_replies(api, tenant):
+    """Owner, 2 Nov 2026: "option to view tax invoice, also json data … and response got from FBR after submission"."""
+    inv = _taxed_invoice(api, tenant)
+    before = api.get(f"/api/v1/invoices/{inv['id']}/fbr-data")
+    assert before.status_code == 200, before.content
+    d = before.data
+    assert d["status"] == "none" and d["payload_source"] == "preview" and d["payload"]["items"][0]["hsCode"]
+    assert d["validate_response"] is None and d["submit_response"] is None
+    assert "token" not in str(d).lower(), "tokens never leave the server"
+    with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)):
+        api.post(f"/api/v1/invoices/{inv['id']}/fbr-validate", {}, format="json")
+        api.post(f"/api/v1/invoices/{inv['id']}/fbr-submit", {}, format="json")
+    after = api.get(f"/api/v1/invoices/{inv['id']}/fbr-data").data
+    assert after["status"] == "submitted" and after["payload_source"] == "sent"
+    assert after["payload"]["items"][0]["salesTaxApplicable"] == 108.0, "the JSON exactly as it was sent"
+    assert after["validate_response"]["validationResponse"]["statusCode"] == "00"
+    assert after["submit_response"]["invoiceNumber"] == after["fbr_invoice_number"] == ACCEPT["invoiceNumber"]
+    assert after["validated_at"] and after["submitted_at"]

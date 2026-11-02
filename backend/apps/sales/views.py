@@ -334,6 +334,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "fbr_validate": extra_perm("invoices", "fbr_file"),
         "fbr_submit": extra_perm("invoices", "fbr_file"),
         "fbr_post": extra_perm("invoices", "fbr_file"),
+        "fbr_data": "sales.view_invoice",
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
@@ -487,6 +488,16 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         filing = fbr.submit(self.get_object(), actor=request.user)
         return Response({"status": filing.status, "fbr_invoice_number": filing.fbr_invoice_number,
                          "sandbox": filing.sandbox})
+
+    @action(detail=True, methods=["get"], url_path="fbr-data")
+    def fbr_data(self, request, pk=None):
+        """The tax invoice as FBR sees it: the JSON sent (or that would be), and FBR's replies after filing."""
+        from apps.fbr import services as fbr
+
+        inv = self.get_object()
+        if inv.force_tax_type_id is None:
+            raise DomainError("Only a tax invoice goes to FBR — switch the tax on first.", code="not_tax_invoice")
+        return Response(fbr.filing_view(inv))
 
     @action(detail=True, methods=["post"], url_path="fbr-post")
     def fbr_post(self, request, pk=None):
