@@ -129,3 +129,16 @@ def test_with_no_default_and_no_rate_a_product_carries_no_tax(api, tenant, world
     inv = inv[0] if isinstance(inv, list) else inv
     r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
     assert r.status_code == 422 and "none of these products carries a tax rate" in r.data["detail"], r.data
+
+
+def test_an_order_priced_with_tax_on_top_reads_as_it_always_did(api, tenant, world):
+    """TDN-SO-00102 was priced before 1 Nov 2026 with the tax added on top: its lines show the TP, not TP ÷ 1.25."""
+    wh, cust, v = world
+    tenant.settings = {**(tenant.settings or {}), "tp_includes_tax": False}
+    tenant.save(update_fields=["settings"])
+    order = _order(api, wh, cust, v)
+    assert (D(order["subtotal"]), D(order["tax1_total"]), D(order["total"])) == (D("1255"), D("313.75"), D("1568.75"))
+    tenant.settings = {**tenant.settings, "tp_includes_tax": True}
+    tenant.save(update_fields=["settings"])
+    line = api.get(f"/api/v1/sales-orders/{order['id']}").data["lines"][0]
+    assert line["price_ex_tax"] is None and line["discount_ex_tax"] is None

@@ -1211,10 +1211,18 @@ class InvoiceService:
         price with tax"): (price without tax, discount on it), so Qty × Price − Disc = Taxable. The order keeps the TP
         as its unit price; None when the TP does not include the tax (a plain order, or tax added on top).
         """
-        if not getattr(order, "charge_tax", False) or not InvoiceService.tp_includes_tax() or not line.variant_id:
+        if not getattr(order, "charge_tax", False) or not line.variant_id:
+            return None
+        taxable = line.line_total - line.tax1_amount - line.tax2_amount - line.fed_amount - line.extra_tax_amount - line.further_tax_amount
+        tp_net = line.qty_ordered * line.unit_price - line.discount_amount - line.scheme_discount
+        # read off the stored figures, not today's rates: no tax inside the TP (an order priced with tax on top, before
+        # 1 Nov 2026, or an untaxed line) reads as it always did
+        if tp_net <= 0 or abs(tp_net - taxable) < Decimal("0.005"):
             return None
         unit = InvoiceService.ex_tax_price(line.variant.product, line.unit_price)
-        taxable = line.line_total - line.tax1_amount - line.tax2_amount - line.fed_amount - line.extra_tax_amount - line.further_tax_amount
+        share = q4(line.unit_price * taxable / tp_net)
+        if abs(unit - share) > Decimal("0.01"):
+            unit = share   # the product's rate moved since the order was priced
         return unit, round2(line.qty_ordered * unit) - taxable
 
     @staticmethod
