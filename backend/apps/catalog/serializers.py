@@ -156,7 +156,7 @@ class ProductVariantSerializer(VariantSkuMixin, serializers.ModelSerializer):
     fbr_extra_tax_rate = serializers.DecimalField(source="product.fbr_extra_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
     fbr_further_tax_rate = serializers.DecimalField(source="product.fbr_further_tax_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
     fbr_wht_rate = serializers.DecimalField(source="product.fbr_wht_rate", max_digits=7, decimal_places=3, read_only=True, default=None)
-    # what a tax line is charged at (Product.tax_rate — its Tax %, else FBR card, else the company default) and,
+    # what a tax line is charged at (Product.tax_rate — its GST Rate, else the company default) and,
     # for 3rd Schedule goods, the retail price without tax it is charged on: the previews price with these
     tax_rate = serializers.CharField(source="product.tax_rate", read_only=True, default="")
     retail_base = serializers.DecimalField(source="product.retail_base", max_digits=14, decimal_places=4, read_only=True, default=None)
@@ -258,7 +258,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "discount_min_qty", "tax_pct", "tax_rate", "price_ex_tax", "fbr_hs_code", "fbr_uom", "fbr_trans_type_id", "fbr_sale_type", "fbr_rate_id", "fbr_rate_desc", "fbr_sro_schedule", "fbr_sro_item", "mrp_ex_tax", "fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate", "fbr_ready", "offers", "offers_write", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
+        fields = ["id", "sku", "upc", "box_upc", "item_code", "name", "description", "brand", "brand_name", "category", "category_name", "supplier", "supplier_name", "base_uom", "base_uom_code", "is_batch_tracked", "is_expiry_tracked", "shelf_life_days", "tax_class", "tax_class_name", "location", "location_name", "unit_size", "packing", "cost_price", "sale_price", "retail_price", "discount_pct", "discount_min_qty", "tax_rate", "price_ex_tax", "fbr_hs_code", "fbr_uom", "fbr_trans_type_id", "fbr_sale_type", "fbr_rate_id", "fbr_rate_desc", "fbr_sro_schedule", "fbr_sro_item", "mrp_ex_tax", "fbr_fed_rate", "fbr_extra_tax_rate", "fbr_further_tax_rate", "fbr_wht_rate", "fbr_ready", "offers", "offers_write", "price_effective_date", "min_stock", "max_stock", "reorder_qty", "status", "image", "attributes", "variants", "variants_count", "stock_on_hand", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
         extra_kwargs = {"sku": {"required": False}}
 
@@ -296,11 +296,6 @@ class ProductSerializer(serializers.ModelSerializer):
         if not InvoiceService.tp_includes_tax():
             return str(obj.sale_price)   # tax is added on top of the TP instead
         return str(InvoiceService.ex_tax_price(obj, obj.sale_price).quantize(Decimal("0.01")))
-
-    def validate_tax_pct(self, value):
-        if value is not None and not (0 <= value < 100):
-            raise serializers.ValidationError("Give a Tax % from 0 to 99.")
-        return value
 
     def get_location_name(self, obj):
         return f"{obj.location.warehouse.code} / {obj.location.code}" + (f" — {obj.location.name}" if obj.location.name else "") if obj.location_id else ""

@@ -58,13 +58,12 @@ class OrderLineSerializer(serializers.ModelSerializer):
     # read it next to `packaging_name` could reasonably render "36 box" for 36 pieces. `qty_base` says what it
     # is in its name, and `packaging_qty_in_base` is the pack factor, so a carton figure can be shown too.
     qty_base = serializers.DecimalField(source="qty_ordered", max_digits=18, decimal_places=3, read_only=True)
-    # the product's own Tax % and FBR rate ride along so the invoice create page can preview each line's
-    # tax before the invoice exists (the server recomputes the real figures at creation)
-    product_tax_pct = serializers.DecimalField(source="variant.product.tax_pct", max_digits=7, decimal_places=3, read_only=True, default=None)
+    # the product's GST Rate rides along so the invoice create page can preview each line's tax before the invoice
+    # exists (the server recomputes the real figures at creation)
     # a tax order's line as its invoice reads it — the price without tax and the discount on it (null otherwise)
     price_ex_tax = serializers.SerializerMethodField()
     discount_ex_tax = serializers.SerializerMethodField()
-    # the rate the line is charged at (Product.tax_rate: its Tax %, else its FBR card's, else the company default)
+    # the rate the line is charged at (Product.tax_rate: its GST Rate, else the company default)
     product_fbr_rate = serializers.CharField(source="variant.product.tax_rate", read_only=True, default="")
     hs_code = serializers.CharField(source="variant.product.fbr_hs_code", read_only=True, default="")
     # the preview mirrors engine.compute_line, and these two decide the 3rd Schedule MRP base (guide §5) — the
@@ -82,7 +81,7 @@ class OrderLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "product_tax_pct", "price_ex_tax", "discount_ex_tax", "product_fbr_rate", "hs_code", "product_fbr_sale_type", "product_mrp", "product_fed_rate", "product_extra_tax_rate", "product_further_tax_rate", "product_wht_rate", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total", "sequence"]
+        fields = ["id", "variant", "variant_name", "variant_sku", "packaging", "packaging_name", "packaging_qty_in_base", "uom", "qty", "qty_ordered", "qty_base", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "qty_pending", "free_qty", "unit_price", "requested_price", "price_per_packaging", "discount_pct", "product_discount_pct", "price_ex_tax", "discount_ex_tax", "product_fbr_rate", "hs_code", "product_fbr_sale_type", "product_mrp", "product_fed_rate", "product_extra_tax_rate", "product_further_tax_rate", "product_wht_rate", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_name", "tax1_rate", "tax1_amount", "tax2_type", "tax2_name", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total", "sequence"]
         read_only_fields = ["id", "qty_ordered", "qty_allocated", "qty_dispatched", "qty_delivered", "qty_returned", "free_qty", "discount_amount", "scheme_discount", "scheme_names", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount", "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total", "sequence"]
         extra_kwargs = {"unit_price": {"required": False}}
 

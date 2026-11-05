@@ -136,10 +136,6 @@ class Product(TenantModel):
     discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))  # T.P — trade price (what we charge salons / retailers)
     # the standard discount only bites from this many units on a line (owner's rule, 21 Oct 2026); 0 = always
     discount_min_qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0"))
-    # the sales-tax % inside this product's TP (owner, 2 Nov 2026: "current price is including 25% tax"): a tax
-    # order or invoice charges it on the price without tax, TP × 100 ÷ (100 + %). Null = the rate on its FBR card,
-    # else the company's default_tax_pct (25). See `tax_rate`.
-    tax_pct = models.DecimalField(max_digits=7, decimal_places=3, null=True, blank=True)
     # ── FBR Digital Invoicing classification (FBR_INTEGRATION_GUIDE.md §5.3) — all from reference data,
     # chained: transaction type → rate → SRO schedule → SRO item. A product missing HS code or rate
     # cannot go on an FBR tax invoice (filing is opt-in per invoice; these sit idle otherwise).
@@ -166,23 +162,16 @@ class Product(TenantModel):
     def tax_rate(self):
         """
         The rate a tax document charges this product, as FBR prose ("25%", "18% along with rupees 60 per kilogram"):
-        its own Tax % when set; else its FBR card's rate; else the company's default_tax_pct; "" for none. The FBR
-        card's prose is kept whenever its % is the product's, so a compound rate keeps its rupee part.
+        its GST Rate, the one tax field on a product (owner, 5 Nov 2026); else the company's default_tax_pct; "" for
+        none. The TP includes it (owner, 2 Nov 2026): the price without tax is TP × 100 ÷ (100 + %).
         """
-        from apps.fbr import engine
-
         card = (self.fbr_rate_desc or "").strip()
-        if self.tax_pct is None:
-            if card:
-                return card
-            from apps.core.tenancy import get_current_tenant
+        if card:
+            return card
+        from apps.core.tenancy import get_current_tenant
 
-            tenant = get_current_tenant() or self.tenant
-            pct = Decimal(str(tenant.setting("default_tax_pct") or 0))
-        else:
-            pct = Decimal(str(self.tax_pct))
-            if card and engine.gst_rate_num(card) == pct:
-                return card
+        tenant = get_current_tenant() or self.tenant
+        pct = Decimal(str(tenant.setting("default_tax_pct") or 0))
         return f"{format(pct.normalize(), 'f')}%" if pct > 0 else ""
 
     @property

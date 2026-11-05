@@ -46,9 +46,8 @@ const productFields = (isNew: boolean): FieldDef[] => [
   { name: "supplier", label: "Supplier (manufacturer)", type: "entity", endpoint: "/api/v1/suppliers", mapOption: (s) => ({ id: s.id, label: s.name }), col: "col-md-3" }, { name: "base_uom", label: "Base unit", type: "entity", endpoint: "/api/v1/uoms", mapOption: (u) => ({ id: u.id, label: `${u.code} — ${u.name}` }), required: true, col: "col-md-3" },
   { name: "unit_size", label: "Unit / size", col: "col-md-3", placeholder: "60ml, 1L, 500g, pcs" }, { name: "packing", label: "Units per box", type: "number", col: "col-md-3", default: 1, hint: "How many units in one box / carton" }, { name: "box_upc", label: "Box UPC (barcode on the box)", col: "col-md-3", hint: "One scan = one box", inputMode: "numeric", autoComplete: "off", showIf: (v) => Number(v.packing) > 1 }, { name: "location", label: "Location (rack / shelf / bin)", type: "custom", col: "col-md-3", render: (v, set) => <LocationField value={v || null} onChange={set} /> },
   { name: "cost_price", label: "D.P — distributor price", type: "money", col: "col-md-3", default: 0 }, { name: "sale_price", label: tpIncludesTax() ? "T.P — trade price (incl. tax)" : "T.P — trade price", type: "money", col: "col-md-3", default: 0 },
-  // the TP includes the tax (owner, 2 Nov 2026): the product's Tax % — blank follows its FBR rate, else the company's
-  // default — and the price without tax worked back from the TP; typing that price sets the TP instead
-  { name: "tax_pct", label: "Tax %", type: "custom", col: "col-md-3", render: (_v: any, set: any, values: any) => <TaxPctInput values={values} set={set} /> },
+  // the TP includes the tax (owner, 2 Nov 2026), at the product's GST Rate, else the company's default (owner, 5 Nov
+  // 2026): the price without tax is worked back from the TP, and typing that price sets the TP instead
   ...(tpIncludesTax() ? [{ name: "price_ex_tax", label: "Price without tax", type: "custom", col: "col-md-3",
     render: (_v: any, _set: any, values: any, setField: any) => <ExTaxPriceInput values={values} setField={setField} /> } as FieldDef] : []),
   { name: "retail_price", label: "R.P — retail price", type: "money", col: "col-md-3", default: 0 }, { name: "price_effective_date", label: "Price list date", type: "date", col: "col-md-3", hint: "The date of the supplier price list these prices came from. A record only — it does not schedule a price change." },
@@ -85,18 +84,10 @@ const productFields = (isNew: boolean): FieldDef[] => [
 
 const tpIncludesTax = () => (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false;
 
-/** The product's tax %, as the server's Product.tax_rate picks it: its own, else its FBR card's rate, else the company default. */
+/** The product's tax %, as the server's Product.tax_rate picks it: its GST Rate, else the company default. */
 function productTaxPct(values: any): number {
-  if (values.tax_pct !== null && values.tax_pct !== undefined && values.tax_pct !== "") return Number(values.tax_pct) || 0;
   if (values.fbr_rate_desc) return fbrRateParts(String(values.fbr_rate_desc)).pct;
   return Number((useAuth.getState().me as any)?.tenant?.settings?.default_tax_pct ?? 25) || 0;
-}
-
-/** Shows the % the product is taxed at; cleared, it follows the FBR rate / company default again. */
-function TaxPctInput({ values, set }: { values: any; set: (v: any) => void }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  return <input type="number" step="0.01" min="0" max="99" className="form-control" value={draft ?? productTaxPct(values)}
-    onChange={(e) => { setDraft(e.target.value); set(e.target.value === "" ? null : e.target.value); }} onBlur={() => setDraft(null)} />;
 }
 
 /** TP ÷ (1 + tax) — FED / Extra / Further sit inside the TP too. Typing here sets the TP from it. */
@@ -484,7 +475,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
     const rs = rates.data?.results || [];
     if (values.fbr_trans_type_id && !values.fbr_rate_id && rs.length) {
       const pick = rs.length === 1 ? rs[0] : rs.find((r: any) => String(r.description).trim() === "18%");
-      if (pick) { setField("fbr_rate_id", pick.key); setField("fbr_rate_desc", pick.description); setField("tax_pct", fbrRateParts(String(pick.description)).pct); }
+      if (pick) { setField("fbr_rate_id", pick.key); setField("fbr_rate_desc", pick.description); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rates.data, values.fbr_trans_type_id]);
@@ -540,7 +531,7 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         <FBRCombo value={values.fbr_rate_desc || ""} disabled={!values.fbr_trans_type_id}
           placeholder={!values.fbr_trans_type_id ? "— Select Sale Type first —" : values.fbr_rate_desc || "— Select rate —"}
           options={rates.data?.results || []} loading={rates.isFetching}
-          onPick={(r) => { setField("fbr_rate_id", r.key); setField("fbr_rate_desc", r.description); setField("tax_pct", fbrRateParts(String(r.description)).pct); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
+          onPick={(r) => { setField("fbr_rate_id", r.key); setField("fbr_rate_desc", r.description); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }}
           onClear={() => { setField("fbr_rate_id", ""); setField("fbr_rate_desc", ""); setField("fbr_sro_schedule", ""); setField("fbr_sro_item", ""); setSroQ(""); }} />
         {Boolean(values.fbr_trans_type_id) && rates.data && (rates.data.results || []).length === 0 && (
           <div className="form-text text-warning">{rates.data.hint || "No rates cached for this sale type yet — save the IRIS token and sync under Settings → FBR."}</div>)}
@@ -597,7 +588,6 @@ function FBRClassifier({ values, setField }: { values: any; setField: (k: string
         const rate = String(values.fbr_rate_desc || "").trim();
         if (rate && rate !== "18%") { if (!values.fbr_sro_schedule) probs.push(`SRO schedule (mandatory at ${rate})`); if (!values.fbr_sro_item) probs.push("SRO item serial"); }
         if (third && !values.mrp_ex_tax) probs.push("printed retail price (MRP)");
-        if (rate && values.tax_pct !== null && values.tax_pct !== undefined && values.tax_pct !== "" && Number(values.tax_pct) !== fbrRateParts(rate).pct) probs.push(`Tax % ${Number(values.tax_pct)} to match the FBR rate ${rate}`);
         return probs.length === 0
           ? <span className="text-success"><i className="ti ti-check me-1" />FBR-ready — this product can go on an FBR tax invoice.</span>
           : <span className="text-warning">Not FBR-ready — missing: {probs.join(", ")}.</span>;

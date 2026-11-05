@@ -3,7 +3,8 @@ The product's own Tax %, owner 2 Nov 2026: "current price is including 25% tax s
 product price 25% less and show tax 25% … add tax and price without tax and current price field will be price with tax
 … 25% is default 25 and option to change … submit same way as well."
 
-- Every product carries a Tax % — its own, else its FBR card's rate, else the company default (25). The TP includes it.
+- Owner, 5 Nov 2026: "remove tax field in product and use field in tax GST rate instead". A product's tax is its GST
+  Rate, else the company default (25). The TP includes it.
 - A tax order or invoice bills the price without tax (TP × 100 ÷ 125), the tax on it, and the TP as the line total.
 - FBR is filed the same figures. A 3rd Schedule item's printed retail price includes the tax too, so it is worked back
   at the same rate: TDN typed the TP there (1255) and is taxed 25% of 1004, not of 1255.
@@ -58,7 +59,7 @@ def _filing(cust):
 def test_a_product_with_no_rate_of_its_own_takes_the_default_25_inside_its_tp(api, tenant, world):
     wh, cust, v = world
     p = api.get(f"/api/v1/products/{v.product_id}").data
-    assert p["tax_pct"] is None and p["tax_rate"] == "25%" and p["price_ex_tax"] == "1004.00", "TP 1255 = 1004 + 25%"
+    assert "tax_pct" not in p and p["tax_rate"] == "25%" and p["price_ex_tax"] == "1004.00", "TP 1255 = 1004 + 25%"
 
     order = _order(api, wh, cust, v, qty="2")
     assert (D(order["subtotal"]), D(order["tax1_total"]), D(order["total"])) == (D("2008"), D("502"), D("2510"))
@@ -72,14 +73,15 @@ def test_a_product_with_no_rate_of_its_own_takes_the_default_25_inside_its_tp(ap
     assert il["fbr_rate"] == "25%"
 
 
-def test_the_tax_pct_can_be_changed_on_the_product(api, tenant, world):
+def test_the_gst_rate_sets_the_tax_on_the_product(api, tenant, world):
     wh, cust, v = world
-    r = api.patch(f"/api/v1/products/{v.product_id}", {"tax_pct": "18"}, format="json")
+    r = api.patch(f"/api/v1/products/{v.product_id}", {"fbr_rate_desc": "18%"}, format="json")
     assert r.status_code == 200, r.content
     assert r.data["tax_rate"] == "18%" and r.data["price_ex_tax"] == "1063.56", "1255 ÷ 1.18"
     order = _order(api, wh, cust, v)
     assert (D(order["subtotal"]), D(order["tax1_total"]), D(order["total"])) == (D("1063.56"), D("191.44"), D("1255"))
-    assert api.patch(f"/api/v1/products/{v.product_id}", {"tax_pct": "100"}, format="json").status_code == 400
+    old_field = api.patch(f"/api/v1/products/{v.product_id}", {"tax_pct": "5"}, format="json")
+    assert old_field.status_code == 200 and old_field.data["tax_rate"] == "18%", "the old Tax % field is gone: an API caller still sending it changes nothing"
 
 
 def test_a_3rd_schedule_item_with_its_tp_as_printed_price_files_25_pct_of_the_price_without_tax(api, tenant, world):
@@ -103,7 +105,7 @@ def test_a_3rd_schedule_item_with_its_tp_as_printed_price_files_25_pct_of_the_pr
     assert D(str(item["fixedNotifiedValueOrRetailPrice"])) == D("1004"), "the retail price without its tax, per unit"
 
 
-def test_a_tax_pct_that_is_not_the_fbr_rate_cannot_be_filed(api, tenant, world):
+def test_the_invoice_and_the_filing_read_one_rate(api, tenant, world):
     from apps.catalog.models import Product
     from apps.fbr import engine
 
@@ -112,10 +114,7 @@ def test_a_tax_pct_that_is_not_the_fbr_rate_cannot_be_filed(api, tenant, world):
         Product.objects.filter(pk=v.product_id).update(fbr_rate_desc="18%", fbr_hs_code="3305.9020", fbr_sale_type="Goods at standard rate (default)",
                                                        fbr_uom="Numbers, pieces, units")
         p = Product.objects.get(pk=v.product_id)
-        assert p.tax_rate == "18%" and engine.product_fbr_problems(p) == [], "no Tax % of its own: the FBR card's rate"
-        p.tax_pct = D("25")
-        assert p.tax_rate == "25%"
-        assert any("is not its FBR rate" in x for x in engine.product_fbr_problems(p))
+        assert p.tax_rate == p.fbr_rate_desc == "18%" and engine.product_fbr_problems(p) == []
 
 
 def test_with_no_default_and_no_rate_a_product_carries_no_tax(api, tenant, world):

@@ -213,7 +213,7 @@ class Tenant(models.Model):
         # before tax is worked back from it at each item's rate, and price + tax = TP. Off: tax is added on top.
         "tp_includes_tax": True,
         # the sales-tax % inside a product's TP when the product names none (owner, 2 Nov 2026: "25% is default 25
-        # and option to change"): its own Tax % beats it, then its FBR card's rate. 0 = no default
+        # and option to change"): its GST Rate beats it. 0 = no default
         "default_tax_pct": 25,
     }
 

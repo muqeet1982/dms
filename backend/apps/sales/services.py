@@ -1177,7 +1177,7 @@ class InvoiceService:
         engine.compute_line the filing calls, so a compound rate keeps its rupee part, a fixed rate
         ("Rs.700/MT") is no longer invoiced at zero, and 3rd Schedule goods tax on max(MRP × qty,
         taxable). A % typed on the line overrides as a plain percentage — the human's word. Since 2 Nov
-        2026 the rate is the product's own Tax % (default 25), else its FBR card's — see Product.tax_rate.
+        2026 the rate is the product's GST Rate, else the company default (25) — see Product.tax_rate.
         No dated rates, no invoice-level rate; an FBR "Exempt"/"0%" product stays at zero on purpose.
         """
         t = InvoiceService.line_taxes(product, qty=qty, unit_price=unit_price, discount_amount=discount_amount, override=override)
@@ -1282,7 +1282,7 @@ class InvoiceService:
         rates = ({"fed_rate": product.fbr_fed_rate, "extra_rate": product.fbr_extra_tax_rate,
                   "further_rate": product.fbr_further_tax_rate, "withheld_rate": product.fbr_wht_rate}
                  if product is not None else {})
-        # the product's own Tax % (owner, 2 Nov 2026), else its FBR card's rate, else the company default
+        # the product's GST Rate (owner, 5 Nov 2026), else the company default
         rate_str = product.tax_rate if product is not None else ""
         mrp = product.retail_base if product is not None else None
         money = engine.compute_line(quantity=qty, unit_price=unit_price, discount_amount=discount_amount,
@@ -1390,7 +1390,7 @@ class InvoiceService:
             if not any(l.tax_pct_override is not None or (l.variant_id and l.variant.product.tax_rate)
                        for l in inv.lines.select_related("variant__product")):
                 raise DomainError(
-                    "Tax is on but none of these products carries a tax rate — set the Tax % on the product "
+                    "Tax is on but none of these products carries a tax rate — set the GST Rate on the product "
                     "(or a default under Settings → Rules) first.", code="no_tax_rate")
             # 3rd Schedule goods tax on the PRINTED retail price (guide §5) — without it the invoice
             # would quietly under-tax on the charged price, and the filing would refuse anyway
@@ -1519,7 +1519,7 @@ class InvoiceService:
         """
         customer_part = gross_total = taxable_total = Decimal("0")
         tax_shown = (inv.tax1_total or Decimal("0")) + (inv.tax2_total or Decimal("0"))
-        # the column shows whenever the switch is on — zeros included, so a product missing its Tax % is
+        # the column shows whenever the switch is on — zeros included, so a product missing its GST Rate is
         # visible rather than silently untaxed
         tax_on = bool(inv.force_tax_type_id) or tax_shown > 0
         for l in lines:

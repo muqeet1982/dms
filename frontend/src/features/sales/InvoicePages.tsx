@@ -207,7 +207,7 @@ export function InvoiceDetailPage() {
               {(() => {
                 /* live figures, mirroring update_draft: the typed discount, then a changed Prod % moves it by gross ×
                    the change; Taxable = qty × rate − discount; on a tax invoice GST is the FBR engine's (or the typed
-                   Tax %), Line Total = Taxable + GST. PREVIEW — the server recomputes on Save. */
+                   GST Rate), Line Total = Taxable + GST. PREVIEW — the server recomputes on Save. */
                 const taxed = Boolean(inv.force_tax_type);
                 // anything may change on a draft (owner, 27 Oct 2026) — quantity, items added or taken off; the delivery
                 // note, stock and the order follow on Save. Delivered goods keep their quantities (a return is a credit note).

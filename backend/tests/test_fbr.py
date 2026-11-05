@@ -104,7 +104,7 @@ def _taxed_invoice(api, tenant):
         tt = TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")
         TaxRate.objects.create(tax_type=tt, rate_pct=Decimal("18"), valid_from=timezone.localdate())
         Product.objects.filter(pk=v.product_id).update(
-            tax_pct=Decimal("18"), fbr_hs_code="7306.3090", fbr_uom="KG",
+            fbr_hs_code="7306.3090", fbr_uom="KG",
             fbr_sale_type="Goods at standard rate (default)", fbr_rate_desc="18%")
         cust.cnic = "35202-1234567-1"
         cust.business_name = "Salon One Traders"
