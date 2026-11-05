@@ -6,7 +6,7 @@ import pytest
 
 from apps.core.tenancy import tenant_context
 
-from .conftest import deliver_invoice
+from .conftest import deliver_invoice, issue_order
 
 pytestmark = pytest.mark.django_db
 
@@ -466,6 +466,7 @@ def test_an_order_marked_tax_invoice_bills_with_tax_at_delivery(api, tenant, tax
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                           "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
     assert r.status_code == 201 and r.data["charge_tax"] is True, r.content
+    issue_order(api, r.data['id'])
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
@@ -482,6 +483,7 @@ def test_a_flagged_order_with_unclassified_products_still_bills_and_notifies(api
     _no_default_tax(tenant)
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                           "charge_tax": True, "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
+    issue_order(api, r.data['id'])
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
@@ -506,6 +508,7 @@ def test_a_flagged_order_carries_the_fbr_tax_itself(api, tenant, taxed_world):
     line = r.data["lines"][0]
     assert Decimal(line["tax1_amount"]) == Decimal("108") and Decimal(line["line_total"]) == Decimal("708")
     # the automatic billing lands on the same figure — order and invoice agree to the paisa
+    issue_order(api, r.data['id'])
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
@@ -697,6 +700,7 @@ def test_the_customer_flag_makes_every_order_a_tax_invoice(api, tenant, taxed_wo
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
                                           "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json")
     assert r.status_code == 201 and r.data["charge_tax"] is True, r.content
+    issue_order(api, r.data['id'])
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]

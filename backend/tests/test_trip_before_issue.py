@@ -225,6 +225,97 @@ def test_no_load_form_no_issue_no_trip(api, tenant, world):
     assert offered() == [], "on a vehicle: no longer offered"
 
 
+def test_mark_delivered_only_delivers_what_the_warehouse_issued(api, tenant, world):
+    """Owner, 5 Nov 2026. It used to make its own note and take the stock with no load form."""
+    from apps.delivery.models import DeliveryNote
+    from apps.inventory.models import StockMovement
+    from apps.inventory.services import StockService
+
+    wh, v, cust, driver, vehicle, o = world
+    with tenant_context(tenant, tenant.owner):
+        before, moves = StockService.on_hand(v, wh)[0], StockMovement.objects.count()
+    mark = lambda: api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json")
+
+    r = mark()
+    assert r.status_code == 422 and r.data["type"] == "not_issued", r.content
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    r = mark()
+    assert r.status_code == 422 and r.data["type"] == "not_issued", "a form that is not issued changes nothing"
+    with tenant_context(tenant, tenant.owner):
+        assert not DeliveryNote.objects.filter(order_id=o["id"]).exists()
+        assert StockService.on_hand(v, wh)[0] == before and StockMovement.objects.count() == moves
+
+    api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "issued"
+    r = mark()
+    assert r.status_code == 200, r.content
+    with tenant_context(tenant, tenant.owner):
+        notes = list(DeliveryNote.objects.filter(order_id=o["id"]))
+        assert len(notes) == 1 and notes[0].status == "delivered" and notes[0].picklist_id, "the issued note, not a new one"
+        assert StockService.on_hand(v, wh)[0] == before - 5, "out of the warehouse once"
+    r = mark()
+    assert r.status_code == 422, "nothing left to deliver"
+
+
+def test_mark_delivered_delivers_the_stop_on_a_trip(api, tenant, world):
+    """It used to answer "nothing left to deliver" on a Dispatched order, or make a second note for any balance."""
+    from apps.delivery.models import DeliveryNote
+    from apps.sales.models import SalesInvoice
+
+    wh, v, cust, driver, vehicle, o = world
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
+                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
+    assert api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json").status_code == 200
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json")
+    assert r.status_code == 200 and r.data["status"] != "partially_delivered", r.content
+    with tenant_context(tenant, tenant.owner):
+        note = DeliveryNote.objects.get(order_id=o["id"])
+        assert note.status == "delivered" and str(note.trip_id) == trip["id"]
+        assert SalesInvoice.objects.filter(order_id=o["id"]).count() == 1
+
+
+def test_a_balance_goes_out_on_a_load_form_of_its_own(api, tenant, world):
+    """TDN-SO-00034 was issued short and TDN-SO-00149 had a unit come back. Mark Delivered was their only way out, with no load form."""
+    from apps.inventory.services import StockService
+
+    wh, v, cust, driver, vehicle, o = world
+    with tenant_context(tenant, tenant.owner):
+        before = StockService.on_hand(v, wh)[0]
+    offered = lambda: [r["id"] for r in api.get("/api/v1/sales-orders", {"status__in": "confirmed,partially_delivered", "no_load_form": 1, "warehouse": str(wh.id)}).data["results"]]
+    mark = lambda: api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json")
+    assert offered() == [o["id"]]
+
+    first = api.post("/api/v1/pick-lists", {"warehouse": str(wh.id), "orders": [o["id"]]}, format="json").data
+    assert api.post(f"/api/v1/pick-lists/{first['id']}/issue", {"issues": [{"line_id": first["lines"][0]["id"], "qty_issued": "3"}]}, format="json").status_code == 200
+    assert offered() == [], "issued, not delivered yet: not partly delivered, so nothing to offer"
+    assert mark().status_code == 200
+    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "partially_delivered"
+    assert offered() == [o["id"]], "3 of 5 delivered: the balance needs a form"
+
+    r = mark()
+    assert r.status_code == 422 and r.data["type"] == "not_issued", "the balance has not been issued"
+    with tenant_context(tenant, tenant.owner):
+        assert StockService.on_hand(v, wh)[0] == before - 3
+
+    second = api.post("/api/v1/pick-lists", {"warehouse": str(wh.id), "orders": [o["id"]]}, format="json")
+    assert second.status_code == 201, second.content
+    assert second.data["number"] == first["number"] + "-2" and sum(D(l["qty_to_pick"]) for l in second.data["lines"]) == 2
+    assert offered() == [], "its form is open"
+    again = api.post("/api/v1/pick-lists", {"warehouse": str(wh.id), "orders": [o["id"]]}, format="json")
+    assert again.status_code == 422 and again.data["type"] == "duplicate", "one live form at a time still holds"
+
+    assert api.post(f"/api/v1/pick-lists/{second.data['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in second.data["lines"]]}, format="json").status_code == 200
+    assert mark().status_code == 200
+    final = api.get(f"/api/v1/sales-orders/{o['id']}").data
+    assert final["status"] != "partially_delivered", final["status"]
+    assert offered() == []
+    with tenant_context(tenant, tenant.owner):
+        assert StockService.on_hand(v, wh)[0] == before - 5, "5 in all, nothing twice"
+    assert api.post("/api/v1/pick-lists", {"warehouse": str(wh.id), "orders": [o["id"]]}, format="json").status_code == 422
+
+
 def test_a_started_trip_shows_the_value_it_carries(api, tenant, world):
     """Start only counted stock it took itself, so 36 of TDN's 37 started trips read a loaded value of 0."""
     from apps.delivery.models import DeliveryNoteLine

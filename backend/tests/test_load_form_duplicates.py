@@ -221,3 +221,22 @@ def test_two_batches_of_one_item_count_in_full_and_cannot_go_out_twice(api, tena
         so.refresh_from_db()
         with pytest.raises(DomainError):
             DeliveryService._stock_out(DeliveryService.create_note(so, lines=[{"order_line": ol, "qty": D("2")}, {"order_line": ol, "qty": D("1")}]))
+
+
+def test_two_batches_of_one_item_are_delivered_in_full(api, tenant, world):
+    """TDN-SO-00149: NO. 4.19 went out 4 + 2 on two batches, the order line read delivered 2, and the order stayed Partially delivered."""
+    from apps.delivery.services import DeliveryService
+    from apps.sales.models import SalesOrder, SalesOrderLine
+
+    wh, v, cust = world
+    order = _order(api, wh, v, cust, qty="3")
+    with tenant_context(tenant, tenant.owner):
+        ol = SalesOrderLine.objects.get(order_id=order["id"])
+        so = SalesOrder.objects.get(pk=order["id"])
+        note = DeliveryService.create_note(so, lines=[{"order_line": ol, "qty": D("1")}, {"order_line": ol, "qty": D("2")}])
+        DeliveryService._stock_out(note)
+        DeliveryService.deliver(note, receiver_name="Shop")
+        ol.refresh_from_db()
+        so.refresh_from_db()
+        assert ol.qty_delivered == D("3")
+        assert so.status != "partially_delivered"

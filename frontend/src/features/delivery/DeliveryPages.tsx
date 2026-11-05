@@ -239,7 +239,7 @@ export function PickListFormPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
-  const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status: "confirmed", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
+  const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status__in: "confirmed,partially_delivered", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
   // an order that has since got its load form leaves the list, and must leave the selection with it
   useEffect(() => { if (orders.data) setSelected((s) => (orders.data.results.some((o: any) => o.id === s) ? s : null)); }, [orders.data]);
   const create = async () => {

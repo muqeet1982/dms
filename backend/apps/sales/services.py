@@ -764,15 +764,21 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def mark_delivered(order, lines=None, receiver_name="", cash_collected=Decimal("0"), delivered_at=None):
-        """Mark delivered from the order without a trip (§6.3 point 5): DN + stock out (if needed) + invoice."""
+    def mark_delivered(order, receiver_name="", cash_collected=Decimal("0"), delivered_at=None):
+        """
+        Mark delivered from the order: delivers what the warehouse issued (owner, 5 Nov 2026: no load form, no issue, no
+        delivery). It used to make a note of its own and take the stock itself, which is how TDN-DN-00149-2 went out.
+        """
+        from apps.delivery.models import DeliveryNote
         from apps.delivery.services import DeliveryService
 
-        if order.status not in ("confirmed", "dispatched", "partially_delivered"):
-            raise DomainError(f"Order in status {order.status} cannot be marked delivered.")
         DeliveryService.refuse_second_delivery(order)
-        dn = DeliveryService.create_note(order, trip=None, lines=lines)
-        dn = DeliveryService.deliver(dn, delivered=None, receiver_name=receiver_name, cash_collected=cash_collected, delivered_at=delivered_at)
+        if order.status not in ("confirmed", "issued", "dispatched", "partially_delivered"):
+            raise DomainError(f"Order in status {order.status} cannot be marked delivered.")
+        dn = DeliveryNote.objects.filter(order=order, stock_out_done=True, status__in=("pending", "loaded", "dispatched")).order_by("created_at").first()
+        if dn is None:
+            raise DomainError(f"{order.number} has nothing issued to deliver — issue its load form first.", code="not_issued")
+        DeliveryService.deliver(dn, receiver_name=receiver_name, cash_collected=cash_collected, delivered_at=delivered_at)
         return order
 
     @staticmethod

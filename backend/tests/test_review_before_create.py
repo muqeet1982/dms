@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 
 from apps.core.tenancy import tenant_context
+from .conftest import issue_order
 
 pytestmark = pytest.mark.django_db
 D = Decimal
@@ -79,6 +80,7 @@ def test_the_create_page_saves_a_draft_to_review_and_post(api, confirmed):
 
 def test_delivered_without_an_invoice_bills_a_draft_and_the_cash_waits_for_posting(api, tenant, confirmed):
     order, wh, v, cust = confirmed
+    issue_order(api, order['id'])
     r = api.post(f"/api/v1/sales-orders/{order['id']}/mark-delivered", {"receiver_name": "Shop", "cash_collected": "200"}, format="json")
     assert r.status_code == 200, r.content
     with tenant_context(tenant, tenant.owner):

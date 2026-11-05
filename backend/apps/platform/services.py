@@ -1086,15 +1086,17 @@ def reset_tenant_data(tenant, *, actor=None, request=None, dry_run=False):
             for label, fields in RESET_KEPT_ROW_FIELDS:
                 django_apps.get_model(label).all_objects.filter(tenant=tenant).update(**fields)
 
-            # Join rows first, in their own pass: a pick list's orders are deleted in a later block than the
-            # pick list itself, and a join row left pointing at a deleted order fails the whole transaction.
-            for label in RESET_TRANSACTIONAL_MODELS:
-                model = django_apps.get_model(label)
-                for m2m in model._meta.many_to_many:
-                    through = m2m.remote_field.through
-                    n = through.objects.filter(**{f"{m2m.m2m_field_name()}__tenant": tenant}).delete()[0]
-                    if n:
-                        deleted[through._meta.label] = n
+        # Join rows first, in their own pass: a pick list's orders are deleted in a later block than the
+        # pick list itself, and a join row left pointing at a deleted order fails the whole transaction.
+        # The preview counts them too, or its total is short by one per load form.
+        for label in RESET_TRANSACTIONAL_MODELS:
+            model = django_apps.get_model(label)
+            for m2m in model._meta.many_to_many:
+                through = m2m.remote_field.through
+                rows = through.objects.filter(**{f"{m2m.m2m_field_name()}__tenant": tenant})
+                n = rows.count() if dry_run else rows.delete()[0]
+                if n:
+                    deleted[through._meta.label] = n
 
         for label in RESET_TRANSACTIONAL_MODELS:
             qs = django_apps.get_model(label).all_objects.filter(tenant=tenant)

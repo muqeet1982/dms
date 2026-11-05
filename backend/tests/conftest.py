@@ -68,6 +68,25 @@ def deliver_invoice(api, invoice_id):
     assert r.status_code == 200, r.content
 
 
+def issue_order(api, order_id):
+    """The warehouse issues the whole order on its load form: nothing is delivered or dispatched before this (5 Nov 2026)."""
+    pl = api.post(f"/api/v1/sales-orders/{order_id}/load-form", {"send": True}, format="json")
+    assert pl.status_code == 201, pl.content
+    r = api.post(f"/api/v1/pick-lists/{pl.data['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl.data["lines"]]}, format="json")
+    assert r.status_code == 200, r.content
+    return pl.data
+
+
+def issue_order_now(order):
+    """The same inside a tenant context, for tests that call the services directly."""
+    from apps.delivery.services import PickListService
+
+    form = PickListService.create(warehouse=order.warehouse, orders=[order])
+    PickListService.issue(form, issues=[{"line_id": l.id, "qty_issued": l.qty_to_pick} for l in form.lines.all()])
+    order.refresh_from_db()
+    return form
+
+
 def seed_basic(tenant):
     """Warehouse, supplier, product with stock, customer — inside tenant context."""
     from apps.catalog.models import Barcode, UnitOfMeasure

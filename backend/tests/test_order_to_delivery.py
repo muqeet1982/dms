@@ -145,10 +145,13 @@ def test_full_chain(api, tenant, order_with_stock):
 
 
 def test_workflow_reads_the_old_flow_too(api, order_with_stock):
-    """Mark-delivered (no load form, no trip) still produces a sensible chain."""
+    """A delivery from before 5 Nov 2026 (no load form, no trip, as TDN-DN-00149-2) still produces a sensible chain."""
+    from apps.core.tenancy import tenant_context
+    from apps.delivery.services import DeliveryService
+
     order, warehouse, variant = order_with_stock
-    r = api.post(f"/api/v1/sales-orders/{order.pk}/mark-delivered", {"receiver_name": "Walk-in"}, format="json")
-    assert r.status_code == 200, r.content
+    with tenant_context(order.tenant, order.tenant.owner):
+        DeliveryService.deliver(DeliveryService.create_note(order), receiver_name="Walk-in")
     steps = _steps(api, order.pk)
     # delivered with no invoice: the invoice step waits on its draft until someone posts it
     assert steps["delivered"]["state"] == "done" and steps["invoice"]["state"] == "current"

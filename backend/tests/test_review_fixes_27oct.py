@@ -8,6 +8,7 @@ import pytest
 
 from apps.core.exceptions import DomainError
 from apps.core.tenancy import tenant_context
+from .conftest import issue_order
 
 pytestmark = pytest.mark.django_db
 D = Decimal
@@ -39,6 +40,7 @@ def test_cash_on_delivery_against_a_draft_waits_for_it_instead_of_paying_older_i
     _issue(api, older)
     old_inv = _invoice(api, older)                                   # posted, 300 open
     o = _order(api, wh, cust, v, qty="2")
+    issue_order(api, o['id'])
     r = api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop", "cash_collected": "200"}, format="json")
     assert r.status_code == 200, r.content
     assert D(api.get(f"/api/v1/invoices/{old_inv['id']}").data["paid_amount"]) == 0, "the older invoice is not touched"

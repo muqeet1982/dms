@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db.models import Count, F, Prefetch, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -100,7 +100,13 @@ class SalesOrderViewSet(DocumentViewSet):
         if p.get("no_load_form") == "1":   # what Load forms → New offers: not an order a live load form already carries
             from apps.delivery.models import PickListLine
 
-            qs = qs.exclude(pk__in=PickListLine.objects.exclude(picklist__status="cancelled").exclude(order_line=None).values("order_line__order_id"))
+            from .models import SalesOrderLine
+
+            # the same rule as PickListService.forms_holding: an issued form does not hold a partly delivered order's balance
+            balance_free = Q(order_line__order__status="partially_delivered", picklist__status__in=("issued", "partially_issued"))
+            qs = qs.exclude(pk__in=PickListLine.objects.exclude(picklist__status="cancelled").exclude(order_line=None).exclude(balance_free).values("order_line__order_id"))
+            has_balance = SalesOrderLine.objects.filter(qty_ordered__gt=F("qty_dispatched") - F("free_qty")).values("order_id")
+            qs = qs.exclude(Q(status="partially_delivered") & ~Q(pk__in=has_balance))
         if p.get("status__in"):
             qs = qs.filter(status__in=[s.strip() for s in p["status__in"].split(",") if s.strip()])
         if p.get("uninvoiced") == "1":
@@ -232,7 +238,7 @@ class SalesOrderViewSet(DocumentViewSet):
 
     @action(detail=True, methods=["post"], url_path="mark-delivered")
     def mark_delivered(self, request, pk=None):
-        order = OrderService.mark_delivered(self.get_object(), lines=request.data.get("lines"), receiver_name=request.data.get("receiver_name", ""), cash_collected=Decimal(str(request.data.get("cash_collected", 0) or 0)), delivered_at=request.data.get("delivered_at"))
+        order = OrderService.mark_delivered(self.get_object(), receiver_name=request.data.get("receiver_name", ""), cash_collected=Decimal(str(request.data.get("cash_collected", 0) or 0)), delivered_at=request.data.get("delivered_at"))
         order.refresh_from_db()
         return Response(SalesOrderSerializer(order).data)
 
@@ -252,7 +258,7 @@ class SalesOrderViewSet(DocumentViewSet):
         from apps.delivery.services import DeliveryService, PickListService
 
         order = self.get_object()
-        if order.status != "confirmed":
+        if order.status not in ("confirmed", "partially_delivered"):
             raise DomainError("Confirm the order before sending it to the warehouse.")
         if order.warehouse_id is None:
             raise DomainError("Set the warehouse on the order first.")

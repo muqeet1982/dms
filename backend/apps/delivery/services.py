@@ -24,7 +24,8 @@ class PickListService:
         # one load form, one order, numbered after it (owner, 5 Nov 2026: "only limit one its own order that is it")
         if len(orders) > 1:
             raise DomainError("A load form is for one order — make one for each.", code="one_order_per_load_form")
-        orders = [o for o in orders if o.status == "confirmed" and o.warehouse_id == warehouse.pk]
+        # a partly delivered order's balance goes out on a form of its own (owner, 5 Nov 2026: no load form, no delivery)
+        orders = [o for o in orders if o.status in ("confirmed", "partially_delivered") and o.warehouse_id == warehouse.pk]
         if not orders:
             raise DomainError("Select a confirmed order from this warehouse.")
         # one live load form per order. An order stays "confirmed" until its stock is issued, so it could be picked again
@@ -57,6 +58,8 @@ class PickListService:
                     PickListLine.objects.create(picklist=pl, order_line=line, variant=line.variant, batch=batch, bin=bin, qty_to_pick=q)
                 if short > 0:
                     PickListLine.objects.create(picklist=pl, order_line=line, variant=line.variant, qty_to_pick=short)
+        if not pl.lines.exists():
+            raise DomainError(f"{orders[0].number} has nothing left to issue.", code="nothing_to_issue")
         AuditService.log("created", pl, after={"orders": [o.number for o in orders]})
         return pl
 
@@ -65,6 +68,9 @@ class PickListService:
         """{live load form: order numbers} — the forms still carrying goods for these orders."""
         held = {}
         for line in PickListLine.objects.filter(order_line__order__in=orders).exclude(picklist__status="cancelled").select_related("picklist", "order_line__order"):
+            # what an issued form carried has been delivered or came back, so it does not hold a partly delivered order's balance
+            if line.order_line.order.status == "partially_delivered" and line.picklist.status in ("issued", "partially_issued"):
+                continue
             held.setdefault(line.picklist, set()).add(line.order_line.order.number)
         return held
 
@@ -376,7 +382,7 @@ class DeliveryService:
     def deliver(dn, delivered=None, receiver_name="", signature_file=None, photo_file=None, gps=None, cash_collected=Decimal("0"), delivered_at=None, failure_reason="", failed=False, remarks=""):
         """
         delivered: [{line_id, qty_delivered, qty_returned, return_reason, return_condition}] or None = all loaded qty delivered.
-        Creates the stock movement if the order was never dispatched (mark-delivered path) and the invoice.
+        Creates the invoice, and the stock movement if a stop made before 5 Nov 2026 was never issued.
         """
         if dn.status in ("delivered", "returned"):
             raise DomainError("Delivery note already completed.")
@@ -402,6 +408,7 @@ class DeliveryService:
             return dn
         by_id = {str(d["line_id"]): d for d in (delivered or [])}
         total_loaded = total_delivered = Decimal("0")
+        order_lines = {}
         for line in dn.lines.select_related("order_line"):
             d = by_id.get(str(line.id))
             if d is None:
@@ -415,7 +422,9 @@ class DeliveryService:
             if line.qty_delivered + line.qty_returned > line.qty_loaded + Decimal("0.001"):
                 raise DomainError(f"Delivered + returned exceeds loaded for {line.variant.name}.")
             line.save()
-            ol = line.order_line
+            # one copy per order line: each batch's line brought its own, and the last one's count overwrote the others
+            # (TDN-SO-00149: NO. 4.19 delivered 6 on two batches, the order said 2, and it stayed Partially delivered)
+            ol = order_lines.setdefault(line.order_line_id, line.order_line)
             ol.qty_delivered += line.qty_delivered
             ol.save(update_fields=["qty_delivered"])
             total_loaded += line.qty_loaded

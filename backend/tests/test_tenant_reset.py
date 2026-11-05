@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.core.tenancy import tenant_context
 
-from .conftest import make_tenant, seed_basic
+from .conftest import make_tenant, seed_basic, issue_order_now
 
 pytestmark = pytest.mark.django_db
 
@@ -51,6 +51,7 @@ def trade(tenant):
         PurchaseOrderService.create(supplier=sup, warehouse=wh, lines=[{"variant": v, "qty": Decimal("24"), "unit_price": Decimal("100")}])
         order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("10"), "unit_price": None}], source="staff", warehouse=wh)
         OrderService.confirm(order)
+        issue_order_now(order)
         OrderService.mark_delivered(order, receiver_name="Shop owner")
         invoice = SalesInvoice.objects.get(order=order)
         from apps.sales.services import InvoiceService
@@ -357,6 +358,7 @@ def test_a_reset_leaves_a_company_able_to_trade_again(admin_api, tenant):
         StockService.move(warehouse=ready["warehouse"], variant=ready["variant"], qty=Decimal("50"), movement_type="opening", unit_cost=Decimal("100"))
         order = OrderService.create(customer=ready["customer"], lines=[{"variant": ready["variant"], "qty": Decimal("5"), "unit_price": None}], source="staff", warehouse=ready["warehouse"])
         OrderService.confirm(order)
+        issue_order_now(order)
         OrderService.mark_delivered(order, receiver_name="Shop owner")
         from apps.sales.services import InvoiceService
 

@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 
 from apps.core.tenancy import tenant_context
+from .conftest import issue_order
 
 pytestmark = pytest.mark.django_db
 D = Decimal
@@ -40,6 +41,7 @@ def test_a_new_standing_discount_follows_business_in_flight_books_included(api, 
     _drafted_order, draft = _invoiced(api, wh, cust, v, post=False)
     in_flight_order, in_flight = _invoiced(api, wh, cust, v, post=True)   # posted, goods not yet delivered
     delivered = _order(api, wh, cust, v, qty="2")
+    issue_order(api, delivered['id'])
     api.post(f"/api/v1/sales-orders/{delivered['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json")
     settled = api.get("/api/v1/invoices", {"order": delivered["id"]}).data["results"][0]
     assert api.post(f"/api/v1/invoices/{settled['id']}/post", {}, format="json").status_code == 200

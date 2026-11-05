@@ -277,6 +277,8 @@ class Command(BaseCommand):
         # --- mark delivered without a trip (counter sale)
         counter = next((o for o in orders[7:] if o.status == "confirmed"), None)
         if counter is not None:
+            pl = PickListService.create(warehouse=main, orders=[counter])
+            PickListService.issue(pl, issues=[{"line_id": l.id, "qty_issued": l.qty_to_pick} for l in pl.lines.all()])
             OrderService.mark_delivered(counter, receiver_name="Walk-in", cash_collected=Decimal("0"))
         # --- receipts by cashier, a rep collection and a settlement
         from apps.sales.models import SalesInvoice

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from apps.core.tenancy import tenant_context
 
-from .conftest import seed_basic
+from .conftest import seed_basic, issue_order, issue_order_now
 
 pytestmark = pytest.mark.django_db
 
@@ -68,6 +68,7 @@ def test_mark_delivered_without_trip_and_rep_collection(tenant):
         cust.assigned_reps.add(rep)
         order = OrderService.create(customer=cust, lines=[{"variant": v, "qty": Decimal("4"), "unit_price": None}], source="rep_app", rep=rep, supplier=sup, warehouse=wh)
         OrderService.confirm(order)
+        issue_order_now(order)
         OrderService.mark_delivered(order, receiver_name="Owner")
         inv = SalesInvoice.objects.get(order=order)
         assert inv.status == "draft", "billed as a draft for review"
@@ -111,6 +112,7 @@ def test_mark_delivered_via_api_moves_order_to_invoiced(api, tenant):
     wh, sup, v, cust = seed_basic(tenant)
     r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
     assert r.status_code == 201 and r.data["status"] == "confirmed", r.content
+    issue_order(api, r.data['id'])
     r2 = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {"receiver_name": "Owner", "cash_collected": "0"}, format="json")
     assert r2.status_code == 200, r2.content
     assert r2.data["status"] == "delivered" and r2.data["invoices"][0]["total"] == "750.0000"
@@ -378,6 +380,7 @@ def test_a_salon_buys_at_the_retail_price(api, tenant):
                                           "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json")
     assert r.status_code == 201, r.content
     assert Decimal(r.data["lines"][0]["unit_price"]) == Decimal("200") and Decimal(r.data["total"]) == Decimal("400")
+    issue_order(api, r.data['id'])
     done = api.post(f"/api/v1/sales-orders/{r.data['id']}/mark-delivered", {}, format="json")
     assert done.status_code == 200, done.content
     inv = api.get("/api/v1/invoices", {"order": r.data["id"]}).data["results"][0]
