@@ -412,12 +412,13 @@ class CreditNoteSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default="")
     journal_number = serializers.CharField(source="journal.number", read_only=True, default="")
+    delivery_note_number = serializers.CharField(source="delivery_note.number", read_only=True, default="")
 
     class Meta:
         model = CreditNote
-        fields = ["id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at",
+        fields = ["delivery_note", "delivery_note_number", "id", "number", "version", "gst_pct", "customer", "customer_name", "invoice", "invoice_number", "warehouse", "date", "reason", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "journal_number", "applied_to_invoice", "notes", "lines", "created_at",
                   "discount", "applied_amount", "refunded_amount", "available_credit", "applications", "refunds"]
-        read_only_fields = ["id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "created_at", "discount", "applied_amount", "refunded_amount"]
+        read_only_fields = ["delivery_note", "id", "number", "version", "subtotal", "tax1_total", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "status", "journal", "created_at", "discount", "applied_amount", "refunded_amount"]
 
 
 class RepCollectionSerializer(serializers.ModelSerializer):

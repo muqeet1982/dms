@@ -152,12 +152,33 @@ export function TripDetailPage() {
   );
 }
 
+const RETURN_REASONS = [["rejected", "Rejected By Customer"], ["damaged", "Damaged"], ["shortage", "Shortage"], ["not_ordered", "Not Ordered"], ["other", "Other"]];
+const LOST_REASONS = ["damaged", "shortage"];   // a broken or missing unit cannot go back on the shelf
+
 export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: () => void; onDone: () => void }) {
   const [lines, setLines] = useState<any[]>(note.lines.map((l: any) => ({ line_id: l.id, name: l.variant_name, loaded: l.qty_loaded, qty_delivered: l.qty_loaded, qty_returned: "0", return_reason: "", return_condition: "good" })));
   const [form, setForm] = useState({ receiver_name: "", cash_collected: "", failed: Boolean(note._startFailed), failure_reason: note._startFailed ? "Customer refused the delivery" : "", remarks: "", delivered_at: "" });
   const [sig, setSig] = useState<File | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  // what saving this will credit the customer, worked out by the server the way the credit note will be
+  const [preview, setPreview] = useState<any>(null);
+  const backKey = lines.map((l) => l.qty_returned).join("|");
+  useEffect(() => {
+    if (form.failed || !lines.some((l) => Number(l.qty_returned) > 0)) { setPreview(null); return; }
+    let stale = false;
+    const t = setTimeout(async () => {
+      try { const p = await api.post(`/api/v1/delivery-notes/${note.id}/return-preview`, { delivered: lines.map((l) => ({ line_id: l.line_id, qty_returned: l.qty_returned })) }); if (!stale) setPreview(p); }
+      catch { if (!stale) setPreview(null); }
+    }, 300);
+    return () => { stale = true; clearTimeout(t); };
+  }, [backKey, form.failed]);
+  const setLine = (i: number, patch: any) => setLines(lines.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  // every unit that went out is either delivered or returned, so each figure follows the other
+  const setReturned = (i: number, v: number) => {
+    const l = lines[i], loaded = Number(l.loaded), back = Math.min(Math.max(v, 0), loaded);
+    setLine(i, { qty_returned: String(back), qty_delivered: String(Number((loaded - back).toFixed(3))), return_reason: back > 0 ? l.return_reason || "rejected" : "", return_condition: back > 0 ? l.return_condition : "good" });
+  };
   const submit = async () => {
     setBusy(true);
     try {
@@ -166,8 +187,8 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
       fd.append("receiver_name", form.receiver_name); fd.append("cash_collected", form.cash_collected || "0"); fd.append("failed", String(form.failed)); fd.append("failure_reason", form.failure_reason);
       fd.append("remarks", form.remarks); if (form.delivered_at) fd.append("delivered_at", new Date(form.delivered_at).toISOString());
       if (sig) fd.append("signature", sig); if (photo) fd.append("photo", photo);
-      await api.upload(`/api/v1/delivery-notes/${note.id}/deliver`, fd);
-      toast.success(form.failed ? "Stop marked failed" : "Delivered — an invoice not raised yet is saved as a draft to review and post");
+      const saved = await api.upload(`/api/v1/delivery-notes/${note.id}/deliver`, fd);
+      toast.success(form.failed ? "Stop marked failed" : saved?.credit_note ? `Delivered — credit note ${saved.credit_note.number} posted` : "Delivered — an invoice not raised yet is saved as a draft to review and post");
       onDone();
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -175,8 +196,9 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
     <Modal open title={`Deliver ${note.number} — ${note.customer_name}`} onClose={onClose} footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className={`btn ${form.failed ? "btn-danger" : "btn-primary"}`} disabled={busy} onClick={submit}>{form.failed ? "Mark failed" : "Confirm delivery"}</button></>}>
       <div className="form-check form-switch mb-2"><input className="form-check-input" type="checkbox" id="failed" checked={form.failed} onChange={(e) => setForm({ ...form, failed: e.target.checked })} /><label className="form-check-label" htmlFor="failed">Delivery failed (shop closed, refused…)</label></div>
       {form.failed ? <><Field label="Failure reason"><input className="form-control" value={form.failure_reason} onChange={(e) => setForm({ ...form, failure_reason: e.target.value })} /></Field><Field label="Remarks"><input className="form-control" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="what the driver reported" /></Field></> : <>
-        <table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th className="num">Issued</th><th style={{ width: 100 }}>Delivered</th><th style={{ width: 100 }}>Returned</th><th>Reason</th><th>Condition</th></tr></thead>
-          <tbody>{lines.map((l, i) => <tr key={l.line_id}><td>{l.name}</td><td className="num">{qty(l.loaded)}</td><td><input type="number" step="any" min="0" max={l.loaded} className="form-control form-control-sm" value={l.qty_delivered} onChange={(e) => { const d = String(Math.min(Math.max(Number(e.target.value || 0), 0), Number(l.loaded))); setLines(lines.map((x, j) => (j === i ? { ...x, qty_delivered: d, qty_returned: String(Math.max(Number(l.loaded) - Number(d || 0), 0)) } : x))); }} /></td><td><input type="number" step="any" min="0" max={l.loaded} className="form-control form-control-sm" value={l.qty_returned} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty_returned: String(Math.min(Math.max(Number(e.target.value || 0), 0), Number(l.loaded))) } : x)))} /></td><td><select className="form-select form-select-sm" value={l.return_reason} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, return_reason: e.target.value } : x)))}><option value="">—</option>{["rejected", "damaged", "shortage", "not_ordered", "other"].map((r) => <option key={r} value={r}>{r}</option>)}</select></td><td><select className="form-select form-select-sm" value={l.return_condition} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, return_condition: e.target.value } : x)))}><option value="good">good</option><option value="damaged">damaged</option></select></td></tr>)}</tbody></table>
+        <table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th className="num">Issued</th><th style={{ width: 90 }}>Delivered</th><th style={{ width: 90 }}>Returned</th><th style={{ minWidth: 185 }}>Reason</th><th style={{ minWidth: 150 }}>Back To Stock / Wastage</th></tr></thead>
+          <tbody>{lines.map((l, i) => { const back = Number(l.qty_returned) > 0; return <tr key={l.line_id}><td>{l.name}</td><td className="num">{qty(l.loaded)}</td><td><input type="number" step="any" min="0" max={l.loaded} className="form-control form-control-sm" value={l.qty_delivered} onChange={(e) => setReturned(i, Number(l.loaded) - Number(e.target.value || 0))} /></td><td><input type="number" step="any" min="0" max={l.loaded} className="form-control form-control-sm" value={l.qty_returned} onChange={(e) => setReturned(i, Number(e.target.value || 0))} /></td><td><select className="form-select form-select-sm" disabled={!back} value={l.return_reason} onChange={(e) => setLine(i, { return_reason: e.target.value, return_condition: LOST_REASONS.includes(e.target.value) ? "damaged" : l.return_condition })}>{!back && <option value="" />}{RETURN_REASONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></td><td><select className="form-select form-select-sm" disabled={!back || LOST_REASONS.includes(l.return_reason)} value={l.return_condition} onChange={(e) => setLine(i, { return_condition: e.target.value })}><option value="good">Back To Stock</option><option value="damaged">Wastage</option></select></td></tr>; })}</tbody></table>
+        {preview && Number(preview.credit) > 0 && <div className="row g-3 mb-3"><InfoItem label="Credit Note" col="col-md-6"><span className="fw-semibold">{money(preview.credit)}</span></InfoItem>{preview.balance_after != null && <InfoItem label="Balance After Return" col="col-md-6"><span className="fw-semibold">{money(preview.balance_after)}</span></InfoItem>}</div>}
         <div className="row"><Field label="Receiver name" col="col-md-6"><input className="form-control" value={form.receiver_name} onChange={(e) => setForm({ ...form, receiver_name: e.target.value })} /></Field><Field label="Cash collected" col="col-md-6" hint="Creates a receipt allocated to this delivery's invoice"><input type="number" step="0.01" className="form-control" value={form.cash_collected} onChange={(e) => setForm({ ...form, cash_collected: e.target.value })} /></Field>
           <Field label="Delivered on" col="col-md-6" hint="blank = now"><DateTimeInput className="form-control" value={form.delivered_at} onChange={(e) => setForm({ ...form, delivered_at: e.target.value })} /></Field>
           <Field label="Delivery remarks" col="col-md-6"><input className="form-control" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="e.g. one carton refused — damaged corner" /></Field>
@@ -201,21 +223,28 @@ export function DeliveryNoteDetailPage() {
   const q = useDoc("/api/v1/delivery-notes", id);
   const [open, setOpen] = useState(false);
   const [again, setAgain] = useState(false);
+  const [undo, setUndo] = useState(false);
   if (q.isLoading) return <Spinner />;
   const n = q.data;
   if (!n) return null;
   return (
     <>
-      <PageHeader title={n.number} badge={<StatusBadge status={n.status} label={n.status_label} />} crumbs={[{ label: "Delivery notes", to: "/app/delivery/notes" }, { label: n.number }]} actions={<>{["pending", "loaded", "dispatched"].includes(n.status) && n.stock_out_done && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setOpen(true)}>Deliver</button>}{["failed", "returned"].includes(n.status) && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setAgain(true)}><i className="ti ti-truck-return me-1" />Deliver again</button>}<button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/delivery-notes/${n.id}/pdf`)}><i className="ti ti-printer me-1" />Print challan</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/delivery-notes/${n.id}/pdf`, `${n.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button></>} />
+      <PageHeader title={n.number} badge={<StatusBadge status={n.status} label={n.status_label} />} crumbs={[{ label: "Delivery notes", to: "/app/delivery/notes" }, { label: n.number }]} actions={<>{["pending", "loaded", "dispatched"].includes(n.status) && n.stock_out_done && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setOpen(true)}>Deliver</button>}{["failed", "returned"].includes(n.status) && pageRights("delivery_notes").extras.complete && <button className="btn btn-primary" onClick={() => setAgain(true)}><i className="ti ti-truck-return me-1" />Deliver again</button>}{n.can_undo_return && pageRights("delivery_notes").extras.complete && <button className="btn btn-outline-danger" onClick={() => setUndo(true)}><i className="ti ti-arrow-back-up me-1" />Undo return</button>}<button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/delivery-notes/${n.id}/pdf`)}><i className="ti ti-printer me-1" />Print challan</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/delivery-notes/${n.id}/pdf`, `${n.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button></>} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${n.customer}`}>{n.customer_name}</Link><div className="fs-12 text-muted">{n.customer_phone} · {n.customer_address}</div></InfoItem><InfoItem label="Order"><Link to={`/app/sales/orders/${n.order}`}>{n.order_number}</Link><div className="fs-12 text-muted">{money(n.order_total)}</div></InfoItem><InfoItem label="Load form">{n.picklist_number ? <Link to={`/app/delivery/pick-lists/${n.picklist}`}>{n.picklist_number}</Link> : "—"}</InfoItem><InfoItem label="Dispatch">{n.trip_number ? <Link to={`/app/delivery/trips/${n.trip}`}>{n.trip_number}</Link> : "direct delivery"}</InfoItem><InfoItem label="Delivered">{datetime(n.delivered_at)}<div className="fs-12 text-muted">{n.receiver_name} · by {n.delivered_by_name}</div></InfoItem>
-          <InfoItem label="Invoice">{n.invoice_number ? <Link to={`/app/sales/invoices/${n.invoice_id}`}>{n.invoice_number}</Link> : "—"}</InfoItem><InfoItem label="Cash collected">{money(n.cash_collected)}</InfoItem><InfoItem label="GPS">{n.gps_lat ? <a href={`https://maps.google.com/?q=${n.gps_lat},${n.gps_lng}`} target="_blank" rel="noreferrer">{n.gps_lat}, {n.gps_lng}</a> : "—"}</InfoItem><InfoItem label="Failure reason">{n.failure_reason || "—"}</InfoItem><InfoItem label="Remarks" col="col-md-6">{n.remarks || "—"}</InfoItem></div>
-        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th>Batch</th><th className="num">Loaded</th><th className="num">Delivered</th><th className="num">Returned</th><th>Reason</th><th>Condition</th></tr></thead><tbody>{n.lines.map((l: any) => <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td className="num">{qty(l.qty_loaded)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{qty(l.qty_returned)}</td><td>{l.return_reason}</td><td>{l.qty_returned > 0 ? l.return_condition : ""}</td></tr>)}</tbody></table>
+          <InfoItem label="Invoice">{n.invoice_number ? <Link to={`/app/sales/invoices/${n.invoice_id}`}>{n.invoice_number}</Link> : "—"}</InfoItem>{n.credit_note && <InfoItem label="Credit note"><Link to={`/app/sales/credit-notes/${n.credit_note.id}`}>{n.credit_note.number}</Link><div className="fs-12 text-muted">{money(n.credit_note.total)}</div></InfoItem>}<InfoItem label="Cash collected">{money(n.cash_collected)}</InfoItem><InfoItem label="GPS">{n.gps_lat ? <a href={`https://maps.google.com/?q=${n.gps_lat},${n.gps_lng}`} target="_blank" rel="noreferrer">{n.gps_lat}, {n.gps_lng}</a> : "—"}</InfoItem><InfoItem label="Failure reason">{n.failure_reason || "—"}</InfoItem><InfoItem label="Remarks" col="col-md-6">{n.remarks || "—"}</InfoItem></div>
+        <table className="table table-sm fs-12 mb-0"><thead className="table-light"><tr><th>Item</th><th>Batch</th><th className="num">Loaded</th><th className="num">Delivered</th><th className="num">Returned</th><th>Reason</th><th>Back To Stock / Wastage</th></tr></thead><tbody>{n.lines.map((l: any) => <tr key={l.id}><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}</div></td><td>{l.batch_no}</td><td className="num">{qty(l.qty_loaded)}</td><td className="num">{qty(l.qty_delivered)}</td><td className="num">{qty(l.qty_returned)}</td><td>{l.return_reason_label}</td><td>{l.return_result}</td></tr>)}</tbody></table>
         {(n.signature_url || n.photo_url) && <div className="d-flex gap-3 mt-3">{n.signature_url && <div><div className="fs-11 text-muted">Signature</div><img src={n.signature_url} alt="signature" style={{ maxHeight: 120, border: "1px solid #eee" }} /></div>}{n.photo_url && <div><div className="fs-11 text-muted">Photo</div><a href={n.photo_url} target="_blank" rel="noreferrer"><img src={n.photo_url} alt="proof" style={{ maxHeight: 120, border: "1px solid #eee" }} /></a></div>}</div>}
       </div></div>
       {n.order && <WorkflowStepper orderId={n.order} compact />}
       <DocTabs model="DeliveryNote" id={n.id} showMovements />
       {open && <DeliverModal note={n} onClose={() => setOpen(false)} onDone={() => { setOpen(false); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/delivery-notes", id] }); }} />}
+      <ConfirmDialog open={undo} title={`Undo the return on ${n.number}`} withReason confirmText="Undo return"
+        message={`The returned units count as delivered${n.credit_note ? ` and ${n.credit_note.number} is cancelled` : ""}.`}
+        onClose={() => setUndo(false)} onConfirm={async (reason) => {
+          try { await api.post(`/api/v1/delivery-notes/${n.id}/undo-return`, { reason: reason || "" }, true); toast.success("Return undone"); setUndo(false); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/delivery-notes", id] }); }
+          catch (e: any) { toast.error(e.message); }
+        }} />
       <ConfirmDialog open={again} title={`Deliver ${n.number} again`} withReason confirmText="Deliver again"
         message={`The same goods and the same invoice${n.invoice_number ? ` (${n.invoice_number})` : ""} go out again — on the next trip, or deliver it from here.`}
         onClose={() => setAgain(false)} onConfirm={async (reason) => {

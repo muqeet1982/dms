@@ -76,10 +76,12 @@ class DeliveryNoteLineSerializer(serializers.ModelSerializer):
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     batch_no = serializers.CharField(source="batch.batch_no", read_only=True, default="")
     unit_price = serializers.DecimalField(source="order_line.unit_price", max_digits=18, decimal_places=4, read_only=True)
+    return_result = serializers.CharField(read_only=True)
+    return_reason_label = serializers.CharField(source="get_return_reason_display", read_only=True)
 
     class Meta:
         model = DeliveryNoteLine
-        fields = ["id", "order_line", "variant", "variant_name", "variant_sku", "batch", "batch_no", "qty_loaded", "qty_delivered", "qty_returned", "return_reason", "return_condition", "unit_cost", "unit_price"]
+        fields = ["return_result", "return_reason_label", "return_settled", "id", "order_line", "variant", "variant_name", "variant_sku", "batch", "batch_no", "qty_loaded", "qty_delivered", "qty_returned", "return_reason", "return_condition", "unit_cost", "unit_price"]
 
 
 class DeliveryNoteSerializer(serializers.ModelSerializer):
@@ -109,10 +111,20 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     delivered_by_name = serializers.CharField(source="delivered_by.full_name", read_only=True, default="")
     signature_url = serializers.SerializerMethodField()
     photo_url = serializers.SerializerMethodField()
+    credit_note = serializers.SerializerMethodField()
+    can_undo_return = serializers.SerializerMethodField()
+
+    def get_credit_note(self, obj):
+        """The credit note this stop posted for what came back."""
+        cn = next((c for c in obj.return_credit_notes.all() if c.status == "posted"), None)
+        return {"id": str(cn.id), "number": cn.number, "total": str(cn.total)} if cn is not None else None
+
+    def get_can_undo_return(self, obj):
+        return obj.status == "partially_delivered" and any(l.return_settled and l.qty_returned > 0 for l in obj.lines.all())
 
     class Meta:
         model = DeliveryNote
-        fields = ["id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
+        fields = ["credit_note", "can_undo_return", "id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
         read_only_fields = fields
 
     def get_gps(self, obj):

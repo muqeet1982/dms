@@ -42,6 +42,7 @@ REPORTS = {
     "order_fulfilment": {"title": "Order fulfilment rate", "area": "sales", "params": DATE_RANGE, "query": ops.order_fulfilment, "perm": OPS},
     "pending_orders": {"title": "Pending orders / backorders", "area": "sales", "params": [], "query": ops.pending_orders, "perm": OPS},
     "dispatched_not_delivered": {"title": "Dispatched not delivered", "area": "sales", "params": [], "query": ops.dispatched_not_delivered, "perm": OPS},
+    "returns_report": {"title": "Returns: back to stock / wastage", "area": "sales", "params": DATE_RANGE + [{"name": "result", "type": "select", "options": ["", "Back To Stock", "Wastage", "Not Back Yet"]}], "query": ops.returns_report, "perm": OPS},
     "rejected_orders": {"title": "Rejected / cancelled orders", "area": "sales", "params": DATE_RANGE, "query": ops.rejected_orders, "perm": OPS},
     "scheme_cost": {"title": "Scheme cost", "area": "sales", "params": DATE_RANGE, "query": ops.scheme_cost, "perm": OPS},
     # ---- purchasing

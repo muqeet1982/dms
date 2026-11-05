@@ -198,7 +198,8 @@ def _trip_invoice(api, tenant, wh, cust, v, qty="3"):
     return o, inv, trip
 
 
-def test_goods_refused_at_the_door_come_home_with_the_trip_and_the_return_moves_no_stock_again(api, tenant, shop):
+def test_goods_refused_at_the_door_are_settled_by_the_stop_and_a_later_return_is_another_unit(api, tenant, shop):
+    """Since 5 Nov 2026 saving the stop credits what came back: see test_returns_at_delivery.py."""
     wh, _sup, v, cust = shop
     before = _on_hand(tenant, wh, v)
     _o, inv, trip = _trip_invoice(api, tenant, wh, cust, v, qty="3")       # billed 3 at issue
@@ -208,28 +209,29 @@ def test_goods_refused_at_the_door_come_home_with_the_trip_and_the_return_moves_
     line = api.get(f"/api/v1/delivery-notes/{dn}").data["lines"][0]
     r = api.post(f"/api/v1/delivery-notes/{dn}/deliver", {"receiver_name": "Shop", "delivered": [{"line_id": line["id"], "qty_delivered": "2", "qty_returned": "1"}]}, format="json")
     assert r.status_code == 200, r.content
-    assert api.post(f"/api/v1/trips/{trip['id']}/close", {"override": True}, format="json").status_code == 200
-    assert _on_hand(tenant, wh, v) == before - 2, "the trip brought the refused unit home"
-    cn = _return(api, inv, 1)
-    assert cn.status_code == 201, cn.content
-    assert cn.data["lines"][0]["stock_back"] is True
-    assert _on_hand(tenant, wh, v) == before - 2, "…and the return does not count it again"
-    assert _gl(tenant, cn.data["id"]).get("Stock in Hand", 0) > 0, "its cost goes back to Stock in Hand"
+    assert _on_hand(tenant, wh, v) == before - 2, "the stop put the refused unit back"
     i = api.get(f"/api/v1/invoices/{inv['id']}").data
     assert D(i["balance"]) == D("270") and D(i["credited_amount"]) == D("135"), "the refused unit is credited; the two kept are owed"
+    gl = _gl(tenant, r.data["credit_note"]["id"])
+    assert gl.get("Stock in Hand", 0) > 0, "its cost goes back to Stock in Hand"
+    assert api.post(f"/api/v1/trips/{trip['id']}/close", {"override": True}, format="json").status_code == 200
+    assert _on_hand(tenant, wh, v) == before - 2, "the close does not count it again"
+    cn = _return(api, inv, 1)
+    assert cn.status_code == 201, cn.content
+    assert cn.data["lines"][0]["stock_back"] is False, "this one the customer had kept: the return brings it back"
+    assert _on_hand(tenant, wh, v) == before - 1
 
 
-def test_with_no_trip_nothing_brings_refused_goods_home_so_the_return_restocks_them(api, tenant, shop):
+def test_with_no_trip_the_stop_still_brings_refused_goods_home(api, tenant, shop):
     wh, _sup, v, cust = shop
     before = _on_hand(tenant, wh, v)
     _o, inv = _issued_invoice(api, wh, cust, v, qty="3")
     dn = api.get(f"/api/v1/invoices/{inv['id']}").data["delivery_note"]
     line = api.get(f"/api/v1/delivery-notes/{dn}").data["lines"][0]
-    api.post(f"/api/v1/delivery-notes/{dn}/deliver", {"receiver_name": "Shop", "delivered": [{"line_id": line["id"], "qty_delivered": "2", "qty_returned": "1"}]}, format="json")
-    cn = _return(api, inv, 1)
-    assert cn.status_code == 201, cn.content
-    assert cn.data["lines"][0]["stock_back"] is False
+    r = api.post(f"/api/v1/delivery-notes/{dn}/deliver", {"receiver_name": "Shop", "delivered": [{"line_id": line["id"], "qty_delivered": "2", "qty_returned": "1"}]}, format="json")
+    assert r.status_code == 200, r.content
     assert _on_hand(tenant, wh, v) == before - 2
+    assert D(api.get(f"/api/v1/invoices/{inv['id']}").data["credited_amount"]) == D("135")
 
 
 def test_a_draft_return_blocks_reversing_its_invoice_until_deleted_and_a_stale_draft_cannot_post(api, tenant, shop):

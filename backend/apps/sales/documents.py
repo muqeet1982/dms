@@ -11,8 +11,11 @@ def order_pdf(request, o):
     lines = list(o.lines.select_related("variant__product", "packaging", "tax1_type", "tax2_type").order_by("sequence"))
     tax_shown = Decimal(str(o.tax1_total or 0)) + Decimal(str(o.tax2_total or 0))
     other = InvoiceService.other_tax_context(o, lines)
+    from apps.delivery.models import units_came_back
+
+    came_back = units_came_back(order_line__order=o)
     for l in lines:
-        l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)), Decimal("0"))
+        l.pending = max(Decimal(str(l.qty_ordered)) - Decimal(str(l.qty_delivered)) - came_back.get(l.pk, Decimal("0")), Decimal("0"))
         l.discount_total = Decimal(str(l.discount_amount or 0)) + Decimal(str(l.scheme_discount or 0))
         l.tax_amount = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
         l.taxable = Decimal(str(l.line_total or 0)) - l.tax_amount - l.other_tax

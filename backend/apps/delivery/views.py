@@ -352,6 +352,8 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
     perm_map = page_perms("delivery_notes", {
         "deliver": extra_perm("delivery_notes", "complete"),
         "deliver_again": extra_perm("delivery_notes", "complete"),
+        "return_preview": extra_perm("delivery_notes", "complete"),
+        "undo_return": extra_perm("delivery_notes", "complete"),
         "pdf": "delivery.view_delivery_note",
     })
     filterset_fields = ["status", "trip", "order", "customer", "warehouse"]
@@ -359,7 +361,7 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["created_at", "sequence"]
 
     def get_queryset(self):
-        qs = DeliveryNote.objects.select_related("trip", "order", "customer", "warehouse", "delivered_by").prefetch_related("lines__variant", "lines__batch", "lines__order_line")
+        qs = DeliveryNote.objects.select_related("trip", "order", "customer", "warehouse", "delivered_by").prefetch_related("lines__variant", "lines__batch", "lines__order_line", "return_credit_notes")
         qs = _driver_scope(self.request, qs, field="trip__driver")
         qs = warehouse_scope(self.request, qs)
         m = getattr(self.request, "membership", None)
@@ -373,6 +375,20 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
         """The stop failed but the customer still wants the goods: this same note and its invoice go out again."""
         dn = DeliveryService.deliver_again(self.get_object(), reason=request.data.get("reason", ""))
         dn = self.get_queryset().get(pk=dn.pk)   # its lines as they now stand, not the copy read before
+        return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="return-preview")
+    @require_perm("delivery.complete_delivery")
+    def return_preview(self, request, pk=None):
+        """{delivered:[{line_id, qty_returned}]}: what saving the stop would credit. Nothing is saved."""
+        return Response(DeliveryService.return_preview(self.get_object(), request.data.get("delivered") or []))
+
+    @action(detail=True, methods=["post"], url_path="undo-return")
+    @require_perm("delivery.complete_delivery")
+    def undo_return(self, request, pk=None):
+        """A return saved on this stop by mistake: the customer kept the units after all."""
+        dn = DeliveryService.undo_return(self.get_object(), reason=request.data.get("reason", ""))
+        dn = self.get_queryset().get(pk=dn.pk)
         return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
@@ -398,6 +414,7 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
             dn, delivered=delivered, receiver_name=data.get("receiver_name", ""), signature_file=request.FILES.get("signature"), photo_file=request.FILES.get("photo"), gps=gps,
             cash_collected=Decimal(str(data.get("cash_collected", 0) or 0)), delivered_at=data.get("delivered_at") or None, failure_reason=data.get("failure_reason", ""), failed=str(data.get("failed", "")).lower() in ("1", "true", "yes"), remarks=data.get("remarks", ""),
         )
+        dn = self.get_queryset().get(pk=dn.pk)   # its lines and its credit note as they now stand, not the copy read before
         return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
 
     @action(detail=True, methods=["get"])

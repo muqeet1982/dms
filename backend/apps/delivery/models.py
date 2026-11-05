@@ -134,6 +134,8 @@ class DeliveryNote(DocumentModel):
     warehouse = models.ForeignKey("inventory.Warehouse", on_delete=models.PROTECT, related_name="+")
     sequence = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS, default="pending", db_index=True)
+    # the damaged units of this stop that no invoice billed: written off with this adjustment
+    return_adjustment = models.ForeignKey("inventory.StockAdjustment", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     delivered_at = models.DateTimeField(null=True, blank=True)
     delivered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     receiver_name = models.CharField(max_length=120, blank=True)
@@ -172,7 +174,28 @@ class DeliveryNoteLine(TenantModel):
     qty_returned = models.DecimalField(**QTY)
     return_reason = models.CharField(max_length=20, choices=RETURN_REASONS, blank=True)
     return_condition = models.CharField(max_length=10, default="good")  # good | damaged
+    # settled when the stop was saved (owner, 5 Nov 2026): the goods, the customer's credit and the order are done, so
+    # nothing later (the trip's close, a return) counts them again
+    return_settled = models.BooleanField(default=False)
     unit_cost = models.DecimalField(**MONEY)
+
+    @property
+    def return_result(self):
+        """Where the units that came back went, in the words the screens and the Returns report use."""
+        if self.qty_returned <= 0:
+            return ""
+        if self.return_condition == "damaged":
+            return "Wastage"
+        trip = self.delivery_note.trip
+        return "Back To Stock" if self.return_settled or (trip is not None and trip.status == "closed") else "Not Back Yet"
+
+
+def units_came_back(**line_filters):
+    """Units per order line that came back from a stop that reached the customer: finished, not waiting to go out. Not a
+    stop that failed outright, which may still go out again, nor a return taken later of goods the customer had kept."""
+    rows = (DeliveryNoteLine.objects.filter(delivery_note__status__in=("delivered", "partially_delivered"), qty_returned__gt=0, **line_filters)
+            .values("order_line_id").annotate(q=models.Sum("qty_returned")))
+    return {r["order_line_id"]: r["q"] for r in rows}
 
 
 class VehicleLog(TenantModel):

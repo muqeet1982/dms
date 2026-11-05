@@ -86,7 +86,7 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
 
     # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
-    credit, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()
+    credit, returns, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()
     for l in lines:
         rep = str(l.invoice.rep_id)
         if _sold_on_credit(l.invoice):
@@ -95,18 +95,20 @@ def sales_by_rep(date_from=None, date_to=None, **_):
             # the money that has come in on these invoices and what is still owed on them (owner, 5 Nov 2026). What a
             # credit note settled is neither: those goods came back, no money did.
             counted.add(l.invoice_id)
+            returns[rep] += l.invoice.credited_amount
             received[rep] += l.invoice.cash_paid
             outstanding[rep] += l.invoice.balance
     for r in out["rows"]:
         r["credit_sales"] = str(credit[r["key"]])
         r["cash_sales"] = str(Decimal(r["sales"]) - credit[r["key"]])
+        r["returns"] = str(returns[r["key"]])
         r["received"] = str(received[r["key"]])
         r["outstanding"] = str(outstanding[r["key"]])
     sales = out["columns"].index("sales") + 1
-    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "received", "outstanding"]
+    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "returns", "received", "outstanding"]
     all_credit = sum(credit.values(), Z)
     out["totals"] = {"sales": out["totals"]["sales"], "cash_sales": str(Decimal(out["totals"]["sales"]) - all_credit), "credit_sales": str(all_credit),
-                     "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
+                     "returns": str(sum(returns.values(), Z)), "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
                      **{k: v for k, v in out["totals"].items() if k != "sales"}}
     return out
 
@@ -142,9 +144,12 @@ def order_fulfilment(date_from=None, date_to=None, **_):
 def pending_orders(**_):
     from apps.sales.models import SalesOrder
 
+    from apps.delivery.models import units_came_back
+
+    came_back = units_came_back()
     rows = []
     for o in SalesOrder.objects.filter(status__in=["submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered"]).select_related("customer", "rep"):
-        pend = sum((l.qty_ordered + l.free_qty - l.qty_delivered for l in o.lines.all()), Z)
+        pend = sum((l.qty_ordered + l.free_qty - l.qty_delivered - came_back.get(l.pk, Z) for l in o.lines.all()), Z)
         rows.append({"number": o.number, "date": o.order_date, "customer": o.customer.name, "rep": o.rep.name if o.rep_id else "", "status": o.status, "total": str(o.total), "qty_pending": str(pend), "age_days": (timezone.localdate() - o.order_date).days, "hold_reason": o.hold_reason})
     return {"columns": ["number", "date", "customer", "rep", "status", "total", "qty_pending", "age_days"], "rows": rows, "totals": {"count": len(rows)}}
 
@@ -292,7 +297,11 @@ def stock_summary(warehouse=None, **_):
     qs = StockLevel.objects.select_related("variant", "variant__product", "warehouse", "batch").filter(Q(qty_on_hand__gt=0) | Q(qty_reserved__gt=0))
     if warehouse:
         qs = qs.filter(warehouse_id=warehouse)
-    disp = {r["variant_id"]: ((r["d"] or 0) - (r["dl"] or 0), r["dl"] or 0) for r in SalesOrderLine.objects.filter(order__status__in=["dispatched", "partially_delivered", "delivered", "invoiced"]).values("variant_id").annotate(d=Sum("qty_dispatched"), dl=Sum("qty_delivered"))}
+    from apps.delivery.services import DeliveryService
+
+    out_statuses = ["dispatched", "partially_delivered", "delivered", "invoiced"]
+    back = DeliveryService.settled_returns(status__in=out_statuses)
+    disp = {r["variant_id"]: ((r["d"] or 0) - (r["dl"] or 0) - back.get(r["variant_id"], 0), r["dl"] or 0) for r in SalesOrderLine.objects.filter(order__status__in=out_statuses).values("variant_id").annotate(d=Sum("qty_dispatched"), dl=Sum("qty_delivered"))}
     rows = []
     for lv in qs:
         d = disp.get(lv.variant_id, (0, 0))
@@ -386,9 +395,99 @@ def dead_stock(days=90, **_):
 def wastage_by_reason(date_from=None, date_to=None, **_):
     from apps.inventory.models import StockAdjustment
 
+    from apps.sales.models import CreditNoteLine
+
     qs = _window(StockAdjustment.objects.filter(status="approved", type="decrease"), "date", date_from, date_to)
     rows = [{"reason": r["reason__name"], "category": r["reason__category"], "adjustments": r["n"], "value": str(r["v"] or 0)} for r in qs.values("reason__name", "reason__category").annotate(n=Count("id"), v=Sum("total_value")).order_by("-v")]
-    return {"columns": ["reason", "category", "adjustments", "value"], "rows": rows, "totals": {"value": str(sum((Decimal(r["value"]) for r in rows), Z))}}
+    # goods that came back broken or expired are expensed on their credit note, with no adjustment to show for it
+    lost = {}
+    for l in _window(CreditNoteLine.objects.filter(credit_note__status="posted", stock_back=False).exclude(restock=True, condition="good"), "credit_note__date", date_from, date_to):
+        kind = "expiry" if l.condition == "expired" else "damage"
+        g = lost.setdefault(kind, {"notes": set(), "value": Z})
+        g["notes"].add(l.credit_note_id)
+        g["value"] += l.qty * l.unit_cost
+    names = {"damage": "Damaged goods returned", "expiry": "Expired goods returned"}
+    rows += [{"reason": names[k], "category": k, "adjustments": len(g["notes"]), "value": str(g["value"])} for k, g in lost.items()]
+    rows.sort(key=lambda r: -Decimal(r["value"]))
+    return {"columns": ["reason", "category", "adjustments", "value"], "column_labels": {"adjustments": "Documents"}, "rows": rows, "totals": {"value": str(sum((Decimal(r["value"]) for r in rows), Z))}}
+
+
+def returns_report(date_from=None, date_to=None, result=None, **_):
+    """
+    Everything that came back and where it went (owner, 5 Nov 2026: "report if item going back to stock or wastage"):
+    returned at the door, refused outright, and returned later on a credit note.
+    """
+    from apps.delivery.models import DeliveryNoteLine
+    from apps.inventory.models import StockAdjustmentLine, StockMovement
+    from apps.sales.models import CreditNoteLine, SalesOrder
+
+    rows, tied, by_stop = [], set(), defaultdict(list)
+    credits = list(CreditNoteLine.objects.filter(credit_note__status="posted").select_related(
+        "credit_note", "credit_note__customer", "credit_note__invoice", "credit_note__invoice__rep", "credit_note__invoice__order", "credit_note__invoice__delivery_note", "variant", "batch"
+    ).prefetch_related("credit_note__lines"))
+    for c in credits:
+        # the note a stop posted, or (before 5 Nov 2026) the one somebody took afterwards for goods the trip brought home
+        stop = c.credit_note.delivery_note_id or (c.credit_note.invoice.delivery_note_id if c.stock_back and c.credit_note.invoice_id else None)
+        if stop:
+            by_stop[stop].append(c)
+
+    def credit_value(c):
+        """Its share of the credit note, the advance income tax and what the buyer withheld included, so a note adds up to its total."""
+        cn = c.credit_note
+        all_lines = sum((x.line_total for x in cn.lines.all()), Z)
+        return c.line_total + ((cn.advance_tax_total - cn.wht_total) * c.line_total / all_lines if all_lines else Z)
+
+    def add(on, order, note, invoice, credit_note, customer, rep, item, batch, qty, reason, res, cost, credit):
+        rows.append({"date": on, "order": order, "delivery_note": note, "invoice": invoice, "credit_note": credit_note, "customer": customer, "rep": rep, "item": item,
+                     "batch": batch, "qty": str(qty), "reason": reason, "result": res, "cost_value": str(q2(cost)), "credit_value": str(q2(credit))})
+
+    stops = _window(DeliveryNoteLine.objects.filter(qty_returned__gt=0).exclude(delivery_note__status="cancelled"), "delivery_note__delivered_at__date", date_from, date_to).select_related(
+        "delivery_note", "delivery_note__order", "delivery_note__order__rep", "delivery_note__customer", "delivery_note__invoice", "delivery_note__trip", "variant", "batch")
+    for l in stops:
+        dn, left, credit, numbers = l.delivery_note, l.qty_returned, Z, []
+        for c in by_stop.get(dn.pk, []):
+            if left > 0 and c.variant_id == l.variant_id and c.pk not in tied:
+                tied.add(c.pk)
+                left -= c.qty
+                credit += credit_value(c)
+                numbers.append(c.credit_note.number)
+        invoice = getattr(dn, "invoice", None)
+        add(timezone.localtime(dn.delivered_at).date() if dn.delivered_at else None, dn.order.number, dn.number, invoice.number if invoice else "", ", ".join(dict.fromkeys(numbers)), dn.customer.name,
+            dn.order.rep.name if dn.order.rep_id else "", l.variant.name, l.batch.batch_no if l.batch_id else "", l.qty_returned, l.get_return_reason_display() or "Rejected by customer",
+            l.return_result, l.qty_returned * l.unit_cost, credit)
+    # returned later, on a credit note of their own
+    for c in credits:
+        cn = c.credit_note
+        if c.pk in tied or (date_from and str(cn.date) < str(date_from)) or (date_to and str(cn.date) > str(date_to)):
+            continue
+        inv = cn.invoice
+        note = inv.delivery_note if inv is not None else None
+        res = "Back To Stock" if c.stock_back or (c.restock and c.condition == "good") else "Wastage"
+        add(cn.date, inv.order.number if inv is not None and inv.order_id else "", note.number if note is not None else "", inv.number if inv is not None else "", cn.number, cn.customer.name,
+            inv.rep.name if inv is not None and inv.rep_id else "", c.variant.name, c.batch.batch_no if c.batch_id else "", c.qty, c.reason or cn.reason or c.get_condition_display(), res, c.qty * c.unit_cost, credit_value(c))
+    # a stop refused outright and closed as Customer rejected: the stop's lines are gone, its goods' movements stay
+    for o in SalesOrder.objects.filter(status="rejected").select_related("customer", "rep").prefetch_related("delivery_notes", "invoices"):
+        invoice = next(iter(o.invoices.all()), None)
+        for dn in o.delivery_notes.all():
+            base = (o.number, dn.number, invoice.number if invoice else "", "", o.customer.name, o.rep.name if o.rep_id else "")
+            for m in _window(StockMovement.objects.filter(Q(reference_type="DeliveryNote", reference_id=str(dn.pk), movement_type="issue_cancelled") | Q(movement_type="delivery_return", note=f"Returned from {dn.number}")),
+                             "occurred_at__date", date_from, date_to).select_related("variant", "batch"):
+                add(timezone.localtime(m.occurred_at).date(), *base, m.variant.name, m.batch.batch_no if m.batch_id else "", m.qty, "Customer rejected", "Back To Stock", m.qty * m.unit_cost, Z)
+            for w in _window(StockAdjustmentLine.objects.filter(adjustment__source_type="DeliveryNote", adjustment__source_id=str(dn.pk), adjustment__status="approved"), "adjustment__date", date_from, date_to).select_related("adjustment", "variant", "batch"):
+                add(w.adjustment.date, *base, w.variant.name, w.batch.batch_no if w.batch_id else "", w.qty, "Customer rejected", "Wastage", w.value, Z)
+    if result:
+        rows = [r for r in rows if r["result"] == result]
+    rows.sort(key=lambda r: (str(r["date"] or ""), r["order"]), reverse=True)
+
+    def total(field, res=None):
+        return str(sum((Decimal(r[field]) for r in rows if res is None or r["result"] == res), Z))
+
+    waiting = {"not_back_yet_qty": total("qty", "Not Back Yet")} if any(r["result"] == "Not Back Yet" for r in rows) else {}
+    # what the owner asked for first, so the screen shows it without scrolling
+    return {"columns": ["date", "customer", "item", "batch", "qty", "result", "reason", "cost_value", "credit_value", "order", "delivery_note", "invoice", "credit_note", "rep"],
+            "column_labels": {"result": "Back To Stock / Wastage"}, "rows": rows,
+            "totals": {"back_to_stock_qty": total("qty", "Back To Stock"), "back_to_stock_cost": total("cost_value", "Back To Stock"),
+                       "wastage_qty": total("qty", "Wastage"), "wastage_cost": total("cost_value", "Wastage"), **waiting, "credit_value": total("credit_value")}}
 
 
 def transfer_register(date_from=None, date_to=None, **_):
@@ -612,7 +711,7 @@ def stock_report(date_from=None, date_to=None, category=None, search=None, show_
     IN_BUCKETS = {"grn": "purchase", "transfer_in": "purchase"}
     OUT_BUCKETS = {"sale_dispatch": "issue", "transfer_out": "issue", "wastage": "wastage"}
     ADJUST_TYPES = {"adjustment", "count_variance", "grn_cancelled"}
-    RETURN_BUCKETS = {"sales_return": "return", "delivery_return": "return", "purchase_return": "return"}
+    RETURN_BUCKETS = {"sales_return": "return", "delivery_return": "return", "purchase_return": "return", "return_cancelled": "return"}
 
     qs = StockMovement.objects.select_related("variant__product__category").filter(occurred_at__date__lte=end)
     if category:

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.audit import AuditService
@@ -384,7 +385,7 @@ class DeliveryService:
         delivered: [{line_id, qty_delivered, qty_returned, return_reason, return_condition}] or None = all loaded qty delivered.
         Creates the invoice, and the stock movement if a stop made before 5 Nov 2026 was never issued.
         """
-        if dn.status in ("delivered", "returned"):
+        if dn.status in ("delivered", "partially_delivered", "returned"):
             raise DomainError("Delivery note already completed.")
         tenant = get_current_tenant()
         two_step = tenant.setting("two_step_dispatch") and dn.trip_id
@@ -419,8 +420,17 @@ class DeliveryService:
                 line.qty_returned = Decimal(d.get("qty_returned", line.qty_loaded - line.qty_delivered))
                 line.return_reason = d.get("return_reason", "") or ("rejected" if line.qty_returned else "")
                 line.return_condition = d.get("return_condition", "good")
+                # a broken or missing unit cannot go back on the shelf, whatever the screen or the phone sent
+                if line.return_reason in ("damaged", "shortage"):
+                    line.return_condition = "damaged"
+            if line.qty_delivered < 0 or line.qty_returned < 0:
+                raise DomainError(f"{line.variant.name}: a quantity cannot be negative.")
             if line.qty_delivered + line.qty_returned > line.qty_loaded + Decimal("0.001"):
                 raise DomainError(f"Delivered + returned exceeds loaded for {line.variant.name}.")
+            if line.qty_delivered + line.qty_returned < line.qty_loaded - Decimal("0.001"):
+                # a unit neither delivered nor returned could not be reported as back in stock or wasted
+                went_out = format(line.qty_loaded.normalize(), "f")
+                raise DomainError(f"{line.variant.name}: {went_out} went out, so delivered and returned must add up to {went_out}.", code="qty_mismatch")
             line.save()
             # one copy per order line: each batch's line brought its own, and the last one's count overwrote the others
             # (TDN-SO-00149: NO. 4.19 delivered 6 on two batches, the order said 2, and it stayed Partially delivered)
@@ -447,7 +457,6 @@ class DeliveryService:
         dn.save()
         from apps.sales.services import InvoiceService, OrderService
 
-        OrderService.refresh_delivery_status(dn.order)
         invoice = None
         if total_delivered > 0:
             had_invoice = getattr(dn, "invoice", None) is not None
@@ -461,6 +470,9 @@ class DeliveryService:
                                   f"Invoice {invoice.number} drafted at delivery — review and post",
                                   f"{dn.customer.name} · {dn.number} was delivered without an invoice. Check the draft, then Post to ledger.",
                                   {"invoice_id": str(invoice.id)})
+            if not two_step:   # with van stock the goods are on the van's own books until its trip closes
+                invoice = DeliveryService.settle_returns(dn, invoice)
+        OrderService.refresh_delivery_status(dn.order)
         if dn.cash_collected > 0 and invoice is not None:
             from apps.accounting.services import PaymentService
 
@@ -477,6 +489,181 @@ class DeliveryService:
         if dn.trip_id:
             TripService.refresh_status(dn.trip)
         return dn
+
+    @staticmethod
+    def settle_returns(dn, invoice=None):
+        """
+        Goods that came back from a part-delivered stop (owner, 5 Nov 2026: "how to handle when return during delivery? …
+        update customer ledger and update account and chart of account … report if item going back to stock or wastage").
+
+        All of it happens as the stop is saved, because a trip's close cannot be relied on to do it: TDN had closed 3 of
+        its 37 trips. A good unit goes back on the shelf. The customer is credited for what a posted invoice billed and
+        they did not keep (TDN-SO-00149 sat Partially delivered until someone remembered, and billed the unit again). A
+        draft comes down to what was delivered. A damaged unit is expensed once: by the credit note if an invoice billed
+        it, written off here if none did. Returns the invoice as it now stands.
+        """
+        from apps.sales.services import CreditNoteService, InvoiceService
+
+        lines = [l for l in dn.lines.select_related("order_line", "variant", "variant__product", "batch") if l.qty_returned > 0 and not l.return_settled]
+        if not lines:
+            return invoice
+        dn.refresh_from_db(fields=["delivered_at"])   # it may have been given as text
+        on = timezone.localtime(dn.delivered_at).date()
+        if invoice is not None and invoice.status == "draft":
+            InvoiceService.fit_draft_to_stop(invoice, dn)
+        to_credit = CreditNoteService.billed_not_kept(invoice, dn)
+        credit, write_off, order_lines = [], [], {}
+        for l in lines:
+            credited = min(l.qty_returned, max(to_credit.get(l.variant_id, Decimal("0")), Decimal("0")))
+            if credited > 0:
+                to_credit[l.variant_id] -= credited
+                credit.append({"variant": l.variant, "batch": l.batch, "qty": credited, "reason": l.get_return_reason_display(),
+                               "condition": "damaged" if l.return_condition == "damaged" else "good",
+                               "restock": l.return_condition != "damaged", "stock_back": l.return_condition != "damaged"})
+            if l.return_condition != "damaged":
+                StockService.move(warehouse=dn.warehouse, variant=l.variant, qty=l.qty_returned, movement_type="delivery_return", batch=l.batch,
+                                  unit_cost=l.unit_cost, reference=dn, note=f"Returned at delivery {dn.number}", occurred_at=dn.delivered_at)
+            elif l.qty_returned > credited:
+                write_off.append({"variant": l.variant, "batch": l.batch, "qty": l.qty_returned - credited, "unit_cost": l.unit_cost, "note": f"{dn.number} {l.return_reason}"})
+            l.return_settled = True
+            l.save(update_fields=["return_settled"])
+            ol = order_lines.setdefault(l.order_line_id, l.order_line)
+            ol.qty_returned += l.qty_returned
+            ol.save(update_fields=["qty_returned"])
+        if write_off:
+            dn.return_adjustment = DeliveryService.write_off_damaged(dn, write_off, on)
+            dn.save(update_fields=["return_adjustment", "updated_at"])
+        if credit:
+            cn = CreditNoteService.create(customer=dn.customer, invoice=invoice, warehouse=dn.warehouse, date=on, reason=f"Returned at delivery {dn.number}",
+                                          lines=credit, delivery_note=dn)
+            CreditNoteService.post(cn)
+            invoice.refresh_from_db()
+            from apps.core.notifications import notify_permission
+
+            notify_permission("sales.change_invoice", "credit_note.at_delivery", f"Credit note {cn.number} posted at delivery",
+                              f"{dn.customer.name} · {dn.number} · {cn.total:,.2f}", {"invoice_id": str(invoice.id)})
+        AuditService.log("delivery.returns_settled", dn, after={"credit_note": cn.number if credit else None, "units": str(sum((l.qty_returned for l in lines), Decimal("0")))})
+        return invoice
+
+    @staticmethod
+    def write_off_damaged(dn, lines, on=None):
+        """Damaged units no invoice billed: Dr the loss, Cr Stock in Hand. They left the shelf when issued, so no stock moves here;
+        where a quarantine warehouse exists they are held there at no value."""
+        from apps.inventory.models import Warehouse
+        from apps.inventory.services import AdjustmentService
+
+        reason = TripService.damage_reason()
+        adj = AdjustmentService.create(warehouse=dn.warehouse, type="decrease", reason=reason, lines=lines, date=on, notes=f"Returned damaged at delivery {dn.number}",
+                                       source=dn, skip_stock=True, auto_approve=True)
+        quarantine = Warehouse.objects.filter(type="quarantine", is_active=True).first()
+        if quarantine is not None:
+            for w in lines:
+                StockService.move(warehouse=quarantine, variant=w["variant"], qty=w["qty"], movement_type="delivery_return", batch=w["batch"], unit_cost=Decimal("0"),
+                                  reference=dn, note=f"Returned damaged at delivery {dn.number}")
+        return adj
+
+    @staticmethod
+    def return_preview(dn, delivered):
+        """What saving the stop with these quantities would credit, by the sums the credit note itself will make."""
+        from apps.sales.services import CreditNoteService
+
+        def num(v):
+            try:
+                return Decimal(str(v))
+            except ArithmeticError:
+                return Decimal("0")
+
+        by_id = {str(d.get("line_id")): d for d in delivered or []}
+        kept, back = {}, {}
+        for l in dn.lines.all():
+            d = by_id.get(str(l.id), {})
+            returned = max(num(d.get("qty_returned") or 0), Decimal("0"))
+            kept[l.variant_id] = kept.get(l.variant_id, Decimal("0")) + max(l.qty_loaded - returned, Decimal("0"))
+            back[l.variant_id] = back.get(l.variant_id, Decimal("0")) + returned
+        invoice = getattr(dn, "invoice", None)
+        credit = Decimal("0")
+        if invoice is not None and any(back.values()) and any(kept.values()):
+            left = CreditNoteService.billed_not_kept(invoice, dn, kept=kept)
+            credit = CreditNoteService.credit_for(invoice, {vid: min(q, max(left.get(vid, Decimal("0")), Decimal("0"))) for vid, q in back.items()})
+        billed = invoice is not None and invoice.status not in ("draft", "cancelled")
+        return {"credit": str(credit), "invoice_number": invoice.number if invoice is not None else "", "invoice_status": invoice.status if invoice is not None else "",
+                "balance_after": str(max(invoice.balance - credit, Decimal("0"))) if billed else None}
+
+    @staticmethod
+    @transaction.atomic
+    def undo_return(dn, reason=""):
+        """
+        A return saved on a stop by mistake: the customer kept those units after all. The stop reads Delivered, the credit
+        note is cancelled and what it did comes off the books, the goods leave the shelf again. Refused once the credit
+        has been used or refunded. A wrong quantity or condition is put right by undoing, then taking a return.
+        """
+        from apps.accounting.services import PostingService
+        from apps.inventory.models import StockMovement
+        from apps.sales.services import CreditNoteService, InvoiceService, OrderService
+
+        dn = DeliveryNote.objects.select_for_update(of=("self",)).get(pk=dn.pk)
+        lines = [l for l in dn.lines.select_related("order_line", "variant", "batch") if l.return_settled and l.qty_returned > 0]
+        if dn.status != "partially_delivered" or not lines:
+            raise DomainError(f"{dn.number} has no return to undo.", code="no_return")
+        invoice = getattr(dn, "invoice", None)
+        cn = dn.return_credit_notes.filter(status="posted").first()
+        if cn is None and invoice is not None and invoice.status not in ("draft", "cancelled"):
+            raise DomainError(f"{invoice.number} went to the books without these units — reopen it first, then undo the return.", code="invoice_posted")
+        if cn is not None:
+            CreditNoteService.undo_stop_credit(cn, reason)
+        for mv in StockMovement.objects.filter(reference_type="DeliveryNote", reference_id=str(dn.pk), movement_type="delivery_return").select_related("warehouse", "variant", "batch"):
+            StockService.move(warehouse=mv.warehouse, variant=mv.variant, qty=-mv.qty, movement_type="return_cancelled", batch=mv.batch, unit_cost=mv.unit_cost,
+                              reference=dn, note=f"Return undone{': ' + reason if reason else ''}")
+        adj = dn.return_adjustment
+        if adj is not None:
+            if adj.journal_id:
+                PostingService.reverse(adj.journal, memo=f"Return undone on {dn.number}")
+            adj.status = "cancelled"
+            adj.save(update_fields=["status", "updated_at"])
+            AuditService.log("status.cancelled", adj, after={"reason": f"Return undone on {dn.number}"})
+        order_lines, units = {}, Decimal("0")
+        for l in lines:
+            units += l.qty_returned
+            ol = order_lines.setdefault(l.order_line_id, l.order_line)
+            ol.qty_delivered += l.qty_returned
+            ol.qty_returned = max(ol.qty_returned - l.qty_returned, Decimal("0"))
+            ol.save(update_fields=["qty_delivered", "qty_returned"])
+            l.qty_delivered += l.qty_returned
+            l.qty_returned = Decimal("0")
+            l.return_reason, l.return_condition, l.return_settled = "", "good", False
+            l.save(update_fields=["qty_delivered", "qty_returned", "return_reason", "return_condition", "return_settled"])
+        dn.status = "delivered"
+        dn.return_adjustment = None
+        dn.save(update_fields=["status", "return_adjustment", "updated_at"])
+        if invoice is not None and invoice.status == "draft":
+            InvoiceService.fit_draft_to_stop(invoice, dn)
+        OrderService.refresh_delivery_status(dn.order)
+        AuditService.log("delivery.return_undone", dn, after={"units": str(units), "credit_note": cn.number if cn is not None else None, "reason": reason})
+        return dn
+
+    @staticmethod
+    def bring_home(dn):
+        """A refused stop credited by a return while its trip is open: the goods are on the shelf now, not when (or if) the
+        trip closes. Its close passes over them."""
+        trip = dn.trip
+        if trip is None or trip.status == "closed" or get_current_tenant().setting("two_step_dispatch"):
+            return
+        for l in dn.lines.select_related("order_line", "variant", "variant__product", "batch"):
+            if l.qty_returned <= 0 or l.return_settled or l.return_condition == "damaged":
+                continue
+            StockService.move(warehouse=trip.warehouse, variant=l.variant, qty=l.qty_returned, movement_type="delivery_return", batch=l.batch, unit_cost=l.unit_cost,
+                              reference=trip, note=f"Returned from {dn.number}")
+            l.order_line.qty_dispatched -= l.qty_returned
+            l.order_line.save(update_fields=["qty_dispatched"])
+            l.return_settled = True
+            l.save(update_fields=["return_settled"])
+
+    @staticmethod
+    def settled_returns(**order_filters):
+        """Units per variant settled at the stop. They stay in an order line's dispatched count, so what is left to issue
+        does not offer them again: anything reading "out and not yet delivered" takes them off."""
+        return {r["variant_id"]: r["q"] or Decimal("0") for r in DeliveryNoteLine.objects.filter(return_settled=True, **{f"order_line__order__{k}": v for k, v in order_filters.items()})
+                .values("variant_id").annotate(q=Sum("qty_returned"))}
 
     @staticmethod
     def failed_note(order):
@@ -517,19 +704,19 @@ class DeliveryService:
         if home and get_current_tenant().setting("two_step_dispatch"):
             raise DomainError("Sending a delivery out again is not supported with van stock (two-step dispatch).")
         lines = list(dn.lines.select_related("variant", "batch", "order_line"))
-        if home and any(l.qty_returned > 0 and l.return_condition == "damaged" for l in lines):
+        if any(l.qty_returned > 0 and l.return_condition == "damaged" for l in lines):
             raise DomainError(f"Part of {dn.number} came back damaged and cannot go out again as it was — use Customer rejected, "
                               "and a new order for the replacement.", code="damaged")
         for l in lines:
-            if home and l.qty_returned > 0:
-                # the trip's close put these back on the shelf: they leave it again, at the cost they went out at
+            if (home or l.return_settled) and l.qty_returned > 0:
+                # the trip's close, or a return, put these back on the shelf: they leave it again, at the cost they went out at
                 StockService.move(warehouse=trip.warehouse, variant=l.variant, qty=-l.qty_returned, movement_type="sale_dispatch", batch=l.batch,
                                   unit_cost=l.unit_cost, reference=dn, note=f"{dn.number} out again" + (f": {reason}" if reason else ""))
                 l.order_line.qty_dispatched += l.qty_returned
                 l.order_line.save(update_fields=["qty_dispatched"])
             l.qty_returned = l.qty_delivered = Decimal("0")
-            l.return_reason, l.return_condition = "", "good"
-            l.save(update_fields=["qty_returned", "qty_delivered", "return_reason", "return_condition"])
+            l.return_reason, l.return_condition, l.return_settled = "", "good", False
+            l.save(update_fields=["qty_returned", "qty_delivered", "return_reason", "return_condition", "return_settled"])
         out = trip is not None and not home and trip.status in ("out_for_delivery", "completed")
         dn.status = "dispatched" if out else "loaded"
         dn.failure_reason = ""
@@ -746,6 +933,24 @@ class TripService:
         return {"loaded": str(loaded), "delivered": str(delivered), "returned_good": str(returned), "returned_damaged": str(damaged), "unaccounted": str(undelivered), "cash_collected": str(trip.cash_collected), "receipts": str(receipts), "cash_mismatch": str(trip.cash_collected - receipts), "ok": undelivered == 0 and abs(trip.cash_collected - receipts) < Decimal("0.01")}
 
     @staticmethod
+    def damage_reason():
+        """Goods that come back damaged post to Damaged Goods, the account a credit note uses for them (owner, 6 Nov 2026).
+        TDN's Transit damage reason posts to an account it has renamed Packing Material."""
+        from apps.inventory.models import ReasonCode
+
+        return (ReasonCode.objects.filter(category="damage", is_active=True).first() or ReasonCode.objects.filter(category="transit_damage").first()
+                or ReasonCode.objects.first())
+
+    @staticmethod
+    def _expensed_by_returns(dn):
+        from apps.sales.models import CreditNoteLine
+
+        out = {}
+        for l in CreditNoteLine.objects.filter(credit_note__invoice__delivery_note=dn, credit_note__status="posted", stock_back=False).exclude(restock=True, condition="good"):
+            out[l.variant_id] = out.get(l.variant_id, Decimal("0")) + l.qty
+        return out
+
+    @staticmethod
     @transaction.atomic
     def close(trip, odometer_end=None, fuel_amount=None, expense_amount=None, override=False, damage_reason=None):
         """Close: returns go back to the warehouse, damaged via adjustment, cash reconciled (§6.3 points 6-7)."""
@@ -763,12 +968,17 @@ class TripService:
         tenant = get_current_tenant()
         two_step = tenant.setting("two_step_dispatch") and trip.vehicle_id and getattr(trip.vehicle, "van_warehouse", None)
         source_wh = trip.vehicle.van_warehouse if two_step else None
-        damaged_lines, returned_value = [], Decimal("0")
+        damaged_lines, returned_value, expensed = [], Decimal("0"), {}
         for l in DeliveryNoteLine.objects.filter(delivery_note__trip=trip).select_related("variant", "variant__product", "batch", "delivery_note"):
-            if l.qty_returned <= 0:
-                continue
+            if l.qty_returned <= 0 or l.return_settled:
+                continue   # the stop settled these when it was saved
             if l.return_condition == "damaged":
-                damaged_lines.append({"variant": l.variant, "batch": l.batch, "qty": l.qty_returned, "unit_cost": l.unit_cost, "note": f"{l.delivery_note.number} {l.return_reason}"})
+                # a return already taken on them has expensed them; a second write-off would count one lost unit twice
+                by_return = expensed.setdefault(l.delivery_note_id, TripService._expensed_by_returns(l.delivery_note))
+                taken = min(l.qty_returned, by_return.get(l.variant_id, Decimal("0")))
+                by_return[l.variant_id] = by_return.get(l.variant_id, Decimal("0")) - taken
+                if l.qty_returned > taken:
+                    damaged_lines.append({"variant": l.variant, "batch": l.batch, "qty": l.qty_returned - taken, "unit_cost": l.unit_cost, "note": f"{l.delivery_note.number} {l.return_reason}"})
                 if source_wh is not None:
                     StockService.move(warehouse=source_wh, variant=l.variant, qty=-l.qty_returned, movement_type="transfer_out", batch=l.batch, unit_cost=l.unit_cost, reference=trip, note="Damaged in transit")
                 continue
@@ -786,10 +996,9 @@ class TripService:
 
             PostingService.post_trip_return(trip, returned_value)
         if damaged_lines:
-            from apps.inventory.models import ReasonCode
             from apps.inventory.services import AdjustmentService
 
-            reason = damage_reason or ReasonCode.objects.filter(category="transit_damage").first() or ReasonCode.objects.first()
+            reason = damage_reason or TripService.damage_reason()
             adj = AdjustmentService.create(warehouse=trip.warehouse, type="decrease", reason=reason, lines=damaged_lines, notes=f"Transit damage on trip {trip.number}", source=trip, skip_stock=True, auto_approve=True)
             rec["damage_adjustment"] = adj.number
         for dn in trip.delivery_notes.select_related("order"):

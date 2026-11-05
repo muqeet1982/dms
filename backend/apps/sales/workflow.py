@@ -129,12 +129,13 @@ def order_workflow(order):
     # 7 · Delivery confirmation
     pending_note = next((n for n in notes if n.status in ("pending", "loaded", "dispatched")), None)
     done_note = delivered[0] if delivered else None
+    came_back = sum(l.qty_returned for n in delivered for l in n.lines.all())
     steps.append(_step(
         "delivered", "Delivery confirmation", "done" if order.status in ("delivered", "invoiced") or done_note else ("current" if out else "todo"),
         at=done_note.delivered_at if done_note else order.delivered_at,
         by=_person(done_note.delivered_by) if done_note else "",
         detail=(
-            f"{done_note.get_status_display()}{f' · received by {done_note.receiver_name}' if done_note and done_note.receiver_name else ''}"
+            f"{done_note.get_status_display()}{f' · {format(came_back.normalize(), "f")} returned' if came_back else ''}{f' · received by {done_note.receiver_name}' if done_note and done_note.receiver_name else ''}"
             if done_note else "Received by, quantities delivered/returned, remarks and proof."
         ),
         docs=[{"label": n.number, "to": f"/app/delivery/notes/{n.pk}"} for n in delivered],

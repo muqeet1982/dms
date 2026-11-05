@@ -150,13 +150,17 @@ class StockLevelViewSet(viewsets.ReadOnlyModelViewSet):
         for r in qs.values("variant_id", "variant__sku", "variant__name", "variant__product__base_uom__code").annotate(on_hand=Sum("qty_on_hand"), reserved=Sum("qty_reserved")):
             rows[str(r["variant_id"])] = {"variant_id": str(r["variant_id"]), "sku": r["variant__sku"], "name": r["variant__name"], "uom": r["variant__product__base_uom__code"], "in_stock": str(r["on_hand"]), "reserved": str(r["reserved"]), "dispatched": "0", "delivered": "0"}
         date_from = request.query_params.get("date_from")
-        ol = SalesOrderLine.objects.filter(order__status__in=["dispatched", "partially_delivered", "delivered", "invoiced"])
+        from apps.delivery.services import DeliveryService
+
+        out = {"status__in": ["dispatched", "partially_delivered", "delivered", "invoiced"]}
         if date_from:
-            ol = ol.filter(order__order_date__gte=date_from)
+            out["order_date__gte"] = date_from
+        ol = SalesOrderLine.objects.filter(**{f"order__{k}": v for k, v in out.items()})
+        back = DeliveryService.settled_returns(**out)
         for r in ol.values("variant_id").annotate(d=Sum("qty_dispatched"), dl=Sum("qty_delivered")):
             key = str(r["variant_id"])
             if key in rows:
-                rows[key]["dispatched"] = str((r["d"] or 0) - (r["dl"] or 0))
+                rows[key]["dispatched"] = str((r["d"] or 0) - (r["dl"] or 0) - back.get(r["variant_id"], 0))
                 rows[key]["delivered"] = str(r["dl"] or 0)
         return Response(sorted(rows.values(), key=lambda x: x["name"]))
 

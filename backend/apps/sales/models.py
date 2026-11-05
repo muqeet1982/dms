@@ -224,6 +224,8 @@ class CreditNote(OtherTaxTotalsMixin, DocumentModel):
     STATUS = [("draft", "Draft"), ("posted", "Posted"), ("cancelled", "Cancelled")]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="credit_notes")
     invoice = models.ForeignKey(SalesInvoice, null=True, blank=True, on_delete=models.SET_NULL, related_name="credit_notes")
+    # posted by saving a stop with goods returned at the door (owner, 5 Nov 2026)
+    delivery_note = models.ForeignKey("delivery.DeliveryNote", null=True, blank=True, on_delete=models.SET_NULL, related_name="return_credit_notes")
     warehouse = models.ForeignKey("inventory.Warehouse", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     date = models.DateField(default=timezone.localdate)
     reason = models.CharField(max_length=200, blank=True)

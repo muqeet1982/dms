@@ -412,7 +412,7 @@ def inventory_reconciliation(as_of=None, **_):
     on_van = Decimal("0")
     for l in DeliveryNoteLine.objects.filter(delivery_note__stock_out_done=True, delivery_note__status__in=["pending", "loaded"]).select_related("delivery_note"):
         on_van += (l.qty_loaded * l.unit_cost).quantize(Decimal("0.0001"))
-    for l in DeliveryNoteLine.objects.filter(delivery_note__stock_out_done=True, delivery_note__status__in=["partially_delivered", "failed", "returned"], delivery_note__trip__status__in=["out_for_delivery", "completed"]):
+    for l in DeliveryNoteLine.objects.filter(delivery_note__stock_out_done=True, delivery_note__status__in=["partially_delivered", "failed", "returned"], delivery_note__trip__status__in=["out_for_delivery", "completed"], return_settled=False):
         on_van += (l.qty_returned * l.unit_cost).quantize(Decimal("0.0001"))
     diff = val + on_van - gl
     return {"columns": ["item", "amount"], "rows": [{"item": "Stock valuation (qty × avg cost)", "amount": str(val)}, {"item": "Dispatched, not yet invoiced (on van)", "amount": str(on_van)}, {"item": "GL stock accounts", "amount": str(gl)}, {"item": "Difference", "amount": str(diff)}], "totals": {"difference": str(diff), "on_van": str(on_van)}}

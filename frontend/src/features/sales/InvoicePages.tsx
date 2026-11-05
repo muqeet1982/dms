@@ -417,7 +417,7 @@ export function CreditNoteDetailPage() {
         }}><i className="ti ti-trash me-1" />Delete draft</button>}
       </>} />
       <div className="card mb-3"><div className="card-body">
-        <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${cn.customer}`}>{cn.customer_name}</Link></InfoItem><InfoItem label="Invoice">{cn.invoice_number ? <Link to={`/app/sales/invoices/${cn.invoice}`}>{cn.invoice_number}</Link> : "—"}</InfoItem><InfoItem label="Date">{date(cn.date)}</InfoItem><InfoItem label="Reason">{cn.reason || "—"}</InfoItem></div>
+        <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${cn.customer}`}>{cn.customer_name}</Link></InfoItem><InfoItem label="Invoice">{cn.invoice_number ? <Link to={`/app/sales/invoices/${cn.invoice}`}>{cn.invoice_number}</Link> : "—"}</InfoItem>{cn.delivery_note && <InfoItem label="Delivery note"><Link to={`/app/delivery/notes/${cn.delivery_note}`}>{cn.delivery_note_number}</Link></InfoItem>}<InfoItem label="Date">{date(cn.date)}</InfoItem><InfoItem label="Reason">{cn.reason || "—"}</InfoItem></div>
         {(() => {
           /* a credit note against a tax invoice credits its tax back, so it reads like one: Taxable → GST → Line Total */
           const taxTotal = (Number(cn.tax1_total) || 0) + (Number(cn.tax2_total) || 0);
