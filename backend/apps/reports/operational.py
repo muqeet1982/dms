@@ -34,6 +34,11 @@ def _inv_lines(date_from, date_to, **filters):
     return qs.filter(**filters)
 
 
+def _net_sales(l):
+    """What an invoice line sold for: its total without the taxes on it."""
+    return l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
+
+
 def _group(rows, key_fn, label_fn):
     out = defaultdict(lambda: {"qty": Z, "sales": Z, "cogs": Z, "invoices": set()})
     for l in rows:
@@ -41,7 +46,7 @@ def _group(rows, key_fn, label_fn):
         r = out[k]
         r["label"] = label_fn(l)
         r["qty"] += l.qty
-        r["sales"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
+        r["sales"] += _net_sales(l)
         r["cogs"] += l.qty * l.unit_cost
         r["invoices"].add(l.invoice_id)
     result = []
@@ -69,9 +74,30 @@ def sales_by_customer(date_from=None, date_to=None, **_):
     return _group(_inv_lines(date_from, date_to), lambda l: l.invoice.customer_id, lambda l: f"{l.invoice.customer.code} {l.invoice.customer.name}")
 
 
+def _sold_on_credit(invoice):
+    """As its order was taken. An older order that never said goes by the customer's terms, the rule new orders default to."""
+    mode = invoice.order.payment_mode if invoice.order_id else ""
+    return mode == "credit" if mode else bool(invoice.customer.credit_days)
+
+
 def sales_by_rep(date_from=None, date_to=None, **_):
-    out = _group(_inv_lines(date_from, date_to), lambda l: l.invoice.rep_id, lambda l: l.invoice.rep.name if l.invoice.rep_id else "(staff)")
+    lines = _inv_lines(date_from, date_to).select_related("invoice__order", "invoice__customer")
+    out = _group(lines, lambda l: l.invoice.rep_id, lambda l: l.invoice.rep.name if l.invoice.rep_id else "(staff)")
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
+
+    # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
+    credit = defaultdict(lambda: Z)
+    for l in lines:
+        if _sold_on_credit(l.invoice):
+            credit[str(l.invoice.rep_id)] += _net_sales(l)
+    for r in out["rows"]:
+        r["credit_sales"] = str(credit[r["key"]])
+        r["cash_sales"] = str(Decimal(r["sales"]) - credit[r["key"]])
+    sales = out["columns"].index("sales") + 1
+    out["columns"][sales:sales] = ["cash_sales", "credit_sales"]
+    all_credit = sum(credit.values(), Z)
+    out["totals"] = {"sales": out["totals"]["sales"], "cash_sales": str(Decimal(out["totals"]["sales"]) - all_credit), "credit_sales": str(all_credit),
+                     **{k: v for k, v in out["totals"].items() if k != "sales"}}
     return out
 
 

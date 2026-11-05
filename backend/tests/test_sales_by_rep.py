@@ -322,7 +322,7 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
     assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
 
     summary = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat()}).data
-    assert summary["columns"] == ["label", "qty", "sales", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns"
+    assert summary["columns"] == ["label", "qty", "sales", "cash_sales", "credit_sales", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with cash and credit"
     assert summary["totals"] and not summary.get("totals_in_rows") and not summary.get("header_groups")
     row = next(r for r in summary["rows"] if r["label"] == "Talha")
     assert D(row["qty"]) == 4 and D(row["sales"]) == 400 and row["invoices"] == 1
@@ -337,3 +337,87 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
 def test_both_reports_are_in_the_catalogue(api, tenant):
     keys = {r["key"]: r["title"] for r in api.get("/api/v1/reports").data}
     assert keys["sales_by_rep"] == "Sales by rep" and keys["rep_daily_sheet"] == "Sales by rep — daily sheet"
+
+
+def _billed(api, tenant, w, rep, qty, mode, customer=None):
+    """An order taken as cash or credit, issued and invoiced today."""
+    from apps.sales.services import OrderService
+
+    from .conftest import issue_order
+
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=customer or w["cust"], warehouse=w["wh"], rep=rep, source="rep_app", payment_mode=mode,
+                                    lines=[{"variant": w["tinta"], "qty": D(qty), "unit_price": None}])
+        OrderService.confirm(order)
+    issue_order(api, order.pk)
+    made = api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json")
+    assert made.status_code == 201, made.content
+    return order
+
+
+def _summary(api):
+    on = timezone.localdate().isoformat()
+    r = api.get("/api/v1/reports/sales_by_rep", {"date_from": on, "date_to": on})
+    assert r.status_code == 200, r.content
+    return r.data
+
+
+def test_the_main_report_shows_how_much_on_cash_and_how_much_on_credit(api, tenant, world):
+    """Owner, 5 Nov 2026: "also show in main rep report how much on cash and how much on credit"."""
+    w = world
+    _billed(api, tenant, w, w["rep"], "4", "cash")
+    _billed(api, tenant, w, w["rep"], "1", "cash")
+    _billed(api, tenant, w, w["rep"], "2", "credit")
+    _billed(api, tenant, w, w["other"], "3", "credit")
+
+    data = _summary(api)
+    talha = next(r for r in data["rows"] if r["label"] == "Talha")
+    anza = next(r for r in data["rows"] if r["label"] == "Anza")
+    assert (D(talha["sales"]), D(talha["cash_sales"]), D(talha["credit_sales"])) == (D("700"), D("500"), D("200"))
+    assert (D(anza["sales"]), D(anza["cash_sales"]), D(anza["credit_sales"])) == (D("300"), D("0"), D("300"))
+    t = data["totals"]
+    assert (D(t["sales"]), D(t["cash_sales"]), D(t["credit_sales"])) == (D("1000"), D("500"), D("500"))
+    assert list(t)[:3] == ["sales", "cash_sales", "credit_sales"]
+    assert D(t["cogs"]) > 0 and "gross_margin" in t, "the original totals are all still there"
+
+
+def test_cash_and_credit_add_up_to_sales_without_tax_as_sales_does(api, tenant, world):
+    from apps.catalog.models import TaxType
+
+    w = world
+    with tenant_context(tenant, tenant.owner):
+        TaxType.objects.create(code="ST", name="Sales Tax", kind="sales_tax", applies_to="both")
+    from apps.sales.services import OrderService
+
+    from .conftest import issue_order
+
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=w["cust"], warehouse=w["wh"], rep=w["rep"], source="rep_app", payment_mode="credit", charge_tax=True,
+                                    lines=[{"variant": w["tinta"], "qty": D("5"), "unit_price": None}])
+        OrderService.confirm(order)
+    issue_order(api, order.pk)
+    assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True, "apply_tax": True}, format="json").status_code == 201
+    _billed(api, tenant, w, w["rep"], "1", "cash")
+
+    row = next(r for r in _summary(api)["rows"] if r["label"] == "Talha")
+    assert D(row["cash_sales"]) + D(row["credit_sales"]) == D(row["sales"])
+    assert D(row["credit_sales"]) == D("400"), "T.P 500 includes 25% tax: 400 before it"
+    assert D(row["cash_sales"]) == D("100")
+
+
+def test_an_older_order_that_never_said_goes_by_the_customers_terms(api, tenant, world):
+    from apps.sales.models import SalesOrder
+
+    w = world
+    on_terms = _shop(tenant, "T-1", credit_days=30, credit_limit=D("100000"))
+    a = _billed(api, tenant, w, w["rep"], "2", "cash")
+    b = _billed(api, tenant, w, w["rep"], "3", "credit", customer=on_terms)
+    with tenant_context(tenant, tenant.owner):
+        SalesOrder.objects.filter(pk__in=[a.pk, b.pk]).update(payment_mode="")
+    row = next(r for r in _summary(api)["rows"] if r["label"] == "Talha")
+    assert (D(row["cash_sales"]), D(row["credit_sales"])) == (D("200"), D("300"))
+
+
+def test_the_other_sales_reports_do_not_grow_the_columns(api, tenant):
+    on = timezone.localdate().isoformat()
+    assert "cash_sales" not in api.get("/api/v1/reports/sales_by_customer", {"date_from": on, "date_to": on}).data["columns"]
