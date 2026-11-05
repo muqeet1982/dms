@@ -122,23 +122,92 @@ def day_book(date=None, **_):
     return general_ledger(date_from=date, date_to=date)
 
 
-def profit_and_loss(date_from=None, date_to=None, cost_centre=None, compare_from=None, compare_to=None, **_):
-    def section(df, dt):
-        bal = _balances(df, dt, cost_centre)
-        accounts = list(Account.objects.filter(type__in=["income", "expense"]).order_by("code"))
-        leaf = {a.id: ((bal.get(a.id, (Z, Z))[1] - bal.get(a.id, (Z, Z))[0]) if a.type == "income" else (bal.get(a.id, (Z, Z))[0] - bal.get(a.id, (Z, Z))[1])) for a in accounts if not a.is_group}
-        rolled = _roll_up(accounts, leaf)
-        rows = [{"account_id": str(a.id), "code": a.code, "name": a.name, "level": a.level, "is_group": a.is_group, "type": a.type, "amount": str(rolled.get(a.id, Z))} for a in accounts if rolled.get(a.id, Z) != 0 or a.level <= 2]
-        income = sum((v for a, v in leaf.items() if Account.objects.get(pk=a).type == "income"), Z) if leaf else Z
-        expense = sum((v for a, v in leaf.items() if Account.objects.get(pk=a).type == "expense"), Z) if leaf else Z
-        cogs = sum((leaf.get(a.id, Z) for a in accounts if a.code.startswith("5-01") and not a.is_group), Z)
-        return rows, income, expense, cogs
+# the chart's heads the income statement is built on; any other expense head reads as a section of its own
+_REVENUE_HEAD = "4-01"
+_COST_OF_SALES_HEAD = "5-01"
+_EXPENSE_SECTIONS = {
+    "5-02": ("selling_distribution", "Selling and Distribution Expenses"),
+    "5-03": ("administrative", "Administrative Expenses"),
+    "5-04": ("financial", "Financial Expenses"),
+}
 
-    rows, income, expense, cogs = section(date_from, date_to)
-    out = {"columns": ["code", "name", "amount"], "rows": rows, "totals": {"income": str(income), "cost_of_sales": str(cogs), "gross_profit": str(income - cogs), "expenses": str(expense), "net_profit": str(income - expense)}}
+
+def _income_statement(date_from, date_to, cost_centre):
+    """
+    One period's income statement as rows in reading order (owner, 5 Nov 2026): revenue less cost of sales is the gross
+    profit; selling and distribution, then any other expenses, come off that; what is left is the net profit. The page,
+    the report screen, the PDF and the spreadsheet all print these rows, so they read the same.
+
+    An account belongs to the head it SITS UNDER in the chart, not the one its code looks like: TDN's Packing Material
+    reads 5-01-007-0001 but sits under Selling & Distribution. Other income is not revenue, so it stays out of the gross
+    profit and comes in just above the net profit, which is unchanged: all income less all expenses.
+    """
+    bal = _balances(date_from, date_to, cost_centre)
+    accounts = list(Account.objects.filter(type__in=["income", "expense"]).order_by("code"))
+    by_id = {a.id: a for a in accounts}
+    revenue, cost, other_income = [], [], []
+    named_lines, other_lines = defaultdict(list), defaultdict(list)
+    for a in accounts:
+        if a.is_group:
+            continue
+        d, c = bal.get(a.id, (Z, Z))
+        amount = c - d if a.type == "income" else d - c
+        if not amount:
+            continue
+        head = a
+        while head.parent_id in by_id and by_id[head.parent_id].parent_id:
+            head = by_id[head.parent_id]
+        if a.type == "income":
+            (revenue if head.code == _REVENUE_HEAD else other_income).append((a, amount))
+        elif head.code == _COST_OF_SALES_HEAD:
+            cost.append((a, amount))
+        elif head.code in _EXPENSE_SECTIONS:
+            named_lines[head.code].append((a, amount))
+        else:
+            # a head the company added to its chart is a section of its own; an account under no head, Other Expenses
+            other_lines[(head.code, head.name) if head.is_group else ("", "Other Expenses")].append((a, amount))
+
+    rows = []
+
+    def section(heading, title, lines):
+        total = sum((v for _a, v in lines), Z)
+        rows.append({"code": "", "name": f"{heading}{title}", "amount": "", "level": 1, "is_group": True, "kind": "heading"})
+        rows.extend({"account_id": str(a.id), "code": a.code, "name": a.name, "amount": str(v), "level": 2, "is_group": False, "kind": "account", "type": a.type} for a, v in lines)
+        rows.append({"code": "", "name": f"Total {title}", "amount": str(total), "level": 1, "is_group": True, "kind": "subtotal"})
+        return total
+
+    def result(kind, profit, loss, value):
+        rows.append({"code": "", "name": profit if value >= 0 else loss, "amount": str(abs(value)), "level": 1, "is_group": True, "kind": kind})
+
+    revenue_total = section("", "Revenue", revenue)
+    cost_total = section("Less: ", "Cost of Sales", cost)
+    gross = revenue_total - cost_total
+    result("profit", "Gross Profit", "Gross Loss", gross)
+
+    # the selling and distribution section always shows, even at nothing; the others only when they hold something
+    named = {key: section("Less: ", title, named_lines[code]) for code, (key, title) in _EXPENSE_SECTIONS.items() if code == "5-02" or named_lines[code]}
+    other_expenses = sum((section("Less: ", title, other_lines[(code, title)]) for code, title in sorted(other_lines)), Z)
+    other_income_total = section("Add: ", "Other Income", other_income) if other_income else Z
+
+    expense_total = sum(named.values(), Z) + other_expenses
+    net = gross - expense_total + other_income_total
+    result("net", "Net Profit", "Net Loss", net)
+    totals = {
+        "revenue": str(revenue_total), "cost_of_sales": str(cost_total), "gross_profit": str(gross),
+        **{key: str(named.get(key, Z)) for key, _title in _EXPENSE_SECTIONS.values()},
+        "other_expenses": str(other_expenses), "other_income": str(other_income_total),
+        "income": str(revenue_total + other_income_total), "expenses": str(cost_total + expense_total), "net_profit": str(net),
+    }
+    return rows, totals
+
+
+def profit_and_loss(date_from=None, date_to=None, cost_centre=None, compare_from=None, compare_to=None, **_):
+    rows, totals = _income_statement(date_from, date_to, cost_centre)
+    # the rows already carry every total, in its place: the exports print them there and not again underneath
+    out = {"columns": ["code", "name", "amount"], "rows": rows, "totals": totals, "totals_in_rows": True}
     if compare_from and compare_to:
-        crows, ci, ce, cc = section(compare_from, compare_to)
-        out["compare"] = {"rows": crows, "totals": {"income": str(ci), "cost_of_sales": str(cc), "gross_profit": str(ci - cc), "expenses": str(ce), "net_profit": str(ci - ce)}}
+        crows, ctotals = _income_statement(compare_from, compare_to, cost_centre)
+        out["compare"] = {"rows": crows, "totals": ctotals}
     return out
 
 

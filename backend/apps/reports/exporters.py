@@ -75,6 +75,11 @@ def _flat_headers(result, cols):
     return out
 
 
+def _footer_totals(result):
+    """The figures printed under the table. A statement whose rows already carry its totals prints them only there."""
+    return {} if result.get("totals_in_rows") else (result.get("totals") or {})
+
+
 def to_csv(result, title=""):
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -82,9 +87,9 @@ def to_csv(result, title=""):
     w.writerow(_flat_headers(result, cols))
     for r in result["rows"]:
         w.writerow([cell(r.get(c, "")) for c in cols])
-    if result.get("totals"):
+    if _footer_totals(result):
         w.writerow([])
-        for k, v in result["totals"].items():
+        for k, v in _footer_totals(result).items():
             w.writerow([k, v])
     return buf.getvalue().encode("utf-8-sig")
 
@@ -134,9 +139,12 @@ def to_xlsx(result, title=""):
                     pass
             row.append(v)
         ws.append(row)
-    if result.get("totals"):
+        if r.get("kind") in ("heading", "subtotal", "profit", "net"):   # a statement's headings and totals stand out, as they do on the page
+            for written in ws[ws.max_row]:
+                written.font = Font(bold=True)
+    if _footer_totals(result):
         ws.append([])
-        for k, v in result["totals"].items():
+        for k, v in _footer_totals(result).items():
             ws.append([k, float(v) if isinstance(v, str) and v.replace(".", "", 1).replace("-", "", 1).isdigit() else v])
     from openpyxl.utils import get_column_letter as _gcl
 
@@ -152,7 +160,7 @@ def to_pdf(result, title="", tenant=None, params=None):
     from weasyprint import HTML
 
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
-    rows = [[_qty_shape(c, cell(r.get(c, ""))) for c in cols] for r in result["rows"]]
+    rows = [{"cells": [_qty_shape(c, cell(r.get(c, ""))) for c in cols], "kind": r.get("kind", "")} for r in result["rows"]]
     from apps.core.documents import logo_url
 
     # Fit by MEASURING, not by counting columns: a few wide columns (dates, long names) overflow a portrait
@@ -164,7 +172,7 @@ def to_pdf(result, title="", tenant=None, params=None):
     for i, c in enumerate(cols):
         w = len(str(labels[i]))
         for r in rows[:400]:
-            w = max(w, len(str(r[i])))
+            w = max(w, len(str(r["cells"][i])))
         widths.append(min(w, 34))
     units = sum(widths) + 2 * len(cols)
     landscape = units > 105
@@ -173,7 +181,7 @@ def to_pdf(result, title="", tenant=None, params=None):
 
     html = render_to_string("reports/report.html", {
         "title": title, "cols": cols, "col_labels": labels if result.get("column_labels") else None,
-        "groups": result.get("header_groups"), "rows": rows, "totals": result.get("totals", {}), "tenant": tenant,
+        "groups": result.get("header_groups"), "rows": rows, "totals": _footer_totals(result), "tenant": tenant,
         "params": params or {}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
     })

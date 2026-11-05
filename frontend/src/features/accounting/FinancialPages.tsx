@@ -117,6 +117,14 @@ export function IncomeStatementPage() {
   const q = useStatement("profit_and_loss", params);
   const t = q.data?.totals || {};
   const profit = Number(t.net_profit || 0);
+  const gross = Number(t.gross_profit || 0);
+  // the rows come in reading order, totals in their place: heading, accounts, its total ... gross profit ... net profit
+  const line: Record<string, string> = {
+    heading: "fw-semibold table-light",
+    subtotal: "fw-semibold",
+    profit: "fw-bold table-light",
+    net: "fw-bold fs-14 table-light",
+  };
   return (
     <>
       <PageHeader title="Income statement" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Income statement" }]}
@@ -125,25 +133,24 @@ export function IncomeStatementPage() {
       {q.isLoading ? <Spinner /> : (
         <>
           <div className="row g-3 mb-3">
-            <div className="col-6 col-xl-3"><StatCard label="Income" value={money(t.income)} icon="ti-trending-up" color="primary" /></div>
+            <div className="col-6 col-xl-3"><StatCard label="Revenue" value={money(t.revenue)} icon="ti-trending-up" color="primary" /></div>
             <div className="col-6 col-xl-3"><StatCard label="Cost of sales" value={money(t.cost_of_sales)} icon="ti-package" color="warning" /></div>
-            <div className="col-6 col-xl-3"><StatCard label="Gross profit" value={money(t.gross_profit)} icon="ti-chart-line" color="info" /></div>
+            <div className="col-6 col-xl-3"><StatCard label={gross >= 0 ? "Gross profit" : "Gross loss"} value={money(Math.abs(gross))} icon="ti-chart-line" color={gross >= 0 ? "info" : "danger"} /></div>
             <div className="col-6 col-xl-3"><StatCard label={profit >= 0 ? "Net profit" : "Net loss"} value={money(Math.abs(profit))} icon={profit >= 0 ? "ti-coin" : "ti-alert-triangle"} color={profit >= 0 ? "success" : "danger"} /></div>
           </div>
           <div className="card"><div className="card-body p-0"><div className="table-responsive">
             <table className="table table-sm align-middle mb-0 fs-13">
               <thead className="table-light"><tr><th style={{ minWidth: 280 }}>Account</th><th className="num" style={{ width: 200 }}>Amount</th></tr></thead>
-              <tbody>{(q.data?.rows || []).map((r: any, i: number) => (
-                <tr key={i} className={rowClass(r)}>{nameCell(r)}<td className="num">{money(r.amount)}</td></tr>
-              ))}</tbody>
-              <tfoot>
-                <tr className="fw-semibold"><td className="text-end">Gross profit</td><td className="num">{money(t.gross_profit)}</td></tr>
-                <tr className="fw-semibold"><td className="text-end">Expenses</td><td className="num">{money(t.expenses)}</td></tr>
-                <tr className="fw-bold fs-14" style={{ borderTop: "2px solid #202C4B" }}>
-                  <td className="text-end">{profit >= 0 ? "Net profit" : "Net loss"}</td>
-                  <td className={`num ${profit >= 0 ? "text-success" : "text-danger"}`}>{money(Math.abs(profit))}</td>
-                </tr>
-              </tfoot>
+              <tbody>{(q.data?.rows || []).map((r: any, i: number) => {
+                const heavy = r.kind === "profit" || r.kind === "net";
+                const colour = r.kind === "net" ? (profit >= 0 ? "text-success" : "text-danger") : r.kind === "profit" && gross < 0 ? "text-danger" : "";
+                return (
+                  <tr key={i} className={line[r.kind] || ""} style={heavy ? { borderTop: "2px solid #202C4B", borderBottom: "2px solid #202C4B" } : undefined}>
+                    {r.kind === "account" ? nameCell(r) : <td style={{ paddingLeft: 8 }}>{r.name}</td>}
+                    <td className={`num ${colour}`} style={r.kind === "subtotal" ? { borderTop: "1px solid #6B7280" } : undefined}>{r.kind === "heading" ? "" : money(r.amount)}</td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div></div></div>
         </>
