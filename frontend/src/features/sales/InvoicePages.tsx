@@ -326,7 +326,7 @@ export function InvoiceCreatePage() {
       <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body">
         <div className="row">
-          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1, status__in: "issued" }} value={order} onChange={(v) => { setOrder(v); setDiscOverride(""); setApplyTax(false); }} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
+          <Field label="Sales order *" col="col-md-5"><EntitySelect endpoint="/api/v1/sales-orders" query={{ uninvoiced: 1 }} value={order} onChange={(v) => { setOrder(v); setDiscOverride(""); setApplyTax(false); }} mapOption={(o: any) => ({ id: o.id, label: o.number, sub: `${o.customer_name} · ${money(o.total)} · ${o.status.replace(/_/g, " ")}` })} placeholder="search order…" /></Field>
           {order && page.can("discount") && <Field label="Discount %" col="col-md-3"><DiscountPctSelect value={effDisc} onChange={setDiscOverride} /></Field>}
           {order && page.can("discount") && <Field label="Tax" col="col-md-3"><div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="chg-tax" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} /><label className="form-check-label fs-13" htmlFor="chg-tax">Charge tax — each item at its FBR rate (from its HS classification); unclassified items carry none</label></div></Field>}
         </div>

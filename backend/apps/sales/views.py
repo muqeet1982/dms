@@ -104,9 +104,13 @@ class SalesOrderViewSet(DocumentViewSet):
         if p.get("status__in"):
             qs = qs.filter(status__in=[s.strip() for s in p["status__in"].split(",") if s.strip()])
         if p.get("uninvoiced") == "1":
-            # the New Invoice picker: an order appears only while it still has an issued delivery nobody billed;
-            # once every delivery is invoiced it drops out, so an invoice cannot be issued twice
-            qs = qs.filter(delivery_notes__stock_out_done=True, delivery_notes__invoice__isnull=True).exclude(status__in=["cancelled", "rejected"]).distinct()
+            # the New Invoice picker: an order appears while it has issued goods nobody billed, WHATEVER stage it reads — an
+            # order already on a trip when the warehouse issues it goes straight to Dispatched and never reads Issued
+            # (TDN-SO-00133, 5 Nov 2026). Once every delivery is invoiced it drops out, so nothing is billed twice.
+            from apps.delivery.models import DeliveryNote
+
+            qs = qs.filter(delivery_notes__stock_out_done=True, delivery_notes__invoice__isnull=True,
+                           delivery_notes__status__in=DeliveryNote.BILLABLE).exclude(status__in=["cancelled", "rejected"]).distinct()
         if p.get("updated_after"):
             qs = qs.filter(updated_at__gt=p["updated_after"])
         return qs
@@ -261,7 +265,9 @@ class SalesOrderViewSet(DocumentViewSet):
         from .serializers import SalesInvoiceSerializer
 
         order = self.get_object()
-        notes = [n for n in DeliveryNote.objects.filter(order=order, stock_out_done=True) if getattr(n, "invoice", None) is None]
+        if order.status in ("cancelled", "rejected"):
+            raise DomainError(f"{order.number} is {order.get_status_display().lower()} — there is nothing to invoice.")
+        notes = [n for n in DeliveryNote.objects.filter(order=order, stock_out_done=True, status__in=DeliveryNote.BILLABLE) if getattr(n, "invoice", None) is None]
         if not notes:
             raise DomainError("Nothing to invoice yet — the warehouse has to issue the stock first.")
         # `post: false` leaves them draft, which is the only state in which the figures can still be corrected

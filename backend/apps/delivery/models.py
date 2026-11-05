@@ -124,6 +124,9 @@ class DeliveryNote(DocumentModel):
         ("pending", "Pending"), ("loaded", "Issued"), ("dispatched", "Out for delivery"), ("delivered", "Delivered"),
         ("partially_delivered", "Partially delivered"), ("failed", "Failed"), ("returned", "Returned"), ("cancelled", "Cancelled"),
     ]
+    # goods that left the warehouse and stayed gone, so they can be billed. A failed or returned note goes out again on
+    # its own invoice ("Deliver again"), or not at all
+    BILLABLE = ("loaded", "dispatched", "partially_delivered", "delivered")
     trip = models.ForeignKey(DeliveryTrip, null=True, blank=True, on_delete=models.SET_NULL, related_name="delivery_notes")
     picklist = models.ForeignKey("delivery.PickList", null=True, blank=True, on_delete=models.SET_NULL, related_name="delivery_notes", help_text="Load form this stock was issued on")
     order = models.ForeignKey("sales.SalesOrder", on_delete=models.PROTECT, related_name="delivery_notes")

@@ -109,3 +109,59 @@ def test_an_invoice_downloads_as_number_and_customer_and_lists_filter_by_custome
     salons = api.get("/api/v1/invoices", {"customer_type": "salon"}).data["results"]
     assert [i["number"] for i in salons] == [inv["number"]]
     assert api.get("/api/v1/invoices", {"customer_type": "retailer,wholesaler"}).data["results"] == []
+
+
+def _on_trip_and_issued(api, tenant, world):
+    wh, v, cust, driver, vehicle, o = world
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
+                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json")
+    assert trip.status_code == 201, trip.content
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    issued = api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    assert issued.status_code == 200, issued.content
+    return trip.data
+
+
+def _offered(api, **query):
+    return [r["number"] for r in api.get("/api/v1/sales-orders", {"uninvoiced": 1, **query}).data["results"]]
+
+
+def test_new_invoice_finds_an_order_issued_while_on_a_trip(api, tenant, world):
+    """TDN-SO-00133, 5 Nov 2026: on a trip before the warehouse issued, it went Confirmed → Dispatched, never read Issued,
+    and the New Invoice search only looked at Issued orders. Nobody could bill it."""
+    wh, v, cust, driver, vehicle, o = world
+    assert _offered(api) == [], "nothing has left the warehouse yet"
+    _on_trip_and_issued(api, tenant, world)
+    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "dispatched"
+    assert _offered(api) == [o["number"]] and _offered(api, search=o["number"]) == [o["number"]]
+
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": False}, format="json")
+    assert inv.status_code == 201, inv.content
+    assert _offered(api) == [], "billed: it leaves the search, so it cannot be billed twice"
+    assert api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {}, format="json").status_code in (400, 422)
+
+
+def test_new_invoice_still_finds_an_order_issued_with_no_trip_and_one_already_out(api, tenant, world):
+    wh, v, cust, driver, vehicle, o = world
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "issued" and _offered(api) == [o["number"]]
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
+                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
+    assert api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json").status_code == 200
+    assert _offered(api) == [o["number"]], "out on the vehicle, still unbilled"
+
+
+def test_a_failed_delivery_is_neither_offered_nor_billed(api, tenant, world):
+    """Its goods did not stay with the customer: it goes out again on its own invoice, or the order closes."""
+    from apps.delivery.models import DeliveryNote
+
+    wh, v, cust, driver, vehicle, o = world
+    trip = _on_trip_and_issued(api, tenant, world)
+    assert api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json").status_code == 200
+    with tenant_context(tenant, tenant.owner):
+        note = DeliveryNote.objects.get(order_id=o["id"])
+    failed = api.post(f"/api/v1/delivery-notes/{note.pk}/deliver", {"failed": True, "failure_reason": "Shop closed"}, format="json")
+    assert failed.status_code == 200, failed.content
+    assert _offered(api) == []
+    assert api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {}, format="json").status_code in (400, 422)
