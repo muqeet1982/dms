@@ -194,11 +194,12 @@ def build_payload(inv, filing, *, use_sandbox):
                 f"{line.description}: this line charges a typed {line.tax1_rate}% instead of the product's "
                 f"FBR rate ({p.fbr_rate_desc}) — FBR recomputes tax from the rate itself. Clear the line's "
                 "typed % (edit the invoice) before filing.", code="fbr_override")
-        # the retail price without its sales tax (Product.retail_base) — the same base the invoice was charged on
+        # the retail price without its sales tax (Product.retail_base) is reported to FBR as a figure. The tax is what the
+        # invoice charged, on the amount after discount (owner, 5 Nov 2026), so it is not floored on that price here either.
         mrp = p.retail_base
         money = engine.compute_line(
             quantity=line.qty, unit_price=line.unit_price, discount_amount=line.discount_amount,
-            rate_str=p.tax_rate, sale_type=p.fbr_sale_type, mrp=mrp,
+            rate_str=p.tax_rate, sale_type=p.fbr_sale_type,
             # the same rates InvoiceService.line_taxes charged, so the filing equals the stored invoice
             fed_rate=p.fbr_fed_rate, extra_rate=p.fbr_extra_tax_rate,
             further_rate=p.fbr_further_tax_rate, withheld_rate=p.fbr_wht_rate,

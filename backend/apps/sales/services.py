@@ -847,7 +847,7 @@ class InvoiceService:
         `charge_tax`: None follows the ORDER's own switch (a tax invoice asked for when the order was taken,
         owner 26 Oct 2026) — and a refusal there must not block an automatic billing at delivery confirmation,
         so it is recorded as a notification instead. True/False is a person deciding right now, so a refusal
-        (unclassified products, 3rd Schedule without MRP) is raised back at them.
+        (no tax rate on any product) is raised back at them.
         """
         if hasattr(dn, "invoice") and dn.invoice is not None:
             return dn.invoice
@@ -952,11 +952,21 @@ class InvoiceService:
                 by_id.pop(str(line.id))
                 InvoiceService._remove_line(inv, line)
                 continue
+            charged_disc = line.discount_amount
             if line.tp is not None:
                 # edits are typed in TP terms (the price as quoted, tax included on a tax invoice): edit those, and
                 # recompute works the charged price back out
                 line.unit_price, line.discount_amount = line.tp, line.tp_discount
             typed_disc = None if row.get("discount_amount") in (None, "") else Decimal(str(row["discount_amount"]))
+            if typed_disc is not None and line.tp is not None and inv.force_tax_type_id and InvoiceService.tp_includes_tax():
+                # except the discount on a tax invoice: it comes off the price without tax (owner, 5 Nov 2026), so Rs 500
+                # typed is Rs 500 off that price. Kept in TP terms as the same share, so recompute lands on it exactly.
+                if typed_disc == charged_disc:
+                    typed_disc = line.tp_discount
+                else:
+                    tp_now = Decimal(str(row["unit_price"])) if row.get("unit_price") not in (None, "") else line.tp
+                    unit = InvoiceService.ex_tax_price(line.variant.product if line.variant_id else None, tp_now, line.tax_pct_override)
+                    typed_disc = q4(typed_disc * tp_now / unit) if unit else typed_disc
             if new_qty is not None and new_qty != line.qty and new_qty != 0:
                 if new_qty < 0:
                     raise DomainError(f"{line.description}: the quantity cannot be negative.", status_code=400)
@@ -1188,8 +1198,8 @@ class InvoiceService:
         """
         The price before tax inside a TP that includes it (owner, 1 Nov 2026), at the item's own rates: TP = price +
         GST + FED + Extra + Further on it (WHT is the buyer's, never in the price). TP × 100 ÷ (100 + rate) for a plain
-        %; exact too for "18% along with rupees 60" and for a 3rd-Schedule item taxed on its printed retail price —
-        the taxes are straight lines in the price, piece by piece, so a few Newton steps land on the price.
+        %; exact too for "18% along with rupees 60": the taxes are straight lines in the price, piece by piece, so a
+        few Newton steps land on the price.
         """
         tp = Decimal(str(tp or 0))
         if tp <= 0 or product is None:
@@ -1284,10 +1294,10 @@ class InvoiceService:
                  if product is not None else {})
         # the product's GST Rate (owner, 5 Nov 2026), else the company default
         rate_str = product.tax_rate if product is not None else ""
-        mrp = product.retail_base if product is not None else None
+        # owner, 5 Nov 2026: "remove tax from t.p amount and remove discount and then add tax on the amount". So the tax
+        # is on what is left after the discount, 3rd Schedule goods too: compute_line gets no MRP to floor it on.
         money = engine.compute_line(quantity=qty, unit_price=unit_price, discount_amount=discount_amount,
-                                    rate_str=rate_str, sale_type=product.fbr_sale_type if product is not None else "",
-                                    mrp=mrp, **rates)
+                                    rate_str=rate_str, sale_type=product.fbr_sale_type if product is not None else "", **rates)
         if override is not None:
             rate = Decimal(str(override))
             gst = engine.round2(money["valueSalesExcludingST"] * rate / 100)
@@ -1315,6 +1325,10 @@ class InvoiceService:
         inclusive = InvoiceService.tp_includes_tax()
         subtotal = discount = t1 = t2 = fed = extra = further = wht = Decimal("0")
         for line in inv.lines.select_related("variant", "variant__product"):
+            if line.tp is None and forced is not None and inclusive and inv.status == "draft":
+                # raised before the TP included the tax (TDN-INV-00074): once posted such a line keeps its figures, but
+                # a draft is not on the books yet, so it reads its price as the TP like any other
+                line.tp, line.tp_discount = line.unit_price, line.discount_amount
             within_tp = line.tp is not None and forced is not None and inclusive
             if line.tp is not None:
                 # the TP includes the tax on a tax invoice: what is charged before tax is worked back from it, the
@@ -1347,7 +1361,7 @@ class InvoiceService:
             line.tax2_type, line.tax2_rate, line.tax2_amount = None, Decimal("0"), Decimal("0")
             # the line's own taxes are in its total; WHT is withheld by the buyer, so it leaves the invoice total
             line.line_total = taxable + line.tax1_amount + line.tax2_amount + others
-            line.save(update_fields=["unit_price", "discount_amount", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount",
+            line.save(update_fields=["tp", "tp_discount", "unit_price", "discount_amount", "tax1_type", "tax1_rate", "tax1_amount", "tax2_type", "tax2_rate", "tax2_amount",
                                      "fed_amount", "extra_tax_amount", "further_tax_amount", "wht_amount", "line_total"])
             subtotal += gross
             discount += line.discount_amount
@@ -1392,17 +1406,6 @@ class InvoiceService:
                 raise DomainError(
                     "Tax is on but none of these products carries a tax rate — set the GST Rate on the product "
                     "(or a default under Settings → Rules) first.", code="no_tax_rate")
-            # 3rd Schedule goods tax on the PRINTED retail price (guide §5) — without it the invoice
-            # would quietly under-tax on the charged price, and the filing would refuse anyway
-            from apps.fbr import engine
-
-            for l in inv.lines.select_related("variant__product"):
-                p = l.variant.product if l.variant_id else None
-                if p is not None and engine.is_mrp_sale_type(p.fbr_sale_type) and not (p.mrp_ex_tax or 0):
-                    raise DomainError(
-                        f"{p.name} is 3rd Schedule Goods but has no printed retail price — set the MRP "
-                        "on the product's FBR card first; the law taxes these on the retail price.",
-                        code="mrp_required")
             inv.force_tax_type, inv.force_tax_rate = tt, None
         else:
             inv.force_tax_type, inv.force_tax_rate = None, None

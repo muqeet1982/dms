@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { lineWithinTp, date, datetime, fbrLineTax, fbrRateLabel, gstPct, gstPctOfLabels, LineTax, money, otherTaxLabel, qty } from "@/lib/format";
+import { exTaxUnit, lineWithinTp, date, datetime, fbrLineTax, fbrRateLabel, gstPct, gstPctOfLabels, LineTax, money, otherTaxLabel, qty } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
@@ -109,7 +109,7 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.tp != null ? l.tp_discount : l.discount_amount), within: (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false && l.tp != null, unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(l.tp != null ? l.tp_discount : l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", fbr_sale_type: l.fbr_sale_type || "", mrp: l.mrp, others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount), within: (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false && l.tp != null, unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
           {inv.force_tax_type && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
@@ -219,10 +219,13 @@ export function InvoiceDetailPage() {
                   const disc = Math.max(0, base + gross * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
                   const taxable = gross - disc;
                   if (taxed && l.within) {
-                    const w = lineWithinTp({ rate: l.fbr_rate, saleType: l.fbr_sale_type, mrp: l.mrp, overridePct: l.tax_pct, others: l.others, tp: Number(l.unit_price || 0), qty: Number(l.qty), discTp: disc });
+                    // the discount here is off the price without tax (owner, 5 Nov 2026), as the server reads what is typed
+                    const tp = Number(l.unit_price || 0), args = { rate: l.fbr_rate, overridePct: l.tax_pct, others: l.others }, unit = exTaxUnit(tp, args);
+                    const discEx = Math.max(0, base + Number(l.qty) * unit * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
+                    const w = lineWithinTp({ ...args, tp, qty: Number(l.qty), discTp: l.isNew ? disc : unit ? (discEx * tp) / unit : 0 });
                     return { gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
                   }
-                  const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), saleType: l.fbr_sale_type, mrp: l.mrp, overridePct: l.tax_pct, others: l.others }) : null;
+                  const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), overridePct: l.tax_pct, others: l.others }) : null;
                   return { gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
                 });
                 const sum = (f: (x: any) => number) => fig.reduce((a: number, x: any) => a + f(x), 0);
@@ -237,7 +240,7 @@ export function InvoiceDetailPage() {
                   try { price = (await api.get(`/api/v1/variants/${v.id}/price`, { customer: inv.customer })).unit_price; } catch { /* list price */ }
                   // functional: the price fetch is async, and whatever was typed meanwhile must survive
                   setEdit((cur: any) => cur && { ...cur, lines: [...cur.lines, { key: `new-${Date.now()}`, isNew: true, variant: v.id, description: v.name, qty: "1", unit_price: String(price ?? ""), discount_amount: "0", product_discount_pct: "0", prod_pct_was: 0, tax_pct: "",
-                    fbr_rate: v.tax_rate || "", fbr_sale_type: v.fbr_sale_type || "", mrp: v.retail_base, others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } }] });
+                    fbr_rate: v.tax_rate || "", others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } }] });
                 };
                 return <div className="table-responsive"><table className="table table-sm align-middle mb-1">
                   <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 80 }}>Qty</th><th className="num" style={{ width: 120 }}>Rate</th><th className="num" style={{ width: 120 }}>Discount</th><th className="num" style={{ width: 90 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{taxed && <th className="num" style={{ width: 90 }} title="This line's tax % — blank follows the product's FBR rate">Tax %</th>}{taxed && <th className="num" style={{ width: 110 }}>Taxable</th>}{taxed && <th className="num" style={{ width: 100 }}>GST</th>}{showOther && <th className="num" style={{ width: 100 }} title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num" style={{ width: 110 }}>{taxed ? "Line Total" : "Amount"}</th><th style={{ width: 36 }} /></tr></thead>
@@ -299,10 +302,10 @@ function billedLine(l: any, applyTax: boolean, newPct: number | null, within = f
   const others = { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate };
   if (applyTax && within) {
     // the TP includes the tax: the price before tax is worked back from it, as the saved invoice will (owner, 1 Nov 2026)
-    const w = lineWithinTp({ rate: l.product_fbr_rate, saleType: l.product_fbr_sale_type, mrp: l.product_mrp, others, tp: Number(l.unit_price) || 0, qty: paid, discTp: disc });
+    const w = lineWithinTp({ rate: l.product_fbr_rate, others, tp: Number(l.unit_price) || 0, qty: paid, discTp: disc });
     return { issued, unit: w.unit, gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, others, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
   }
-  const gst = applyTax ? fbrLineTax({ rate: l.product_fbr_rate, taxable, qty: paid, saleType: l.product_fbr_sale_type, mrp: l.product_mrp, others }) : null;
+  const gst = applyTax ? fbrLineTax({ rate: l.product_fbr_rate, taxable, qty: paid, others }) : null;
   return { issued, unit: Number(l.unit_price) || 0, gross, disc, taxable, gst, others, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
 }
 
@@ -520,7 +523,7 @@ export function CreditNoteFormPage() {
       const fed = u("fed"), extra = u("extra"), further = u("further");
       return { label: "as invoiced", amount: u("t1") + u("t2"), fed, extra, further, wht: u("wht"), other: r2(fed + extra + further) };
     }
-    if (inv.data?.force_tax_type) return fbrLineTax({ rate: l.extra?.fbr_rate, taxable, qty: q, saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp, others: l.extra?.fbr_others });
+    if (inv.data?.force_tax_type) return fbrLineTax({ rate: l.extra?.fbr_rate, taxable, qty: q, others: l.extra?.fbr_others });
     return null;
   };
   const submit = async (post: boolean) => {

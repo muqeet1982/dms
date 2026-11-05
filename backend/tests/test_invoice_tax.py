@@ -363,37 +363,27 @@ def test_a_fixed_rupee_rate_no_longer_invoices_zero(api, tenant, taxed_world):
     assert Decimal(inv["lines"][0]["tax1_rate"]) == 0, "no percentage part — the amount carries it all"
 
 
-def test_third_schedule_taxes_the_printed_retail_price_when_higher(api, tenant, taxed_world):
-    """Guide examples B and C: GST base = max(MRP × qty, taxable) — per-unit MRP times quantity,
-    never the bare MRP, and never 'always MRP'. The PRINTED price includes the tax (2 Nov 2026), so the base is
-    printed ÷ (1 + rate): 236 printed at 18% is a retail price of 200."""
+def test_third_schedule_is_taxed_on_the_amount_not_the_printed_retail_price(api, tenant, taxed_world):
+    """Owner, 5 Nov 2026: tax is on the amount after discount, which replaces the guide's max(MRP × qty, taxable). A higher
+    printed price no longer lifts it (tests/test_tax_after_discount.py has the T.P inside the tax)."""
     wh, cust, v, tt = taxed_world
-    # B: MRP 200 beats the charged 150 → tax on 10 × 200 = 2000
     _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("236"))
     oid = _issued_order(api, wh, cust, v, qty="10")  # 10 × 150 = 1500 charged
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"apply_tax": True}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
-    assert Decimal(inv["tax1_total"]) == Decimal("360"), inv["tax1_total"]  # 2000 × 18%
+    assert Decimal(inv["tax1_total"]) == Decimal("270"), inv["tax1_total"]  # 1500 × 18%, not 2000 × 18%
     assert Decimal(inv["subtotal"]) == Decimal("1500"), "the charged value stays what was charged"
 
-    # C: MRP 100 loses to the charged price → tax on 1500, max() not always-MRP
-    _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=Decimal("100"))
-    oid2 = _issued_order(api, wh, cust, v, qty="10")
-    made2 = api.post(f"/api/v1/sales-orders/{oid2}/invoice", {"apply_tax": True}, format="json")
-    inv2 = made2.data[0] if isinstance(made2.data, list) else made2.data
-    assert Decimal(inv2["tax1_total"]) == Decimal("270"), inv2["tax1_total"]  # 1500 × 18%
 
-
-def test_third_schedule_without_mrp_refuses_the_switch(api, tenant, taxed_world):
-    """Guide §5: the law taxes 3rd Schedule goods on the printed retail price — without one the
-    invoice would quietly under-tax, so the switch refuses and says where to set it."""
+def test_third_schedule_without_mrp_still_takes_the_switch(api, tenant, taxed_world):
+    """The MRP no longer decides the tax (owner, 5 Nov 2026), so its absence no longer stops it. Filing still asks for it."""
     wh, cust, v, tt = taxed_world
     _product_fbr(tenant, v, "18%", fbr_sale_type="3rd Schedule Goods", mrp_ex_tax=None)
     oid = _issued_order(api, wh, cust, v)
     made = api.post(f"/api/v1/sales-orders/{oid}/invoice", {"post": False}, format="json")
     inv = made.data[0] if isinstance(made.data, list) else made.data
     r = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
-    assert r.status_code in (400, 422) and "retail price" in str(r.data), r.content
+    assert r.status_code == 200 and Decimal(r.data["tax1_total"]) == Decimal("108"), r.content  # 4 × 150 × 18%
 
 
 def test_the_filing_and_the_invoice_charge_the_same_tax(api, tenant, taxed_world):

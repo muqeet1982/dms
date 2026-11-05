@@ -71,7 +71,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     if (priceFor !== "cost" && customerId) {
       try { const p = await api.get(`/api/v1/variants/${v.id}/price`, { customer: customerId, packaging: packaging?.id }); price = p.unit_price; } catch { /* ignore */ }
     }
-    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), prod_rule: { pct: Number(v.product_discount_pct || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.tax_rate || "", fbr_sale_type: v.fbr_sale_type || "", fbr_mrp: v.retail_base, fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
+    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), prod_rule: { pct: Number(v.product_discount_pct || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.tax_rate || "", fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
   };
   /**
    * Re-price a line when its packaging changes. A carton is the piece price times the box size; a customer's
@@ -131,7 +131,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     const pk = (l.packagings || []).find((x) => x.id === l.packaging);
     const baseQty = Number(l.qty || 0) * (pk ? Number(pk.qty_in_base) || 1 : 1);
     if (lineTax) return lineTax(l, baseQty, lineNet(l));
-    return fbrLineTax({ rate: String(l.extra?.fbr_rate || ""), taxable: lineNet(l), qty: baseQty, saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp, others: l.extra?.fbr_others });
+    return fbrLineTax({ rate: String(l.extra?.fbr_rate || ""), taxable: lineNet(l), qty: baseQty, others: l.extra?.fbr_others });
   };
   const gstShown = Boolean(chargeTax && showPrice);
   // the TP includes the tax (owner, 1 Nov 2026): the line's price before tax, discount and value are worked back from
@@ -141,7 +141,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     const pk = (l.packagings || []).find((x) => x.id === l.packaging);
     const per = pk ? Number(pk.qty_in_base) || 1 : 1;
     const gross = Number(l.qty || 0) * Number(l.unit_price || 0);
-    return lineWithinTp({ rate: String(l.extra?.fbr_rate || ""), saleType: l.extra?.fbr_sale_type, mrp: l.extra?.fbr_mrp, others: l.extra?.fbr_others,
+    return lineWithinTp({ rate: String(l.extra?.fbr_rate || ""), others: l.extra?.fbr_others,
       tp: Number(l.unit_price || 0) / per, qty: Number(l.qty || 0) * per, discTp: gross - lineNet(l) });
   };
   const taxOf = (l: EditLine) => (gstShown && l.variant ? (within ? insideTp(l).gst : lineGst(l)) : null);

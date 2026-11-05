@@ -177,10 +177,9 @@ class Product(TenantModel):
     @property
     def retail_base(self):
         """
-        3rd Schedule goods only: the retail price per unit FBR taxes, without the sales tax. `mrp_ex_tax` holds the
-        price PRINTED on the pack, which includes it (Sales Tax Act s.2(27): the retail price is "inclusive of all
-        duties, charges and taxes (other than sales tax)"), so it is worked back at the product's own rate — a TP
-        typed there taxes as 25% of TP ÷ 1.25, as the owner reckons it (2 Nov 2026). None otherwise.
+        3rd Schedule goods only: the retail price per unit reported to FBR, without the sales tax. `mrp_ex_tax` holds the
+        price PRINTED on the pack, which includes it, so it is worked back at the product's own rate. It does not decide
+        the tax: that is on the amount after discount (owner, 5 Nov 2026). None otherwise.
         """
         from apps.fbr import engine
 

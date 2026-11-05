@@ -102,7 +102,7 @@ export type LineTax = { label: string; amount: number; fed: number; extra: numbe
  * WHT is withheld by the buyer and comes off the document's total. 2 dp half-up throughout; `qty` in base units.
  * Null when the line carries no tax at all. The server always recomputes the real figures.
  */
-export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; saleType?: string; mrp?: any; overridePct?: string | number | null; others?: OtherRates }): LineTax | null {
+export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; overridePct?: string | number | null; others?: OtherRates }): LineTax | null {
   const base0 = r2(o.taxable);
   const pctOf = (rate: any) => r2((base0 * (Number(rate) || 0)) / 100);
   const fed = pctOf(o.others?.fed), extra = pctOf(o.others?.extra), further = pctOf(o.others?.further), wht = pctOf(o.others?.wht);
@@ -113,12 +113,8 @@ export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; sal
   }
   if (!o.rate) return fed || extra || further || wht ? { label: "", amount: 0, ...rest } : null;
   const { pct, fixed } = fbrRateParts(o.rate);
-  let base = base0;
-  if ((o.saleType || "").trim().toLowerCase() === "3rd schedule goods") {
-    const retail = r2(Number(o.mrp || 0) * o.qty);
-    if (retail > base) base = retail;
-  }
-  return { label: fbrRateLabel(o.rate), amount: r2((base * pct) / 100 + o.qty * fixed), ...rest };
+  // the tax is on the amount after discount (owner, 5 Nov 2026), 3rd Schedule goods too, as InvoiceService.line_taxes charges it
+  return { label: fbrRateLabel(o.rate), amount: r2((base0 * pct) / 100 + o.qty * fixed), ...rest };
 }
 
 /**
@@ -126,7 +122,7 @@ export function fbrLineTax(o: { rate?: string; taxable: number; qty: number; sal
  * before tax is worked back from the TP at the item's own rates — the screen's mirror of InvoiceService.ex_tax_price
  * and of how recompute keeps the line to the paisa, so a preview shows what the saved document will charge.
  */
-type TaxArgs = { rate?: string; saleType?: string; mrp?: any; overridePct?: string | number | null; others?: OtherRates };
+type TaxArgs = { rate?: string; overridePct?: string | number | null; others?: OtherRates };
 export function exTaxUnit(tp: number, o: TaxArgs): number {
   if (!(tp > 0)) return tp || 0;
   const n = 1_000_000;
