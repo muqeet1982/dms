@@ -158,6 +158,37 @@ def test_an_order_edited_off_a_shared_trip_gets_its_own_trip_number_back(api, te
     assert api.get(f"/api/v1/trips/{shared['id']}").data["number"] == other["number"].replace("-SO-", "-TRIP-"), "the old trip takes the order it carries"
 
 
+def test_a_trip_carries_many_orders_though_each_has_its_own_load_form(api, tenant, world):
+    """Owner, 5 Nov 2026: "in trip allow multiple sale order". One order per LOAD FORM never meant one order per TRIP."""
+    from apps.delivery.models import DeliveryNote, Driver, Vehicle
+    from apps.inventory.models import StockMovement
+
+    wh, v, cust = world
+    issued = [_order(api, wh, v, cust), _order(api, wh, v, cust)]
+    for o in issued:
+        assert _issue(api, _form(api, wh, o).data).status_code == 200
+    waiting = _order(api, wh, v, cust)
+    orders = [*issued, waiting]
+    with tenant_context(tenant, tenant.owner):
+        driver, vehicle = Driver.objects.create(name="Akram", phone="03001234567"), Vehicle.objects.create(reg_no="LEB-765")
+        moves = StockMovement.objects.count()
+    body = {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id)}
+
+    one_as_text = api.post("/api/v1/trips", {**body, "order_ids": waiting["id"]}, format="json")
+    assert one_as_text.status_code == 400 and "order_ids" in one_as_text.data["errors"], "the error the New Trip page hit on 5 Nov"
+
+    r = api.post("/api/v1/trips", {**body, "order_ids": [o["id"] for o in orders]}, format="json")
+    assert r.status_code == 201, r.content
+    assert r.data["stops_count"] == 3
+    for o in orders:
+        assert str(api.get(f"/api/v1/sales-orders/{o['id']}").data["trip"]) == str(r.data["id"])
+    with tenant_context(tenant, tenant.owner):
+        notes = [DeliveryNote.objects.filter(order_id=o["id"]).exclude(status="cancelled") for o in orders]
+        assert [n.count() for n in notes] == [1, 1, 1], "the issued orders' own notes go on the vehicle, none is made twice"
+        assert all(str(n.get().trip_id) == str(r.data["id"]) for n in notes)
+        assert StockMovement.objects.count() == moves, "making the trip moves no stock"
+
+
 def test_a_real_second_delivery_still_reads_2(api, tenant, world):
     from apps.core.numbering import derived_number
     from apps.delivery.models import DeliveryNote
