@@ -155,6 +155,11 @@ class DeliveryNote(DocumentModel):
     def __str__(self):
         return self.number
 
+    @classmethod
+    def awaiting_trip(cls):
+        """Goods the warehouse has issued and no vehicle has yet: the only thing a trip can take."""
+        return cls.objects.filter(stock_out_done=True, trip__isnull=True, status__in=("pending", "loaded"))
+
 
 class DeliveryNoteLine(TenantModel):
     RETURN_REASONS = [("rejected", "Rejected by customer"), ("damaged", "Damaged"), ("shortage", "Shortage"), ("not_ordered", "Not ordered"), ("other", "Other")]

@@ -126,10 +126,10 @@ def test_a_trip_letting_go_of_an_issued_order_keeps_its_note_and_never_issues_tw
         vehicle = Vehicle.objects.create(reg_no="LEB-765")
         before = StockService.on_hand(v, wh)[0]
     o = _order(api, wh, cust, v)
+    _issue(api, o)
     trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
                                       "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
-    _issue(api, o)
-    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "dispatched"
+    assert str(api.get(f"/api/v1/sales-orders/{o['id']}").data["trip"]) == str(trip["id"])
     r = api.post(f"/api/v1/trips/{trip['id']}/cancel", {"reason": "van broke"}, format="json")
     assert r.status_code == 200, r.content
     with tenant_context(tenant, tenant.owner):

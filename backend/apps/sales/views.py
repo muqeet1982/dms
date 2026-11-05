@@ -111,6 +111,11 @@ class SalesOrderViewSet(DocumentViewSet):
 
             qs = qs.filter(delivery_notes__stock_out_done=True, delivery_notes__invoice__isnull=True,
                            delivery_notes__status__in=DeliveryNote.BILLABLE).exclude(status__in=["cancelled", "rejected"]).distinct()
+        if p.get("ready_for_trip") == "1":   # what New Trip and Add Orders offer: exactly what TripService.assign_orders accepts
+            from apps.delivery.models import DeliveryNote
+            from apps.delivery.services import TripService
+
+            qs = qs.filter(trip__isnull=True, status__in=TripService.DISPATCHABLE, pk__in=DeliveryNote.awaiting_trip().values("order_id"))
         if p.get("updated_after"):
             qs = qs.filter(updated_at__gt=p["updated_after"])
         return qs

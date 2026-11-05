@@ -252,7 +252,13 @@ class Command(BaseCommand):
         for o in orders[:-2]:
             OrderService.review(o)
             OrderService.confirm(o)
-        # --- trip 1 (closed): first 4 confirmed orders
+        # the warehouse issues each order on its own load form: a trip only takes issued goods
+        from apps.delivery.services import PickListService
+
+        for o in orders[:7]:
+            pl = PickListService.create(warehouse=main, orders=[o])
+            PickListService.issue(pl, issues=[{"line_id": l.id, "qty_issued": l.qty_to_pick} for l in pl.lines.all()])
+        # --- trip 1 (closed): first 4 issued orders
         trip = TripService.create(warehouse=main, date=day(4), driver=d1, vehicle=v1, rep=rep1, orders=orders[:4], notes="Morning run")
         TripService.start(trip, odometer_start=45210)
         from apps.delivery.services import DeliveryService

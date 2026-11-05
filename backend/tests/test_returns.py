@@ -183,16 +183,16 @@ def test_fully_paid_a_partial_return_is_credit_to_apply_elsewhere_or_refund_by_b
 
 
 def _trip_invoice(api, tenant, wh, cust, v, qty="3"):
-    """Invoice-before-dispatch on a trip: the trip is opened, the load form issued onto its note, the invoice posted."""
+    """Invoice-before-dispatch on a trip: the load form issued, the trip opened with its note, the invoice posted."""
     from apps.delivery.models import Driver, Vehicle
 
     with tenant_context(tenant, tenant.owner):
         driver = Driver.objects.create(name="Akram", phone="03001234567")
         vehicle = Vehicle.objects.create(reg_no=f"LEB-{qty}{driver.pk.hex[:4]}")
     o = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "lines": [{"variant": str(v.id), "qty": qty}]}, format="json").data
-    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
     pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
     api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
     inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
     assert api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json").status_code == 200
     return o, inv, trip

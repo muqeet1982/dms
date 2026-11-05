@@ -223,6 +223,8 @@ class PickListService:
         if pl.status == "open":
             PickListService.send(pl)   # issued straight from an unsent form: it went to the warehouse now
         if issues:
+            if pl.status == "picked":
+                pl.status = "picking"   # packed is not issued: this is the step that follows it, and the only way out
             PickListService.record_picks(pl, [{"line_id": i["line_id"], "qty_picked": i.get("qty_issued", i.get("qty_picked", 0)), "batch": i.get("batch")} for i in issues])
             pl.refresh_from_db()
         lines = list(pl.lines.select_related("order_line", "order_line__order", "variant", "batch"))
@@ -536,6 +538,8 @@ class DeliveryService:
 
 
 class TripService:
+    DISPATCHABLE = ("confirmed", "issued", "invoiced", "partially_delivered")
+
     @staticmethod
     def _number_for(order):
         """
@@ -564,11 +568,11 @@ class TripService:
     @transaction.atomic
     def from_picklist(pl, *, driver=None, vehicle=None, rep=None, delivery_rep=None, loader=None, helper=None, route=None, date=None, notes=""):
         """Warehouse finished packing a loader form → open the dispatch (trip) for its orders."""
-        if pl.status not in ("picked", "issued", "partially_issued"):
+        if pl.status not in ("issued", "partially_issued"):
             raise DomainError("The warehouse has to issue the load form before it can be dispatched.")
         # `invoiced` belongs here too: the invoice-before-dispatch flow invoices the issued goods and then
         # still has to put them on a vehicle. Leaving it out made an invoiced order impossible to dispatch.
-        orders = [o for o in pl.orders.all() if o.status in ("confirmed", "issued", "partially_delivered", "invoiced")]
+        orders = [o for o in pl.orders.all() if o.status in TripService.DISPATCHABLE]
         if not orders:
             raise DomainError("The orders on this loader form are already dispatched or cancelled.")
         trip = TripService.create(warehouse=pl.warehouse, date=date, driver=driver, vehicle=vehicle, rep=rep, delivery_rep=delivery_rep, loader=loader or pl.picker, helper=helper, route=route, orders=orders, notes=notes or f"Packed on {pl.number}", picklist=pl)
@@ -582,7 +586,7 @@ class TripService:
             raise DomainError("Orders can only be assigned before the trip starts.")
         seq = trip.delivery_notes.count()
         for o in orders:
-            if o.status not in ("confirmed", "issued", "invoiced", "partially_delivered"):
+            if o.status not in TripService.DISPATCHABLE:
                 raise DomainError(f"Order {o.number} is not ready to dispatch (status {o.get_status_display()}).")
             if o.warehouse_id != trip.warehouse_id:
                 raise DomainError(f"Order {o.number} belongs to another warehouse.")
@@ -591,15 +595,15 @@ class TripService:
             DeliveryService.refuse_second_delivery(o)
             if trip.delivery_notes.filter(order=o).exists():
                 continue
+            # no load form, no issue, no dispatch (owner, 5 Nov 2026): a trip only takes the delivery note the warehouse
+            # issued. It used to make its own, and starting the trip took the stock with no load form at all.
+            issued = DeliveryNote.awaiting_trip().filter(order=o).order_by("created_at").first()
+            if issued is None:
+                raise DomainError(f"{o.number} has not been issued yet — issue its load form first.", code="not_issued")
             seq += 1
-            # Already issued by the warehouse? Put that delivery note on the vehicle instead of issuing twice.
-            issued = DeliveryNote.objects.filter(order=o, trip__isnull=True, status__in=["pending", "loaded"]).order_by("created_at").first()
-            if issued is not None:
-                issued.trip = trip
-                issued.sequence = seq
-                issued.save(update_fields=["trip", "sequence", "updated_at"])
-            else:
-                DeliveryService.create_note(o, trip=trip, sequence=seq)
+            issued.trip = trip
+            issued.sequence = seq
+            issued.save(update_fields=["trip", "sequence", "updated_at"])
             o.trip = trip
             o.save(update_fields=["trip"])
         trip.stops_count = trip.delivery_notes.count()
@@ -666,13 +670,17 @@ class TripService:
     @staticmethod
     @transaction.atomic
     def start(trip, odometer_start=None):
-        """Trip start = dispatch = stock out for every delivery note (§6.3 point 3)."""
+        """Trip start = the vehicle leaves with what the warehouse issued. It never takes stock of its own (owner, 5 Nov 2026)."""
         if trip.status not in ("planned", "loading"):
             raise DomainError("Trip already started.")
         if not trip.delivery_notes.exists():
             raise DomainError("Assign at least one order before starting the trip.")
         if trip.driver_id is None:
             raise DomainError("Assign a driver before starting the trip.")
+        notes = list(trip.delivery_notes.select_related("order", "warehouse").prefetch_related("lines").exclude(status="cancelled").order_by("sequence"))
+        unissued = [dn.order.number for dn in notes if not dn.stock_out_done]
+        if unissued:
+            raise DomainError(f"{', '.join(unissued)} not issued yet — issue the load form first.", code="not_issued")
         tenant = get_current_tenant()
         van = None
         if tenant.setting("two_step_dispatch") and trip.vehicle_id:
@@ -682,7 +690,7 @@ class TripService:
             if van is None:
                 van = Warehouse.objects.create(code=f"VAN-{trip.vehicle.reg_no}"[:20], name=f"Van {trip.vehicle.reg_no}", type="van", vehicle=trip.vehicle)
         value = Decimal("0")
-        for dn in trip.delivery_notes.select_related("order", "warehouse").order_by("sequence"):
+        for dn in notes:
             value += DeliveryService._stock_out(dn, van) or Decimal("0")
             if dn.status in ("pending", "loaded"):
                 dn.status = "dispatched"
@@ -693,13 +701,14 @@ class TripService:
         trip.status = "out_for_delivery"
         trip.started_at = timezone.now()
         trip.odometer_start = odometer_start
-        trip.loaded_value = value
+        # what is on the vehicle, at cost. Start used to count only the stock it took itself, so issued goods read 0.
+        trip.loaded_value = sum(((l.qty_loaded * l.unit_cost).quantize(Q4) for dn in notes for l in dn.lines.all()), Decimal("0"))
         trip.save(update_fields=["status", "started_at", "odometer_start", "loaded_value", "updated_at"])
         if van is not None:
             from apps.accounting.services import PostingService
 
             PostingService.post_trip_dispatch(trip, value)
-        AuditService.log("status.started", trip, after={"status": "out_for_delivery", "loaded_value": str(value), "stops": trip.stops_count})
+        AuditService.log("status.started", trip, after={"status": "out_for_delivery", "loaded_value": str(trip.loaded_value), "stops": trip.stops_count})
         emit("trip.started", trip=trip)
         return trip
 

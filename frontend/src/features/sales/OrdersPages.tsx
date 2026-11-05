@@ -127,7 +127,7 @@ export function OrderDetailPage() {
           {confirmable && page.can("hold") && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("reject")}>Reject</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}
           {["confirmed", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
-          {o.status === "confirmed" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
+          {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
           {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
    : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))

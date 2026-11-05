@@ -45,7 +45,7 @@ export function TripFormPage() {
   const warehouses = useWarehouses();
   const [form, setForm] = useState<any>({ warehouse: sp.get("warehouse") || "", date: new Date().toISOString().slice(0, 10), driver: null, vehicle: null, rep: null, delivery_rep: null, loader: null, helper: null, route: null, notes: "" });
   const [selected, setSelected] = useState<string[]>(sp.get("order") ? [sp.get("order")!] : []);
-  const orders = useQuery({ queryKey: ["dispatchable-orders", form.warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status__in: "confirmed,issued", warehouse: form.warehouse || undefined, page_size: 200, ordering: "requested_delivery_date" }) });
+  const orders = useQuery({ queryKey: ["dispatchable-orders", form.warehouse], queryFn: () => api.list("/api/v1/sales-orders", { ready_for_trip: 1, warehouse: form.warehouse || undefined, page_size: 200, ordering: "requested_delivery_date" }) });
   const rows = (orders.data?.results || []).filter((o: any) => !o.trip);
   const value = rows.filter((o: any) => selected.includes(o.id)).reduce((s: number, o: any) => s + Number(o.total), 0);
   return (
@@ -62,7 +62,7 @@ export function TripFormPage() {
         <Field label="Route" col="col-md-3"><EntitySelect endpoint="/api/v1/routes" value={form.route} onChange={(v) => setForm({ ...form, route: v })} mapOption={(r) => ({ id: r.id, label: r.name })} placeholder="optional" /></Field>
         <Field label="Notes" col="col-md-6"><input className="form-control" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
       </div></div></div>
-      <div className="card mb-3"><div className="card-header d-flex justify-content-between"><strong>Orders ready to dispatch {form.warehouse ? "in this warehouse" : "(select a warehouse)"}</strong><span className="fs-11 text-muted ms-2">confirmed or already issued by the warehouse</span><span className="fs-13">{selected.length} selected · {money(value)}</span></div>
+      <div className="card mb-3"><div className="card-header d-flex justify-content-between"><strong>Orders ready to dispatch {form.warehouse ? "in this warehouse" : "(select a warehouse)"}</strong><span className="fs-13">{selected.length} selected · {money(value)}</span></div>
         <div className="card-body p-0"><table className="table table-sm mb-0 fs-12"><thead className="table-light"><tr><th><input type="checkbox" className="form-check-input" onChange={(e) => setSelected(e.target.checked ? rows.map((o: any) => o.id) : [])} /></th><th>Order</th><th>Customer</th><th>Status</th><th>Deliver by</th><th>Rep</th><th className="num">Total</th></tr></thead>
           <tbody>{rows.map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}<div className="text-muted fs-11">{o.customer_code}</div></td><td><StatusBadge status={o.status} /></td><td>{date(o.requested_delivery_date)}</td><td>{o.rep_name}</td><td className="num">{money(o.total)}</td></tr>)}{!rows.length && <tr><td colSpan={7} className="text-muted text-center py-3">No orders waiting for dispatch</td></tr>}</tbody></table></div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" disabled={!form.warehouse || !selected.length} onClick={async () => { if (!form.delivery_rep) { toast.error("Please choose the delivery person for this trip."); return; } try { const r = await api.post("/api/v1/trips", { ...form, order_ids: selected }, true); toast.success("Trip created"); nav(`/app/delivery/trips/${r.id}`); } catch (e: any) { toast.error(e.message); } }}>Create trip with {selected.length} order(s)</button></div>
@@ -105,7 +105,7 @@ export function TripDetailPage() {
   const [addSel, setAddSel] = useState<string[]>([]);
   const [deliverNote, setDeliverNote] = useState<any>(null);
   const rec = useQuery({ queryKey: ["trip-rec", id], queryFn: () => api.get(`/api/v1/trips/${id}/reconciliation`), enabled: Boolean(q.data && ["out_for_delivery", "completed", "closed"].includes(q.data.status)) });
-  const candidates = useQuery({ queryKey: ["confirmed-orders", q.data?.warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status: "confirmed", warehouse: q.data?.warehouse, page_size: 200 }), enabled: dlg === "add" });
+  const candidates = useQuery({ queryKey: ["trip-add-orders", q.data?.warehouse], queryFn: () => api.list("/api/v1/sales-orders", { ready_for_trip: 1, warehouse: q.data?.warehouse, page_size: 200 }), enabled: dlg === "add" });
   if (q.isLoading) return <Spinner />;
   const t = q.data;
   if (!t) return null;
@@ -144,7 +144,7 @@ export function TripDetailPage() {
         {pageRights("adjustments").extras.approve && <div className="form-check"><input className="form-check-input" type="checkbox" id="ovr" checked={closeForm.override} onChange={(e) => setCloseForm({ ...closeForm, override: e.target.checked })} /><label className="form-check-label" htmlFor="ovr">Override mismatch / mark pending stops as failed</label></div>}
       </Modal>
       <ConfirmDialog open={dlg === "cancel"} title="Cancel trip" withReason danger confirmText="Cancel trip" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
-      <Modal open={dlg === "add"} title="Add confirmed orders" onClose={() => setDlg(null)} footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!addSel.length} onClick={async () => { await run("assign-orders", { order_ids: addSel }, { success: "Orders added" }); setAddSel([]); setDlg(null); }}>Add {addSel.length}</button></>}>
+      <Modal open={dlg === "add"} title="Add issued orders" onClose={() => setDlg(null)} footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!addSel.length} onClick={async () => { await run("assign-orders", { order_ids: addSel }, { success: "Orders added" }); setAddSel([]); setDlg(null); }}>Add {addSel.length}</button></>}>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{(candidates.data?.results || []).filter((o: any) => !o.trip).map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={addSel.includes(o.id)} onChange={(e) => setAddSel(e.target.checked ? [...addSel, o.id] : addSel.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
       </Modal>
       {deliverNote && <DeliverModal note={deliverNote} onClose={() => setDeliverNote(null)} onDone={() => { setDeliverNote(null); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/trips", id] }); qc.invalidateQueries({ queryKey: ["trip-rec", id] }); }} />}
@@ -276,7 +276,6 @@ export function PickListDetailPage() {
   const p = q.data;
   if (!p) return null;
   const issued = ["issued", "partially_issued"].includes(p.status);
-  const packed = issued || p.status === "picked";
   const closed = issued || p.status === "cancelled";
   const draft = p.status === "open";
   const dirty = Object.keys(edits).length > 0 || (notes !== null && notes !== (p.notes || ""));
@@ -301,7 +300,7 @@ export function PickListDetailPage() {
           {draft && <button className="btn btn-primary" disabled={!!busy || saving || dirty} title={dirty ? "Save your changes first" : ""} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
           {!draft && !issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
           {!closed && !p.trips?.length && pageRights("load_forms").edit && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setCancelling(true)}><i className="ti ti-x me-1" />Cancel</button>}
-          {packed && !p.trips?.length && <button className="btn btn-primary" onClick={() => setDispatch(true)}><i className="ti ti-truck-delivery me-1" />Create dispatch</button>}
+          {issued && !p.trips?.length && <button className="btn btn-primary" onClick={() => setDispatch(true)}><i className="ti ti-truck-delivery me-1" />Create dispatch</button>}
           <button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/pick-lists/${p.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/pick-lists/${p.id}/pdf`, `${p.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
       <div className="card mb-3"><div className="card-body py-2">

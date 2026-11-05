@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db
 def test_order_to_invoice_via_trip(tenant):
     from apps.accounting.services import PaymentService, ReportQueries, account_for
     from apps.delivery.models import Driver, Vehicle
-    from apps.delivery.services import DeliveryService, TripService
+    from apps.delivery.services import DeliveryService, PickListService, TripService
     from apps.inventory.services import StockService
     from apps.sales.models import SalesInvoice
     from apps.sales.services import InvoiceService, OrderService
@@ -27,6 +27,8 @@ def test_order_to_invoice_via_trip(tenant):
         assert (on_hand, reserved) == (Decimal("100"), Decimal("10"))
         driver = Driver.objects.create(name="D", phone="1")
         vehicle = Vehicle.objects.create(reg_no="V-1")
+        form = PickListService.create(warehouse=wh, orders=[order])
+        PickListService.issue(form, issues=[{"line_id": l.id, "qty_issued": l.qty_to_pick} for l in form.lines.all()])
         trip = TripService.create(warehouse=wh, driver=driver, vehicle=vehicle, orders=[order])
         TripService.start(trip)
         order.refresh_from_db()

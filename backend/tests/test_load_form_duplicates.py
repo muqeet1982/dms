@@ -137,6 +137,8 @@ def test_an_order_edited_off_a_shared_trip_gets_its_own_trip_number_back(api, te
 
     wh, v, cust = world
     a, b = _order(api, wh, v, cust), _order(api, wh, v, cust)
+    for o in (a, b):
+        assert _issue(api, _form(api, wh, o).data).status_code == 200
     with tenant_context(tenant, tenant.owner):
         driver, vehicle = Driver.objects.create(name="Akram", phone="03001234567"), Vehicle.objects.create(reg_no="LEB-765")
     def trip(*orders):
@@ -147,8 +149,6 @@ def test_an_order_edited_off_a_shared_trip_gets_its_own_trip_number_back(api, te
     shared = trip(a, b)
     named, other = (a, b) if shared["number"] == a["number"].replace("-SO-", "-TRIP-") else (b, a)
     assert shared["number"] == named["number"].replace("-SO-", "-TRIP-")
-    form = _form(api, wh, named).data
-    assert _issue(api, form).status_code == 200
     edited = api.patch(f"/api/v1/sales-orders/{named['id']}", {"lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
     assert edited.status_code == 200, edited.content
     again = _form(api, wh, named).data
@@ -164,17 +164,15 @@ def test_a_trip_carries_many_orders_though_each_has_its_own_load_form(api, tenan
     from apps.inventory.models import StockMovement
 
     wh, v, cust = world
-    issued = [_order(api, wh, v, cust), _order(api, wh, v, cust)]
-    for o in issued:
+    orders = [_order(api, wh, v, cust) for _ in range(3)]
+    for o in orders:
         assert _issue(api, _form(api, wh, o).data).status_code == 200
-    waiting = _order(api, wh, v, cust)
-    orders = [*issued, waiting]
     with tenant_context(tenant, tenant.owner):
         driver, vehicle = Driver.objects.create(name="Akram", phone="03001234567"), Vehicle.objects.create(reg_no="LEB-765")
         moves = StockMovement.objects.count()
     body = {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id)}
 
-    one_as_text = api.post("/api/v1/trips", {**body, "order_ids": waiting["id"]}, format="json")
+    one_as_text = api.post("/api/v1/trips", {**body, "order_ids": orders[0]["id"]}, format="json")
     assert one_as_text.status_code == 400 and "order_ids" in one_as_text.data["errors"], "the error the New Trip page hit on 5 Nov"
 
     r = api.post("/api/v1/trips", {**body, "order_ids": [o["id"] for o in orders]}, format="json")

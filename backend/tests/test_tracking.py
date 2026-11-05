@@ -241,13 +241,15 @@ def test_a_collection_and_a_delivery_keep_the_accuracy_the_phone_sent(field):
 
         # and the same on a stop a driver signs for
         from apps.delivery.models import Driver, Vehicle
-        from apps.delivery.services import TripService
+        from apps.delivery.services import PickListService, TripService
         from apps.sales.services import OrderService
 
         order = OrderService.create(customer=field["customer"], warehouse=field["warehouse"],
                                     lines=[{"variant": field["variant"], "qty": Decimal("2"), "unit_price": None}],
                                     source="staff")
         OrderService.confirm(order)
+        form = PickListService.create(warehouse=field["warehouse"], orders=[order])
+        PickListService.issue(form, issues=[{"line_id": l.id, "qty_issued": l.qty_to_pick} for l in form.lines.all()])
         trip = TripService.create(warehouse=field["warehouse"], driver=Driver.objects.create(name="D", phone="1"),
                                   vehicle=Vehicle.objects.create(reg_no="V-TRK"), orders=[order])
         TripService.start(trip)

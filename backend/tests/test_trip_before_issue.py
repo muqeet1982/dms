@@ -29,6 +29,22 @@ def world(api, tenant):
     return wh, v, cust, driver, vehicle, o
 
 
+def _stop_from_before_the_rule(tenant, world):
+    """A trip made before 5 Nov 2026 could hold an order the warehouse had not issued. The app can no longer make one."""
+    from apps.delivery.models import DeliveryTrip
+    from apps.delivery.services import DeliveryService
+    from apps.sales.models import SalesOrder
+
+    wh, v, cust, driver, vehicle, o = world
+    with tenant_context(tenant, tenant.owner):
+        order = SalesOrder.objects.get(pk=o["id"])
+        trip = DeliveryTrip.objects.create(number="OLD-TRIP-1", warehouse=wh, driver=driver, vehicle=vehicle, delivery_rep=tenant.owner)
+        DeliveryService.create_note(order, trip=trip, sequence=1)
+        order.trip = trip
+        order.save(update_fields=["trip"])
+    return trip
+
+
 def test_a_trip_opened_before_the_issue_carries_the_issue_once(api, tenant, world):
     from apps.delivery.models import DeliveryNote
     from apps.inventory.services import StockService
@@ -37,9 +53,11 @@ def test_a_trip_opened_before_the_issue_carries_the_issue_once(api, tenant, worl
     wh, v, cust, driver, vehicle, o = world
     with tenant_context(tenant, tenant.owner):
         before = StockService.on_hand(v, wh)[0]
-    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
-                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json")
-    assert trip.status_code == 201, trip.content
+    trip = _stop_from_before_the_rule(tenant, world)
+    refused = api.post(f"/api/v1/trips/{trip.id}/start", {}, format="json")
+    assert refused.status_code == 422 and refused.data["type"] == "not_issued", refused.content
+    with tenant_context(tenant, tenant.owner):
+        assert StockService.on_hand(v, wh)[0] == before, "starting took nothing off the shelf"
     pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
     issued = api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
     assert issued.status_code == 200, issued.content
@@ -51,7 +69,7 @@ def test_a_trip_opened_before_the_issue_carries_the_issue_once(api, tenant, worl
 
     inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {}, format="json")
     assert inv.status_code == 201, inv.content
-    assert api.post(f"/api/v1/trips/{trip.data['id']}/start", {}, format="json").status_code == 200
+    assert api.post(f"/api/v1/trips/{trip.id}/start", {}, format="json").status_code == 200
     note = notes[0]
     assert api.post(f"/api/v1/delivery-notes/{note.pk}/deliver", {"receiver_name": "Shop"}, format="json").status_code == 200
     with tenant_context(tenant, tenant.owner):
@@ -113,13 +131,11 @@ def test_an_invoice_downloads_as_number_and_customer_and_lists_filter_by_custome
 
 def _on_trip_and_issued(api, tenant, world):
     wh, v, cust, driver, vehicle, o = world
-    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
-                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json")
-    assert trip.status_code == 201, trip.content
+    trip = _stop_from_before_the_rule(tenant, world)
     pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
     issued = api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
     assert issued.status_code == 200, issued.content
-    return trip.data
+    return {"id": str(trip.id)}
 
 
 def _offered(api, **query):
@@ -165,3 +181,61 @@ def test_a_failed_delivery_is_neither_offered_nor_billed(api, tenant, world):
     assert failed.status_code == 200, failed.content
     assert _offered(api) == []
     assert api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {}, format="json").status_code in (400, 422)
+
+
+def test_no_load_form_no_issue_no_trip(api, tenant, world):
+    """Owner, 5 Nov 2026, on DD-SO-00119: "there is no load form and stock not issued why then how it has dispatched?"
+    Every way onto a trip takes only what the warehouse has issued, and the lists offer only that."""
+    from apps.delivery.models import DeliveryNote, DeliveryTrip, PickList
+    from apps.delivery.services import PickListService
+    from apps.inventory.models import StockMovement
+
+    wh, v, cust, driver, vehicle, o = world
+    crew = {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id)}
+    offered = lambda: [r["id"] for r in api.get("/api/v1/sales-orders", {"ready_for_trip": 1, "warehouse": str(wh.id)}).data["results"]]
+
+    def refused(r):
+        assert r.status_code == 422 and r.data["type"] == "not_issued", r.content
+
+    with tenant_context(tenant, tenant.owner):
+        moves = StockMovement.objects.count()
+    assert offered() == [], "confirmed, no load form"
+    refused(api.post("/api/v1/trips", {**crew, "order_ids": [o["id"]]}, format="json"))
+    with tenant_context(tenant, tenant.owner):
+        assert not DeliveryTrip.objects.exists(), "the refused trip left nothing behind"
+
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    assert offered() == [], "a load form, nothing issued yet"
+    refused(api.post("/api/v1/trips", {**crew, "order_ids": [o["id"]]}, format="json"))
+    empty = api.post("/api/v1/trips", {**crew, "order_ids": []}, format="json").data
+    refused(api.post(f"/api/v1/trips/{empty['id']}/assign-orders", {"order_ids": [o["id"]]}, format="json"))
+
+    with tenant_context(tenant, tenant.owner):
+        PickListService.complete(PickList.objects.get(pk=pl["id"]))   # packed is not issued
+    packed = api.post(f"/api/v1/pick-lists/{pl['id']}/create-dispatch", crew, format="json")
+    assert packed.status_code == 422 and "issue the load form" in packed.data["detail"], packed.content
+    with tenant_context(tenant, tenant.owner):
+        assert not DeliveryNote.objects.filter(order_id=o["id"]).exists() and StockMovement.objects.count() == moves
+
+    issued = api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    assert issued.status_code == 200, issued.content
+    assert offered() == [o["id"]], "issued: now it is offered"
+    added = api.post(f"/api/v1/trips/{empty['id']}/assign-orders", {"order_ids": [o["id"]]}, format="json")
+    assert added.status_code == 200 and added.data["stops_count"] == 1, added.content
+    assert offered() == [], "on a vehicle: no longer offered"
+
+
+def test_a_started_trip_shows_the_value_it_carries(api, tenant, world):
+    """Start only counted stock it took itself, so 36 of TDN's 37 started trips read a loaded value of 0."""
+    from apps.delivery.models import DeliveryNoteLine
+
+    wh, v, cust, driver, vehicle, o = world
+    pl = api.post(f"/api/v1/sales-orders/{o['id']}/load-form", {"send": True}, format="json").data
+    api.post(f"/api/v1/pick-lists/{pl['id']}/issue", {"issues": [{"line_id": l["id"], "qty_issued": l["qty_to_pick"]} for l in pl["lines"]]}, format="json")
+    trip = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id),
+                                      "delivery_rep": str(tenant.owner.id), "order_ids": [o["id"]]}, format="json").data
+    started = api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json")
+    assert started.status_code == 200, started.content
+    with tenant_context(tenant, tenant.owner):
+        cost = sum(l.qty_loaded * l.unit_cost for l in DeliveryNoteLine.objects.filter(delivery_note__order_id=o["id"]))
+    assert cost > 0 and D(started.data["loaded_value"]) == cost
