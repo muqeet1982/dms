@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.core.audit import AuditService
 from apps.core.events import emit
 from apps.core.exceptions import DomainError
-from apps.core.numbering import derived_number, next_number
+from apps.core.numbering import derived_base, derived_number, next_number, renumber
 from apps.core.tenancy import get_current_tenant, get_current_user
 from apps.inventory.services import StockService
 from apps.sales.models import SalesOrder, StockReservation
@@ -284,7 +284,7 @@ class DeliveryService:
     @transaction.atomic
     def create_note(order, trip=None, lines=None, sequence=0, picklist=None):
         """Delivery note for an order (all pending qty by default). lines: [{order_line, qty, batch?}]"""
-        dn = DeliveryNote.objects.create(number=derived_number(order.number, "delivery_note", DeliveryNote), trip=trip, order=order, customer=order.customer, warehouse=trip.warehouse if trip else (picklist.warehouse if picklist else order.warehouse), sequence=sequence, picklist=picklist)
+        dn = DeliveryNote.objects.create(number=derived_number(order.number, "delivery_note", DeliveryNote, reclaim=True), trip=trip, order=order, customer=order.customer, warehouse=trip.warehouse if trip else (picklist.warehouse if picklist else order.warehouse), sequence=sequence, picklist=picklist)
         tenant = get_current_tenant()
         if lines:
             for l in lines:
@@ -537,9 +537,23 @@ class DeliveryService:
 
 class TripService:
     @staticmethod
+    def _number_for(order):
+        """
+        A trip is numbered after its first order. A trip still waiting to leave that was named after this order but no
+        longer carries it (the order was edited off it) gives the number back and takes that of the order it does
+        carry, so neither reads -2: TDN-TRIP-00149-2, 5 Nov 2026.
+        """
+        holder = DeliveryTrip.objects.filter(number=derived_base(order.number, "trip"), status__in=("planned", "loading")).first()
+        if holder is not None and not holder.delivery_notes.filter(order=order).exclude(status="cancelled").exists():
+            first = holder.delivery_notes.exclude(status="cancelled").select_related("order").order_by("sequence", "created_at").first()
+            if first is not None and not DeliveryTrip.all_objects.filter(tenant_id=holder.tenant_id, number=derived_base(first.order.number, "trip")).exists():
+                renumber(holder, derived_base(first.order.number, "trip"))
+        return derived_number(order.number, "trip", DeliveryTrip, reclaim=True)
+
+    @staticmethod
     @transaction.atomic
     def create(*, warehouse, date=None, driver=None, vehicle=None, rep=None, delivery_rep=None, loader=None, helper=None, route=None, orders=(), notes="", picklist=None):
-        trip = DeliveryTrip.objects.create(number=derived_number(orders[0].number if orders else None, "trip", DeliveryTrip), warehouse=warehouse, date=date or timezone.localdate(), driver=driver, vehicle=vehicle or (driver.default_vehicle if driver else None), rep=rep, delivery_rep=delivery_rep, loader=loader, helper=helper, route=route, notes=notes, picklist=picklist)
+        trip = DeliveryTrip.objects.create(number=TripService._number_for(orders[0]) if orders else derived_number(None, "trip", DeliveryTrip), warehouse=warehouse, date=date or timezone.localdate(), driver=driver, vehicle=vehicle or (driver.default_vehicle if driver else None), rep=rep, delivery_rep=delivery_rep, loader=loader, helper=helper, route=route, notes=notes, picklist=picklist)
         if orders:
             TripService.assign_orders(trip, orders)
         AuditService.log("created", trip, after={"driver": driver.name if driver else None, "vehicle": vehicle.reg_no if vehicle else None})

@@ -59,20 +59,45 @@ def numeric_core(number: str) -> str:
     return re.sub(r"^[^0-9]*", "", number or "")
 
 
-def derived_number(parent_number: str, document_type: str, model, tenant_id=None) -> str:
+def renumber(doc, number: str) -> None:
+    """Give a numbered document a new number, and the stock ledger lines that quote it the same one."""
+    from apps.inventory.models import StockMovement
+
+    type(doc).all_objects.filter(pk=doc.pk).update(number=number)
+    StockMovement.all_objects.filter(reference_id=str(doc.pk)).update(reference_number=number)
+    doc.number = number
+
+
+def derived_base(parent_number: str, document_type: str, tenant_id=None) -> str:
+    """The number a child of this parent is meant to carry: SO-00001 -> DN-00001."""
+    return f"{_prefix_for(document_type, tenant_id or get_current_tenant_id())}{numeric_core(parent_number)}"
+
+
+def derived_number(parent_number: str, document_type: str, model, tenant_id=None, reclaim=False) -> str:
     """
     Give a child document the parent's counter under its own prefix, so a whole chain shares one number:
     SO-00001 -> INV-00001, DN-00001; PO-00001 -> GRN-00001, PB-00001. A second child for the same parent
     (a partial second delivery or invoice) gets a '-2', '-3' … suffix so it stays tied to the parent and unique.
     Falls back to a fresh sequence number when there is no parent to inherit from.
+
+    `reclaim`: a CANCELLED holder hands its number to the document replacing it and stands aside as '-C1' — only a
+    second live document is a real '-2' (owner, 5 Nov 2026).
     """
     tenant_id = tenant_id or get_current_tenant_id()
     if not parent_number:
         return next_number(document_type, tenant_id, unique_for=(model, "number"))
-    base = f"{_prefix_for(document_type, tenant_id)}{numeric_core(parent_number)}"
+    base = derived_base(parent_number, document_type, tenant_id)
     taken = set(model.all_objects.filter(tenant_id=tenant_id, number__startswith=base).values_list("number", flat=True))
     if base not in taken:
         return base
+    if reclaim:
+        holder = model.all_objects.filter(tenant_id=tenant_id, number=base, status="cancelled").first()
+        if holder is not None:
+            n = 1
+            while f"{base}-C{n}" in taken:
+                n += 1
+            renumber(holder, f"{base}-C{n}")
+            return base
     n = 2
     while f"{base}-{n}" in taken:
         n += 1

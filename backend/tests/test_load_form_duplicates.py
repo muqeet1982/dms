@@ -118,9 +118,59 @@ def test_an_issued_order_edited_and_issued_again_keeps_its_number_and_leaves_onc
     assert api.get(f"/api/v1/pick-lists/{again.data['id']}").data["delivery_note_numbers"] == [], "the cancelled note is not this issue's"
     issued = _issue(api, again.data)
     assert issued.status_code == 200, issued.content
-    assert len(issued.data["delivery_note_numbers"]) == 1
+    note = issued.data["delivery_note_numbers"]
+    assert [n["number"] for n in note] == [order["number"].replace("-SO-", "-DN-")], "the delivery note keeps its number too"
     with tenant_context(tenant, tenant.owner):
         assert sum(s.qty_on_hand for s in StockLevel.objects.filter(variant=v)) == D("95"), "5 out, once"
+        from apps.delivery.models import DeliveryNote
+        from apps.inventory.models import StockMovement
+
+        old = DeliveryNote.objects.get(order_id=order["id"], status="cancelled")
+        assert old.number == note[0]["number"] + "-C1", "the cancelled one stands aside"
+        moves = StockMovement.objects.filter(reference_id=str(old.pk))
+        assert moves.exists() and not moves.exclude(reference_number=old.number).exists(), "and the stock ledger says so"
+
+
+def test_an_order_edited_off_a_shared_trip_gets_its_own_trip_number_back(api, tenant, world):
+    """TDN-TRIP-00149 still carried SO-00133 after SO-00149 was edited off it, so SO-00149's new trip read -2."""
+    from apps.delivery.models import Driver, Vehicle
+
+    wh, v, cust = world
+    a, b = _order(api, wh, v, cust), _order(api, wh, v, cust)
+    with tenant_context(tenant, tenant.owner):
+        driver, vehicle = Driver.objects.create(name="Akram", phone="03001234567"), Vehicle.objects.create(reg_no="LEB-765")
+    def trip(*orders):
+        r = api.post("/api/v1/trips", {"warehouse": str(wh.id), "driver": str(driver.id), "vehicle": str(vehicle.id), "delivery_rep": str(tenant.owner.id),
+                                       "order_ids": [o["id"] for o in orders]}, format="json")
+        assert r.status_code == 201, r.content
+        return r.data
+    shared = trip(a, b)
+    named, other = (a, b) if shared["number"] == a["number"].replace("-SO-", "-TRIP-") else (b, a)
+    assert shared["number"] == named["number"].replace("-SO-", "-TRIP-")
+    form = _form(api, wh, named).data
+    assert _issue(api, form).status_code == 200
+    edited = api.patch(f"/api/v1/sales-orders/{named['id']}", {"lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
+    assert edited.status_code == 200, edited.content
+    again = _form(api, wh, named).data
+    assert _issue(api, again).status_code == 200
+    mine = trip(named)
+    assert mine["number"] == named["number"].replace("-SO-", "-TRIP-"), "no -2"
+    assert api.get(f"/api/v1/trips/{shared['id']}").data["number"] == other["number"].replace("-SO-", "-TRIP-"), "the old trip takes the order it carries"
+
+
+def test_a_real_second_delivery_still_reads_2(api, tenant, world):
+    from apps.core.numbering import derived_number
+    from apps.delivery.models import DeliveryNote
+    from apps.delivery.services import DeliveryService
+    from apps.sales.models import SalesOrder, SalesOrderLine
+
+    wh, v, cust = world
+    order = _order(api, wh, v, cust)
+    with tenant_context(tenant, tenant.owner):
+        so, ol = SalesOrder.objects.get(pk=order["id"]), SalesOrderLine.objects.get(order_id=order["id"])
+        first = DeliveryService.create_note(so, lines=[{"order_line": ol, "qty": D("1")}])
+        second = DeliveryService.create_note(so, lines=[{"order_line": ol, "qty": D("1")}])
+        assert first.number == order["number"].replace("-SO-", "-DN-") and second.number == first.number + "-2"
 
 
 def test_two_batches_of_one_item_count_in_full_and_cannot_go_out_twice(api, tenant, world):
