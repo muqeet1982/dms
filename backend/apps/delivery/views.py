@@ -139,6 +139,7 @@ class PickListViewSet(DocumentViewSet):
         "picks": "delivery.change_load_form",
         "scans": "delivery.change_load_form",
         "send": "delivery.change_load_form",
+        "cancel": "delivery.change_load_form",
         "lines": "delivery.change_load_form",
         "issue": extra_perm("load_forms", "issue"),
         "complete": "delivery.change_load_form",
@@ -174,6 +175,11 @@ class PickListViewSet(DocumentViewSet):
     def send(self, request, pk=None):
         """Hand the load form over to the warehouse."""
         return Response(PickListSerializer(PickListService.send(self.get_object()), context={"request": request}).data)
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Take back a load form nothing has left the warehouse on: {reason?}. Its orders are free for another one."""
+        return Response(PickListSerializer(PickListService.cancel(self.get_object(), request.data.get("reason", "")), context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     def issue(self, request, pk=None):

@@ -237,13 +237,23 @@ export function PickListFormPage() {
   const warehouses = useWarehouses();
   const [warehouse, setWarehouse] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status: "confirmed", warehouse: warehouse || undefined, page_size: 200 }), enabled: Boolean(warehouse) });
+  const [creating, setCreating] = useState(false);
+  const qc = useQueryClient();
+  const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status: "confirmed", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
+  // an order that has since gone onto a load form leaves the list, and must leave the selection with it
+  useEffect(() => { if (orders.data) setSelected((s) => s.filter((id) => orders.data.results.some((o: any) => o.id === id))); }, [orders.data]);
+  const create = async () => {
+    setCreating(true);
+    try { const r = await api.post("/api/v1/pick-lists", { warehouse, orders: selected }, true); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); nav(`/app/delivery/pick-lists/${r.id}`); }
+    catch (e: any) { toast.error(e.message); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); }
+    finally { setCreating(false); }
+  };
   return (
     <>
       <PageHeader title="New load form" crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected([]); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{orders.data?.results.map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
-        <div className="text-end"><button className="btn btn-primary" disabled={!selected.length} onClick={async () => { try { const r = await api.post("/api/v1/pick-lists", { warehouse, orders: selected }, true); nav(`/app/delivery/pick-lists/${r.id}`); } catch (e: any) { toast.error(e.message); } }}>Create load form</button></div></div></div>
+        <div className="text-end"><button className="btn btn-primary" disabled={!selected.length || creating} onClick={create}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
     </>
   );
 }
@@ -256,6 +266,7 @@ export function PickListDetailPage() {
   const [scan, setScan] = useState("");
   const [dispatch, setDispatch] = useState(false);
   const [issuing, setIssuing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   // a saved, unsent load form is the office's to correct (owner, 27 Oct 2026): quantities and notes are edited
   // here and saved; only Send hands it to the warehouse
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -266,6 +277,7 @@ export function PickListDetailPage() {
   if (!p) return null;
   const issued = ["issued", "partially_issued"].includes(p.status);
   const packed = issued || p.status === "picked";
+  const closed = issued || p.status === "cancelled";
   const draft = p.status === "open";
   const dirty = Object.keys(edits).length > 0 || (notes !== null && notes !== (p.notes || ""));
   const save = async () => {
@@ -282,11 +294,13 @@ export function PickListDetailPage() {
     <>
       <DispatchModal open={dispatch} onClose={() => setDispatch(false)} picklist={p} onCreated={(t) => nav(`/app/delivery/trips/${t.id}`)} />
       <IssueModal open={issuing} onClose={() => setIssuing(false)} picklist={p} onIssued={() => { setIssuing(false); q.refetch(); }} />
+      <ConfirmDialog open={cancelling} title={`Cancel ${p.number}`} withReason danger confirmText="Cancel load form" onClose={() => setCancelling(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancelling(false); }} />
       <PageHeader title={p.number} badge={<StatusBadge status={p.status} label={p.status_label} />} crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: p.number }]}
         actions={<>
           {draft && <button className="btn btn-outline-primary" disabled={saving || !dirty} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save"}</button>}
           {draft && <button className="btn btn-primary" disabled={!!busy || saving || dirty} title={dirty ? "Save your changes first" : ""} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
           {!draft && !issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
+          {!closed && !p.trips?.length && pageRights("load_forms").edit && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setCancelling(true)}><i className="ti ti-x me-1" />Cancel</button>}
           {packed && !p.trips?.length && <button className="btn btn-primary" onClick={() => setDispatch(true)}><i className="ti ti-truck-delivery me-1" />Create dispatch</button>}
           <button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/pick-lists/${p.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/pick-lists/${p.id}/pdf`, `${p.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -301,7 +315,7 @@ export function PickListDetailPage() {
       </div></div>
       {draft && <Alert kind="info"><strong>Saved — not sent to the warehouse yet.</strong> Check the quantities below and change any that are wrong (0 takes a line off), press <strong>Save</strong>, then <strong>Send to warehouse</strong>.</Alert>}
       {draft && <div className="card mb-3"><div className="card-body py-2"><label className="form-label fs-12 mb-1">Notes for the warehouse</label><textarea className="form-control form-control-sm" rows={2} value={notes ?? (p.notes || "")} onChange={(e) => setNotes(e.target.value)} placeholder="optional" /></div></div>}
-      {!issued && !draft && <div className="card mb-3 scanner-mode"><div className="card-body"><label className="form-label">Scan items (each scan adds 1 base unit or one packaging)</label><input className="form-control" autoFocus placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /></div></div>}
+      {!closed && !draft && <div className="card mb-3 scanner-mode"><div className="card-body"><label className="form-label">Scan items (each scan adds 1 base unit or one packaging)</label><input className="form-control" autoFocus placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /></div></div>}
       {p.orders?.length === 1 && <WorkflowStepper orderId={p.orders[0]} compact />}
       <div className="card"><div className="card-body p-0"><table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>Item</th><th>Batch</th><th>Order</th><th className="num">Requested</th><th className="num">Issued</th><th /></tr></thead>
         <tbody>{p.lines.map((l: any) => {
@@ -315,7 +329,7 @@ export function PickListDetailPage() {
             <td className="num">{qty(l.qty_picked)}</td>
             <td className="text-end">{draft
               ? <button className="btn btn-sm btn-outline-danger" title="Take this line off" onClick={() => setEdits({ ...edits, [l.id]: "0" })}><i className="ti ti-x" /></button>
-              : !issued && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td>
+              : !closed && <button className="btn btn-sm btn-outline-primary" onClick={() => run("picks", { picks: [{ line_id: l.id, qty_picked: l.qty_to_pick }] }, { silent: true })}>Pick all</button>}</td>
           </tr>;
         })}</tbody></table></div></div>
     </>

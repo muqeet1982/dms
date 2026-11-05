@@ -23,6 +23,14 @@ class PickListService:
         orders = [o for o in orders if o.status == "confirmed" and o.warehouse_id == warehouse.pk]
         if not orders:
             raise DomainError("Select confirmed orders from this warehouse.")
+        # one live load form per order. An order stays "confirmed" until its stock is issued, so it could be picked again
+        # on Load forms → New, or twice by a double click: TDN-PL-00132, 00155 and 00158 each came out twice (4 Nov 2026).
+        # The lock makes a second click wait for the first to finish, then find its form.
+        list(SalesOrder.objects.select_for_update().filter(pk__in=[o.pk for o in orders]).order_by("pk").values_list("pk", flat=True))
+        held = PickListService.forms_holding(orders)
+        if held:
+            words = "; ".join(f"{', '.join(sorted(nums))} {'is' if len(nums) == 1 else 'are'} already on load form {form.number}" for form, nums in held.items())
+            raise DomainError(f"{words}.", code="duplicate", errors={"picklist": [str(form.pk) for form in held]})
         pl = PickList.objects.create(number=derived_number(orders[0].number, "pick_list", PickList), warehouse=warehouse, notes=notes)
         pl.orders.set(orders)
         tenant = get_current_tenant()
@@ -37,6 +45,33 @@ class PickListService:
                 if short > 0:
                     PickListLine.objects.create(picklist=pl, order_line=line, variant=line.variant, qty_to_pick=short)
         AuditService.log("created", pl, after={"orders": [o.number for o in orders]})
+        return pl
+
+    @staticmethod
+    def forms_holding(orders):
+        """{live load form: order numbers} — the forms still carrying goods for these orders."""
+        held = {}
+        for line in PickListLine.objects.filter(order_line__order__in=orders).exclude(picklist__status="cancelled").select_related("picklist", "order_line__order"):
+            held.setdefault(line.picklist, set()).add(line.order_line.order.number)
+        return held
+
+    @staticmethod
+    @transaction.atomic
+    def cancel(pl, reason=""):
+        """
+        Take back a load form nothing has left the warehouse on (owner, 5 Nov 2026). No stock moves — stock only leaves at
+        issue — so its orders are simply free for another load form. Its lines and orders stay on it as the record.
+        """
+        if pl.status == "cancelled":
+            raise DomainError("This load form is already cancelled.")
+        if pl.status in ("issued", "partially_issued") or pl.delivery_notes.filter(stock_out_done=True).exists():
+            raise DomainError("Stock has already left on this load form, so it cannot be cancelled.", code="already_issued")
+        if pl.trips.exclude(status="cancelled").exists():
+            raise DomainError("This load form is on a dispatch — cancel the dispatch first.", code="on_trip")
+        before = pl.status
+        pl.status = "cancelled"
+        pl.save(update_fields=["status", "updated_at"])
+        AuditService.log("status.cancelled", pl, before={"status": before}, after={"reason": reason})
         return pl
 
     @staticmethod
@@ -90,6 +125,8 @@ class PickListService:
         """picks: [{line_id, qty_picked, batch?, scanned?}]"""
         if pl.status == "picked":
             raise DomainError("Pick list already completed.")
+        if pl.status == "cancelled":
+            raise DomainError("This load form was cancelled.")
         if pl.status == "open":
             PickListService.send(pl)   # picking it is the warehouse having it
         from apps.inventory.models import Batch
@@ -113,6 +150,8 @@ class PickListService:
         """Batch endpoint for scanner mode: [{code, qty}] → increments matching lines."""
         from apps.catalog.services import BarcodeParser
 
+        if pl.status == "cancelled":
+            raise DomainError("This load form was cancelled.")
         if pl.status == "open":
             PickListService.send(pl)
 
@@ -218,6 +257,8 @@ class PickListService:
     @transaction.atomic
     def complete(pl):
         """Kept for the older "picked" flow (scanner mode): marks the form packed without issuing stock."""
+        if pl.status == "cancelled":
+            raise DomainError("This load form was cancelled.")
         pl.status = "picked"
         pl.picked_at = timezone.now()
         pl.save(update_fields=["status", "picked_at", "updated_at"])
@@ -260,16 +301,24 @@ class DeliveryService:
             return
         # an order line never leaves the warehouse beyond what was ordered — the guard that would have stopped
         # TDN-SO-00044 going out twice through two delivery notes (27 Oct 2026)
+        taking = {}
         for line in dn.lines.select_related("order_line", "variant"):
             ol = line.order_line
-            if ol is not None and line.qty_loaded > 0 and ol.qty_dispatched + line.qty_loaded > ol.qty_ordered + ol.free_qty:
+            if ol is None or line.qty_loaded <= 0:
+                continue
+            taking[ol.pk] = taking.get(ol.pk, Decimal("0")) + line.qty_loaded   # two batches of one item are two lines
+            if ol.qty_dispatched + taking[ol.pk] > ol.qty_ordered + ol.free_qty:
                 raise DomainError(
                     f"{line.variant.name} on {dn.order.number} is already out of the warehouse ({ol.qty_dispatched:g} of "
-                    f"{ol.qty_ordered + ol.free_qty:g}) — taking {line.qty_loaded:g} more would issue it twice.", code="already_issued")
+                    f"{ol.qty_ordered + ol.free_qty:g}) — taking {taking[ol.pk]:g} more would issue it twice.", code="already_issued")
         value = Decimal("0")
+        order_lines = {}
         for line in dn.lines.select_related("variant", "variant__product", "batch", "order_line"):
             if line.qty_loaded <= 0:
                 continue
+            # one copy per order line: each batch's line brought its own, and the last one's count overwrote the others
+            # (TDN-SO-00133: 1 + 2 issued, dispatched 2)
+            line.order_line = order_lines.setdefault(line.order_line_id, line.order_line)
             # release reservation for this order line first
             for r in StockReservation.objects.filter(order_line=line.order_line, released=False):
                 StockService.unreserve(line.variant, r.warehouse, r.qty, r.batch)

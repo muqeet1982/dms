@@ -97,6 +97,10 @@ class SalesOrderViewSet(DocumentViewSet):
             qs = qs.filter(order_date__lte=p["date_to"])
         if p.get("open") == "1":
             qs = qs.filter(status__in=SalesOrder.OPEN_STATUSES)
+        if p.get("no_load_form") == "1":   # what Load forms → New offers: not an order a live load form already carries
+            from apps.delivery.models import PickListLine
+
+            qs = qs.exclude(pk__in=PickListLine.objects.exclude(picklist__status="cancelled").exclude(order_line=None).values("order_line__order_id"))
         if p.get("status__in"):
             qs = qs.filter(status__in=[s.strip() for s in p["status__in"].split(",") if s.strip()])
         if p.get("uninvoiced") == "1":
@@ -244,9 +248,6 @@ class SalesOrderViewSet(DocumentViewSet):
         if order.warehouse_id is None:
             raise DomainError("Set the warehouse on the order first.")
         DeliveryService.refuse_second_delivery(order)
-        existing = order.pick_lists.exclude(status="cancelled").first()
-        if existing is not None:
-            raise DomainError(f"Load form {existing.number} already covers this order.", code="duplicate", errors={"picklist": [str(existing.pk)]})
         pl = PickListService.create(warehouse=order.warehouse, orders=[order], notes=request.data.get("notes", ""))
         if request.data.get("send", False) in (True, "true", "1", 1):
             PickListService.send(pl)
