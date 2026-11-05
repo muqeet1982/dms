@@ -86,17 +86,27 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
 
     # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
-    credit = defaultdict(lambda: Z)
+    credit, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()
     for l in lines:
+        rep = str(l.invoice.rep_id)
         if _sold_on_credit(l.invoice):
-            credit[str(l.invoice.rep_id)] += _net_sales(l)
+            credit[rep] += _net_sales(l)
+        if l.invoice_id not in counted:
+            # the money that has come in on these invoices and what is still owed on them (owner, 5 Nov 2026). What a
+            # credit note settled is neither: those goods came back, no money did.
+            counted.add(l.invoice_id)
+            received[rep] += l.invoice.cash_paid
+            outstanding[rep] += l.invoice.balance
     for r in out["rows"]:
         r["credit_sales"] = str(credit[r["key"]])
         r["cash_sales"] = str(Decimal(r["sales"]) - credit[r["key"]])
+        r["received"] = str(received[r["key"]])
+        r["outstanding"] = str(outstanding[r["key"]])
     sales = out["columns"].index("sales") + 1
-    out["columns"][sales:sales] = ["cash_sales", "credit_sales"]
+    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "received", "outstanding"]
     all_credit = sum(credit.values(), Z)
     out["totals"] = {"sales": out["totals"]["sales"], "cash_sales": str(Decimal(out["totals"]["sales"]) - all_credit), "credit_sales": str(all_credit),
+                     "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
                      **{k: v for k, v in out["totals"].items() if k != "sales"}}
     return out
 

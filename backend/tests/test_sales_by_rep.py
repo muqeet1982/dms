@@ -322,7 +322,7 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
     assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
 
     summary = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat()}).data
-    assert summary["columns"] == ["label", "qty", "sales", "cash_sales", "credit_sales", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with cash and credit"
+    assert summary["columns"] == ["label", "qty", "sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with the additions"
     assert summary["totals"] and not summary.get("totals_in_rows") and not summary.get("header_groups")
     row = next(r for r in summary["rows"] if r["label"] == "Talha")
     assert D(row["qty"]) == 4 and D(row["sales"]) == 400 and row["invoices"] == 1
@@ -421,3 +421,47 @@ def test_an_older_order_that_never_said_goes_by_the_customers_terms(api, tenant,
 def test_the_other_sales_reports_do_not_grow_the_columns(api, tenant):
     on = timezone.localdate().isoformat()
     assert "cash_sales" not in api.get("/api/v1/reports/sales_by_customer", {"date_from": on, "date_to": on}).data["columns"]
+
+
+def test_the_main_report_shows_what_came_in_and_what_is_still_owed(api, tenant, world):
+    """The owner said yes to these on 5 Nov 2026: Cash Sales is how an order was taken, not money received."""
+    from apps.accounting.services import PaymentService
+    from apps.sales.models import SalesInvoice
+
+    w = world
+    first = _billed(api, tenant, w, w["rep"], "4", "cash")      # 400
+    _billed(api, tenant, w, w["rep"], "2", "credit")            # 200
+    third = _billed(api, tenant, w, w["rep"], "1", "cash")      # 100
+    _billed(api, tenant, w, w["other"], "3", "cash")            # 300, nothing paid
+    with tenant_context(tenant, tenant.owner):
+        inv = SalesInvoice.objects.get(order_id=first.pk)
+        PaymentService.record(direction="in", partner_type="customer", partner_id=str(w["cust"].id), amount=D("150"), method="cash",
+                              allocations=[{"document_type": "sales_invoice", "document_id": str(inv.pk), "amount": D("150")}], auto_allocate=False)
+        # 100 settled by a credit note: the goods came back, no money did
+        SalesInvoice.objects.filter(order_id=third.pk).update(paid_amount=D("100"), credited_amount=D("100"), status="returned")
+
+    data = _summary(api)
+    talha = next(r for r in data["rows"] if r["label"] == "Talha")
+    anza = next(r for r in data["rows"] if r["label"] == "Anza")
+    assert D(talha["received"]) == D("150") and D(talha["outstanding"]) == D("450"), "250 + 200 still owed, the returned 100 is neither"
+    assert D(anza["received"]) == 0 and D(anza["outstanding"]) == D("300")
+    assert D(talha["invoices"]) == 3, "each invoice counted once, however many lines it has"
+    t = data["totals"]
+    assert D(t["received"]) == D("150") and D(t["outstanding"]) == D("750")
+    assert list(t)[:5] == ["sales", "cash_sales", "credit_sales", "received", "outstanding"]
+
+
+def test_an_invoice_with_many_lines_is_counted_once(api, tenant, world):
+    from apps.sales.services import OrderService
+
+    from .conftest import issue_order
+
+    w = world
+    with tenant_context(tenant, tenant.owner):
+        order = OrderService.create(customer=w["cust"], warehouse=w["wh"], rep=w["rep"], source="rep_app", payment_mode="cash",
+                                    lines=[{"variant": w["tinta"], "qty": D("2"), "unit_price": None}, {"variant": w["developer"], "qty": D("2"), "unit_price": None}])
+        OrderService.confirm(order)
+    issue_order(api, order.pk)
+    assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
+    row = next(r for r in _summary(api)["rows"] if r["label"] == "Talha")
+    assert D(row["sales"]) == D("300") and D(row["outstanding"]) == D("300"), "not 600"

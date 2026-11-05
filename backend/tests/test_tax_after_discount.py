@@ -74,6 +74,24 @@ def test_a_3rd_schedule_item_is_taxed_on_the_amount_whatever_its_mrp(api, tenant
     assert D(inv["total"]) == D(order["total"])
 
 
+def test_advance_income_tax_comes_last_on_the_grand_total(api, tenant, world):
+    """Owner, 5 Nov 2026: "advance income tax will be charged on grand total". T.P less tax, less discount, plus tax is the
+    Grand Total; the customer's % is charged on that, on the order and on its invoice alike."""
+    from apps.partners.models import Customer
+
+    wh, cust, v = world
+    with tenant_context(tenant, tenant.owner):
+        Customer.objects.filter(pk=cust.pk).update(advance_income_tax_rate=D("0.5"))
+    order = _order(api, wh, cust, v, qty="10", discount="5")
+    assert D(order["advance_tax_total"]) == D("59.61") and D(order["total"]) == D("11982.11"), "0.5% of 11,922.50"
+    inv = _invoice(api, order)
+    assert D(inv["subtotal"]) == D("10040") and D(inv["discount"]) == D("502") and D(inv["tax1_total"]) == D("2384.50")
+    assert D(inv["advance_tax_rate"]) == D("0.5") and D(inv["advance_tax_total"]) == D("59.61") and D(inv["total"]) == D("11982.11")
+
+    plain = _invoice(api, _order(api, wh, cust, v, qty="10", discount="5", charge_tax=False), apply_tax=False)
+    assert D(plain["advance_tax_total"]) == D("59.61"), "a plain invoice too: its Grand Total is the same 11,922.50"
+
+
 def test_with_no_discount_the_line_comes_back_to_its_tp(api, tenant, world):
     wh, cust, v = world
     _third_schedule(tenant, v, D("1495"))
