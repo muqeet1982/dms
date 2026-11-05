@@ -1,5 +1,5 @@
 """
-One live load form per order. On 4 Nov 2026 TDN-PL-00132, 00155 and 00158 each came out twice: Load forms → New kept
+One load form, one order, its number. On 4 Nov 2026 TDN-PL-00132, 00155 and 00158 each came out twice: Load forms → New kept
 listing an order until its stock was issued, its button stayed live while a form was being made, and nothing on the
 server said no. Owner, 5 Nov: "why 2 load form … find root cause and fix the issue."
 """
@@ -38,19 +38,29 @@ def _new_page(api, wh):
     return [o["id"] for o in api.get("/api/v1/sales-orders", {"status": "confirmed", "warehouse": str(wh.id), "no_load_form": 1}).data["results"]]
 
 
-def test_an_order_cannot_go_on_a_second_load_form_and_leaves_the_new_page(api, tenant, world):
+def test_a_load_form_is_for_one_order_and_carries_its_number(api, tenant, world):
+    """Owner, 5 Nov 2026: "why TDN-PL-00155-2 -2?? only limit one its own order that is it." """
+    wh, v, cust = world
+    a, b = _order(api, wh, v, cust), _order(api, wh, v, cust)
+    both = _form(api, wh, a, b)
+    assert both.status_code in (400, 422) and both.data["type"] == "one_order_per_load_form", both.content
+    assert api.get("/api/v1/pick-lists").data["count"] == 0
+    one = _form(api, wh, b)
+    assert one.status_code == 201, one.content
+    assert one.data["number"] == b["number"].replace("-SO-", "-PL-") and one.data["order_numbers"] == [b["number"]]
+
+
+def test_an_order_cannot_get_a_second_load_form_and_leaves_the_new_page(api, tenant, world):
     wh, v, cust = world
     a, b = _order(api, wh, v, cust), _order(api, wh, v, cust)
     assert sorted(_new_page(api, wh)) == sorted([a["id"], b["id"]])
-    first = _form(api, wh, a, b)
+    first = _form(api, wh, a)
     assert first.status_code == 201, first.content
-    assert _new_page(api, wh) == [], "both are on a load form now, so New no longer offers them"
+    assert _new_page(api, wh) == [b["id"]], "it has its load form, so New no longer offers it"
 
-    again = _form(api, wh, a, b)
+    again = _form(api, wh, a)
     assert again.status_code in (400, 422) and again.data["type"] == "duplicate", again.content
     assert a["number"] in again.data["detail"] and first.data["number"] in again.data["detail"]
-    one = _form(api, wh, b)
-    assert one.status_code in (400, 422) and "is already on" in one.data["detail"], "alone it is refused too (how SO-00133 got a third form)"
     button = api.post(f"/api/v1/sales-orders/{a['id']}/load-form", {}, format="json")
     assert button.status_code in (400, 422) and button.data["type"] == "duplicate"
     assert api.get("/api/v1/pick-lists").data["count"] == 1, "nothing was left behind"
@@ -78,6 +88,8 @@ def test_cancelling_a_load_form_frees_its_orders_and_closes_it(api, tenant, worl
     assert _new_page(api, wh) == [order["id"]], "the order is free again"
     next_form = _form(api, wh, order)
     assert next_form.status_code == 201, next_form.content
+    assert next_form.data["number"] == form["number"] and next_form.data["status"] == "open", "the same form again — no -2"
+    assert next_form.data["sent_at"] is None and all(D(l["qty_picked"]) == 0 for l in next_form.data["lines"]), "and it starts clean"
     assert _issue(api, next_form.data).status_code == 200
     assert api.get(f"/api/v1/sales-orders/{order['id']}").data["status"] == "issued"
 
@@ -90,15 +102,25 @@ def test_a_load_form_stock_has_left_on_cannot_be_cancelled(api, tenant, world):
     assert r.status_code in (400, 422) and r.data["type"] == "already_issued", r.content
 
 
-def test_an_order_edited_off_a_shared_load_form_can_get_a_new_one(api, tenant, world):
+def test_an_issued_order_edited_and_issued_again_keeps_its_number_and_leaves_once(api, tenant, world):
+    """How TDN-PL-00149-2 came about, 5 Nov 2026: edited after issue, the form was cancelled and the next one grew a -2."""
+    from apps.inventory.models import StockLevel
+
     wh, v, cust = world
-    a, b = _order(api, wh, v, cust), _order(api, wh, v, cust)
-    first = _form(api, wh, a, b).data
-    edited = api.patch(f"/api/v1/sales-orders/{a['id']}", {"lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
+    order = _order(api, wh, v, cust)
+    form = _form(api, wh, order).data
+    assert _issue(api, form).status_code == 200
+    edited = api.patch(f"/api/v1/sales-orders/{order['id']}", {"lines": [{"variant": str(v.id), "qty": "5"}]}, format="json")
     assert edited.status_code == 200, edited.content
-    assert api.get(f"/api/v1/pick-lists/{first['id']}").data["status"] != "cancelled", "the other order is still on it"
-    assert _new_page(api, wh) == [a["id"]]
-    assert _form(api, wh, a).status_code == 201
+    assert api.get(f"/api/v1/pick-lists/{form['id']}").data["status"] == "cancelled"
+    again = _form(api, wh, order)
+    assert again.status_code == 201 and again.data["number"] == form["number"], again.content
+    assert api.get(f"/api/v1/pick-lists/{again.data['id']}").data["delivery_note_numbers"] == [], "the cancelled note is not this issue's"
+    issued = _issue(api, again.data)
+    assert issued.status_code == 200, issued.content
+    assert len(issued.data["delivery_note_numbers"]) == 1
+    with tenant_context(tenant, tenant.owner):
+        assert sum(s.qty_on_hand for s in StockLevel.objects.filter(variant=v)) == D("95"), "5 out, once"
 
 
 def test_two_batches_of_one_item_count_in_full_and_cannot_go_out_twice(api, tenant, world):

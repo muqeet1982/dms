@@ -68,7 +68,7 @@ class PickListSerializer(serializers.ModelSerializer):
         return [o.number for o in obj.orders.all()]
 
     def get_delivery_note_numbers(self, obj):
-        return [{"id": str(d.id), "number": d.number} for d in obj.delivery_notes.all()]
+        return [{"id": str(d.id), "number": d.number} for d in obj.delivery_notes.all() if d.status != "cancelled"]
 
 
 class DeliveryNoteLineSerializer(serializers.ModelSerializer):

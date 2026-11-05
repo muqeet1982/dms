@@ -64,7 +64,7 @@ export function TripFormPage() {
       </div></div></div>
       <div className="card mb-3"><div className="card-header d-flex justify-content-between"><strong>Orders ready to dispatch {form.warehouse ? "in this warehouse" : "(select a warehouse)"}</strong><span className="fs-11 text-muted ms-2">confirmed or already issued by the warehouse</span><span className="fs-13">{selected.length} selected · {money(value)}</span></div>
         <div className="card-body p-0"><table className="table table-sm mb-0 fs-12"><thead className="table-light"><tr><th><input type="checkbox" className="form-check-input" onChange={(e) => setSelected(e.target.checked ? rows.map((o: any) => o.id) : [])} /></th><th>Order</th><th>Customer</th><th>Status</th><th>Deliver by</th><th>Rep</th><th className="num">Total</th></tr></thead>
-          <tbody>{rows.map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}<div className="text-muted fs-11">{o.customer_code}</div></td><td><StatusBadge status={o.status} /></td><td>{date(o.requested_delivery_date)}</td><td>{o.rep_name}</td><td className="num">{money(o.total)}</td></tr>)}{!rows.length && <tr><td colSpan={7} className="text-muted text-center py-3">No orders waiting for dispatch</td></tr>}</tbody></table></div></div>
+          <tbody>{rows.map((o: any) => <tr key={o.id}><td><input type="radio" name="load-form-order" className="form-check-input" checked={selected === o.id} onChange={() => setSelected(o.id)} /></td><td>{o.number}</td><td>{o.customer_name}<div className="text-muted fs-11">{o.customer_code}</div></td><td><StatusBadge status={o.status} /></td><td>{date(o.requested_delivery_date)}</td><td>{o.rep_name}</td><td className="num">{money(o.total)}</td></tr>)}{!rows.length && <tr><td colSpan={7} className="text-muted text-center py-3">No orders waiting for dispatch</td></tr>}</tbody></table></div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" disabled={!form.warehouse || !selected.length} onClick={async () => { if (!form.delivery_rep) { toast.error("Please choose the delivery person for this trip."); return; } try { const r = await api.post("/api/v1/trips", { ...form, order_ids: selected }, true); toast.success("Trip created"); nav(`/app/delivery/trips/${r.id}`); } catch (e: any) { toast.error(e.message); } }}>Create trip with {selected.length} order(s)</button></div>
     </>
   );
@@ -236,24 +236,24 @@ export function PickListFormPage() {
   const nav = useNavigate();
   const warehouses = useWarehouses();
   const [warehouse, setWarehouse] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
   const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status: "confirmed", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
-  // an order that has since gone onto a load form leaves the list, and must leave the selection with it
-  useEffect(() => { if (orders.data) setSelected((s) => s.filter((id) => orders.data.results.some((o: any) => o.id === id))); }, [orders.data]);
+  // an order that has since got its load form leaves the list, and must leave the selection with it
+  useEffect(() => { if (orders.data) setSelected((s) => (orders.data.results.some((o: any) => o.id === s) ? s : null)); }, [orders.data]);
   const create = async () => {
     setCreating(true);
-    try { const r = await api.post("/api/v1/pick-lists", { warehouse, orders: selected }, true); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); nav(`/app/delivery/pick-lists/${r.id}`); }
+    try { const r = await api.post("/api/v1/pick-lists", { warehouse, orders: [selected] }, true); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); nav(`/app/delivery/pick-lists/${r.id}`); }
     catch (e: any) { toast.error(e.message); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); }
     finally { setCreating(false); }
   };
   return (
     <>
       <PageHeader title="New load form" crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: "New" }]} />
-      <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected([]); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
-        <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{orders.data?.results.map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
-        <div className="text-end"><button className="btn btn-primary" disabled={!selected.length || creating} onClick={create}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
+      <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected(null); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
+        <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{orders.data?.results.map((o: any) => <tr key={o.id}><td><input type="radio" name="load-form-order" className="form-check-input" checked={selected === o.id} onChange={() => setSelected(o.id)} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
+        <div className="text-end"><button className="btn btn-primary" disabled={!selected || creating} onClick={create}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
     </>
   );
 }
@@ -307,7 +307,7 @@ export function PickListDetailPage() {
       <div className="card mb-3"><div className="card-body py-2">
         <div className="row g-3 fs-12">
           <div className="col-md-3"><div className="text-muted">Warehouse</div><div className="fw-medium">{p.warehouse_name}</div></div>
-          <div className="col-md-3"><div className="text-muted">Orders</div><div className="fw-medium">{p.order_numbers?.join(", ") || "—"}</div></div>
+          <div className="col-md-3"><div className="text-muted">{p.orders?.length > 1 ? "Orders" : "Order"}</div><div className="fw-medium">{p.order_numbers?.join(", ") || "—"}</div></div>
           <div className="col-md-3"><div className="text-muted">Sent to warehouse</div><div className="fw-medium">{p.sent_at ? `${datetime(p.sent_at)}${p.sent_by_name ? ` · ${p.sent_by_name}` : ""}` : "not sent yet"}</div></div>
           <div className="col-md-3"><div className="text-muted">Issued</div><div className="fw-medium">{p.issued_at ? `${datetime(p.issued_at)}${p.issued_by_name ? ` · ${p.issued_by_name}` : ""}` : "—"}</div></div>
         </div>

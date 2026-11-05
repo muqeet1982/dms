@@ -20,9 +20,13 @@ class PickListService:
     @staticmethod
     @transaction.atomic
     def create(*, warehouse, orders, notes=""):
+        orders = list(orders)
+        # one load form, one order, numbered after it (owner, 5 Nov 2026: "only limit one its own order that is it")
+        if len(orders) > 1:
+            raise DomainError("A load form is for one order — make one for each.", code="one_order_per_load_form")
         orders = [o for o in orders if o.status == "confirmed" and o.warehouse_id == warehouse.pk]
         if not orders:
-            raise DomainError("Select confirmed orders from this warehouse.")
+            raise DomainError("Select a confirmed order from this warehouse.")
         # one live load form per order. An order stays "confirmed" until its stock is issued, so it could be picked again
         # on Load forms → New, or twice by a double click: TDN-PL-00132, 00155 and 00158 each came out twice (4 Nov 2026).
         # The lock makes a second click wait for the first to finish, then find its form.
@@ -31,7 +35,16 @@ class PickListService:
         if held:
             words = "; ".join(f"{', '.join(sorted(nums))} {'is' if len(nums) == 1 else 'are'} already on load form {form.number}" for form, nums in held.items())
             raise DomainError(f"{words}.", code="duplicate", errors={"picklist": [str(form.pk) for form in held]})
-        pl = PickList.objects.create(number=derived_number(orders[0].number, "pick_list", PickList), warehouse=warehouse, notes=notes)
+        # an order whose form was cancelled (edited, or cancelled by hand) gets that same form back, so its number never
+        # grows a "-2"; the audit log keeps what happened to it
+        pl = next((f for f in PickList.objects.filter(orders=orders[0], status="cancelled").order_by("created_at") if f.orders.count() == 1), None)
+        if pl is None:
+            pl = PickList.objects.create(number=derived_number(orders[0].number, "pick_list", PickList), warehouse=warehouse, notes=notes)
+        else:
+            pl.lines.all().delete()
+            pl.warehouse, pl.notes, pl.status = warehouse, notes, "open"
+            pl.picker = pl.sent_by = pl.issued_by = pl.sent_at = pl.issued_at = pl.picked_at = None
+            pl.save()
         pl.orders.set(orders)
         tenant = get_current_tenant()
         for o in orders:
@@ -224,7 +237,7 @@ class PickListService:
             order_lines = [l for l in lines if l.order_line and l.order_line.order_id == order.pk and l.qty_picked > 0]
             if not order_lines:
                 continue
-            dn = pl.delivery_notes.filter(order=order).first()
+            dn = pl.delivery_notes.filter(order=order).exclude(status="cancelled").first()
             if dn is None:
                 # a trip opened BEFORE the issue already holds a delivery note for this order, still unissued —
                 # that note is the one that travels, so it carries the issue. A second note here took the goods
