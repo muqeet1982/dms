@@ -66,7 +66,7 @@ export function TrialBalancePage() {
   const t = q.data?.totals || {};
   return (
     <>
-      <PageHeader title="Trial balance" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Trial balance" }]}
+      <PageHeader title="Trial balance" crumbs={[{ label: "Financial Reports" }, { label: "Trial balance" }]}
         actions={<Exports k="trial_balance" params={params} />} />
       <Range from={from} to={to} setFrom={setFrom} setTo={setTo} />
       {q.isLoading ? <Spinner /> : (
@@ -127,7 +127,7 @@ export function IncomeStatementPage() {
   };
   return (
     <>
-      <PageHeader title="Income statement" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Income statement" }]}
+      <PageHeader title="Income statement" crumbs={[{ label: "Financial Reports" }, { label: "Income statement" }]}
         actions={<Exports k="profit_and_loss" params={params} />} />
       <Range from={from} to={to} setFrom={setFrom} setTo={setTo} />
       {q.isLoading ? <Spinner /> : (
@@ -176,7 +176,7 @@ export function BalanceSheetPage() {
   );
   return (
     <>
-      <PageHeader title="Balance sheet" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Balance sheet" }]}
+      <PageHeader title="Balance sheet" crumbs={[{ label: "Financial Reports" }, { label: "Balance sheet" }]}
         actions={<Exports k="balance_sheet" params={params} />} />
       <div className="card mb-3"><div className="card-body py-3"><div className="row align-items-end">
         <Field label="As at" col="col-6 col-md-3"><DateInput className="form-control" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></Field>
@@ -211,7 +211,7 @@ export function GeneralLedgerPage() {
   const t = q.data?.totals || {};
   return (
     <>
-      <PageHeader title="General ledger" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "General ledger" }]}
+      <PageHeader title="General ledger" crumbs={[{ label: "Financial Reports" }, { label: "General ledger" }]}
         actions={<Exports k="general_ledger" params={params} />} />
       <Range from={from} to={to} setFrom={setFrom} setTo={setTo} extra={
         <Field label="Account" col="col-md-4" hint="Leave empty for every account">

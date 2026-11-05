@@ -47,12 +47,14 @@ export const TENANT_MENU: MenuSection[] = [
   },
   {
     title: "ACCOUNTS", items: [
-      { label: "Accounting", icon: "ti-report-money", children: [
-        { label: "Accounts", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals", feature: "advanced_accounting" },
+      { label: "Account", icon: "ti-report-money", children: [
+        { label: "Dashboard", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals", feature: "advanced_accounting" },
         { label: "Opening balances", to: "/app/accounting/opening-balances", page: "opening_balances" }, { label: "Periods & year end", to: "/app/accounting/periods", page: "periods" },
         { label: "Transactions", to: "/app/accounting/payments", page: "payments" }, { label: "Cheques", to: "/app/accounting/cheques", page: "cheques" }, { label: "Cheque books", to: "/app/accounting/cheque-books", page: "cheque_books" }, { label: "Expenses", to: "/app/accounting/expenses", page: "expenses" }, { label: "Expense categories", to: "/app/accounting/expense-categories", page: "accounts" },
-        { label: "Cash & bank", to: "/app/accounting/bank", page: "bank_cash" }, { label: "Bank reconciliation", to: "/app/accounting/reconciliation", page: "reconciliation" },
+      ] },
+      { label: "Financial Reports", icon: "ti-report-analytics", children: [
         { label: "General ledger", to: "/app/accounting/general-ledger", page: "reports" }, { label: "Trial balance", to: "/app/accounting/trial-balance", page: "reports" }, { label: "Income statement", to: "/app/accounting/income-statement", page: "reports" }, { label: "Balance sheet", to: "/app/accounting/balance-sheet", page: "reports" },
+        { label: "Cash & bank", to: "/app/accounting/bank", page: "bank_cash" }, { label: "Bank reconciliation", to: "/app/accounting/reconciliation", page: "reconciliation" },
       ] },
       { label: "Reports", icon: "ti-chart-bar", children: [
         { label: "All reports", to: "/app/reports", page: "reports" },

@@ -51,7 +51,7 @@ export function ExpenseCategoriesPage() {
 
   return (
     <>
-      <PageHeader title="Expense categories" crumbs={[{ label: "Accounting", to: "/app/accounting" }, { label: "Expense categories" }]}
+      <PageHeader title="Expense categories" crumbs={[{ label: "Account", to: "/app/accounting" }, { label: "Expense categories" }]}
         actions={<>
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc("/api/v1/reports/expense_by_category", { date_from: from, date_to: to, format: "pdf" })}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download("/api/v1/reports/expense_by_category", "expense-by-category.pdf", { date_from: from, date_to: to, format: "pdf" })}><i className="ti ti-file-type-pdf me-1" />PDF</button>
