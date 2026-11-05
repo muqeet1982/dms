@@ -39,12 +39,14 @@ def _net_sales(l):
     return l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
 
 
-def _group(rows, key_fn, label_fn):
+def _group(rows, key_fn, label_fn, extra_fn=None):
     out = defaultdict(lambda: {"qty": Z, "sales": Z, "cogs": Z, "invoices": set()})
     for l in rows:
         k = key_fn(l)
         r = out[k]
         r["label"] = label_fn(l)
+        if extra_fn is not None and "extra" not in r:
+            r["extra"] = extra_fn(l)
         r["qty"] += l.qty
         r["sales"] += _net_sales(l)
         r["cogs"] += l.qty * l.unit_cost
@@ -52,22 +54,36 @@ def _group(rows, key_fn, label_fn):
     result = []
     for k, r in out.items():
         margin = r["sales"] - r["cogs"]
-        result.append({"key": str(k), "label": r["label"], "qty": str(r["qty"]), "sales": str(r["sales"]), "cogs": str(r["cogs"]), "gross_margin": str(margin), "margin_pct": str((margin / r["sales"] * 100).quantize(Decimal("0.01")) if r["sales"] else Z), "invoices": len(r["invoices"])})
+        result.append({"key": str(k), "label": r["label"], "qty": str(r["qty"]), "sales": str(r["sales"]), "cogs": str(r["cogs"]), "gross_margin": str(margin), "margin_pct": str((margin / r["sales"] * 100).quantize(Decimal("0.01")) if r["sales"] else Z), "invoices": len(r["invoices"]), **r.get("extra", {})})
     result.sort(key=lambda r: -Decimal(r["sales"]))
     totals = {"sales": str(sum((Decimal(r["sales"]) for r in result), Z)), "cogs": str(sum((Decimal(r["cogs"]) for r in result), Z)), "gross_margin": str(sum((Decimal(r["gross_margin"]) for r in result), Z))}
     return {"columns": ["label", "qty", "sales", "cogs", "gross_margin", "margin_pct", "invoices"], "rows": result, "totals": totals}
 
 
 def sales_by_product(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to), lambda l: l.variant_id, lambda l: f"{l.variant.sku} {l.variant.name}")
+    """Headed Product Name, with the item code and UPC under the name (owner, 6 Nov 2026). A spreadsheet takes them as columns of their own, as text: 0062001 is not a number."""
+    def codes(l):
+        p = l.variant.product
+        return {"item_code": p.item_code, "upc": p.upc, "codes": " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x)}
+
+    out = _group(_inv_lines(date_from, date_to), lambda l: l.variant_id, lambda l: l.variant.name, codes)
+    out["column_labels"] = {"label": "Product Name", "upc": "UPC"}
+    out["notes"] = {"label": "codes"}
+    out["export_columns"] = ["label", "item_code", "upc", *out["columns"][1:]]
+    out["text_columns"] = ["item_code", "upc"]
+    return out
 
 
 def sales_by_brand(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.brand_id, lambda l: l.variant.product.brand.name if l.variant.product.brand_id else "(no brand)")
+    out = _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.brand_id, lambda l: l.variant.product.brand.name if l.variant.product.brand_id else "(no brand)")
+    out["column_labels"] = {"label": "Brand"}
+    return out
 
 
 def sales_by_supplier(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.supplier_id, lambda l: l.variant.product.supplier.name if l.variant.product.supplier_id else "(no supplier)")
+    out = _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.supplier_id, lambda l: l.variant.product.supplier.name if l.variant.product.supplier_id else "(no supplier)")
+    out["column_labels"] = {"label": "Supplier Name"}
+    return out
 
 
 def sales_by_customer(date_from=None, date_to=None, **_):

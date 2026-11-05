@@ -83,7 +83,7 @@ def _footer_totals(result):
 def to_csv(result, title=""):
     buf = io.StringIO()
     w = csv.writer(buf)
-    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    cols = result.get("export_columns") or result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
     w.writerow(_flat_headers(result, cols))
     for r in result["rows"]:
         w.writerow([cell(r.get(c, "")) for c in cols])
@@ -104,7 +104,8 @@ def to_xlsx(result, title=""):
     import re
 
     ws.title = (re.sub(r"[\\/*?:\[\]]", "-", title or "Report").strip() or "Report")[:30]
-    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    cols = result.get("export_columns") or result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    text_cols = set(result.get("text_columns") or ())
     groups = result.get("header_groups")
     if groups:
         # the two-row heading: merged group names over their sub-columns
@@ -132,7 +133,7 @@ def to_xlsx(result, title=""):
         row = []
         for c in cols:
             v = cell(r.get(c, ""))
-            if isinstance(v, str):
+            if isinstance(v, str) and c not in text_cols:
                 try:
                     if v and (v.replace(".", "", 1).replace("-", "", 1).isdigit()):
                         v = float(Decimal(v))
@@ -179,6 +180,16 @@ def to_pdf(result, title="", tenant=None, params=None):
     landscape = units > 105
     budget = 160 if landscape else 105
     fit = "" if units <= budget else ("fit-sm" if units <= budget * 1.35 else ("fit-xs" if units <= budget * 1.8 else "fit-tiny"))
+
+    # a small line under a cell (the codes under a product's name), put in after the sizing above: it may wrap
+    notes = result.get("notes") or {}
+    if notes:
+        from django.utils.html import format_html
+
+        for source, row in zip(result["rows"], rows):
+            for i, c in enumerate(cols):
+                if source.get(notes.get(c)):
+                    row["cells"][i] = format_html('{}<div class="cell-note">{}</div>', row["cells"][i], source[notes[c]])
 
     from apps.core.templatetags.docs import isnumber
 

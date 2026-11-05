@@ -50,7 +50,10 @@ export const TENANT_MENU: MenuSection[] = [
       { label: "Account", icon: "ti-report-money", children: [
         { label: "Dashboard", to: "/app/accounting", end: true, page: "payments" }, { label: "Chart of accounts", to: "/app/accounting/accounts", page: "accounts" }, { label: "Journal entries", to: "/app/accounting/journals", page: "journals", feature: "advanced_accounting" },
         { label: "Opening balances", to: "/app/accounting/opening-balances", page: "opening_balances" }, { label: "Periods & year end", to: "/app/accounting/periods", page: "periods" },
-        { label: "Transactions", to: "/app/accounting/payments", page: "payments" }, { label: "Cheques", to: "/app/accounting/cheques", page: "cheques" }, { label: "Cheque books", to: "/app/accounting/cheque-books", page: "cheque_books" }, { label: "Expenses", to: "/app/accounting/expenses", page: "expenses" }, { label: "Expense categories", to: "/app/accounting/expense-categories", page: "accounts" },
+      ] },
+      { label: "Transactions", icon: "ti-arrows-exchange", children: [
+        { label: "Receipts & Payments", to: "/app/accounting/payments", page: "payments" }, { label: "Cheques", to: "/app/accounting/cheques", page: "cheques" }, { label: "Cheque Books", to: "/app/accounting/cheque-books", page: "cheque_books" },
+        { label: "Expenses", to: "/app/accounting/expenses", page: "expenses" }, { label: "Expenses Categories", to: "/app/accounting/expense-categories", page: "accounts" },
       ] },
       { label: "Financial Reports", icon: "ti-report-analytics", children: [
         { label: "General ledger", to: "/app/accounting/general-ledger", page: "reports" }, { label: "Trial balance", to: "/app/accounting/trial-balance", page: "reports" }, { label: "Income statement", to: "/app/accounting/income-statement", page: "reports" }, { label: "Balance sheet", to: "/app/accounting/balance-sheet", page: "reports" },

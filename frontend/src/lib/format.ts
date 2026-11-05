@@ -51,6 +51,22 @@ export const ago = (v: any) => (v ? dayjs(v).fromNow() : "—");
 export const today = () => dayjs().format("YYYY-MM-DD");
 export const daysAgo = (n: number) => dayjs().subtract(n, "day").format("YYYY-MM-DD");
 export const startOfMonth = () => dayjs().startOf("month").format("YYYY-MM-DD");
+/** The ranges a report's Preset offers (owner, 6 Nov 2026), by the browser's own day. A week starts on Monday; a period still running ends today. */
+export const DATE_PRESETS = ["Today", "Yesterday", "This Week", "Last Week", "This Month", "Last Month"];
+export function presetRange(name: string): [string, string] {
+  const f = (d: dayjs.Dayjs) => d.format("YYYY-MM-DD");
+  const now = dayjs();
+  const monday = now.subtract((now.day() + 6) % 7, "day");
+  const lastMonth = now.subtract(1, "month");
+  switch (name) {
+    case "Yesterday": return [f(now.subtract(1, "day")), f(now.subtract(1, "day"))];
+    case "This Week": return [f(monday), f(now)];
+    case "Last Week": return [f(monday.subtract(7, "day")), f(monday.subtract(1, "day"))];
+    case "This Month": return [f(now.startOf("month")), f(now)];
+    case "Last Month": return [f(lastMonth.startOf("month")), f(lastMonth.endOf("month"))];
+    default: return [f(now), f(now)];
+  }
+}
 export const titleCase = (s: any) => (s ? String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "");
 export const num = (v: any) => Number(v || 0);
 
