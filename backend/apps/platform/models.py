@@ -121,6 +121,8 @@ class Tenant(models.Model):
     website = models.CharField(max_length=120, blank=True)
     tax_numbers = models.JSONField(default=dict, blank=True)  # {"NTN": "...", "STRN": "..."}
     logo = models.ImageField(upload_to="tenants/logos/", null=True, blank=True)
+    # printed on invoices in place of the company logo, which stays at the top of the app (owner, 6 Nov 2026)
+    invoice_logo = models.ImageField(upload_to="tenants/logos/", null=True, blank=True)
     base_currency = models.CharField(max_length=3, default="PKR")
     fiscal_year_start_month = models.PositiveSmallIntegerField(default=7)
     timezone = models.CharField(max_length=50, default="Asia/Karachi")

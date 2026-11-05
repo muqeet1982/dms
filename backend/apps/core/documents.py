@@ -1,7 +1,7 @@
 """Shared pieces of a printed document."""
 
 
-def logo_url(tenant):
+def logo_url(tenant, field="logo"):
     """
     Absolute reference WeasyPrint can load for the company logo, or None.
 
@@ -9,7 +9,7 @@ def logo_url(tenant):
     nothing. Local storage therefore needs file://, and S3 needs the signed URL. A logo that cannot be
     resolved must never cost anybody the document, so every failure here falls through to no logo.
     """
-    logo = getattr(tenant, "logo", None)
+    logo = getattr(tenant, field, None)
     if not logo:
         return None
     try:
@@ -21,6 +21,11 @@ def logo_url(tenant):
         return url if url.startswith("http") else None
     except Exception:
         return None
+
+
+def invoice_logo_url(tenant):
+    """An invoice prints the invoice logo; a company that has not given one keeps its company logo there."""
+    return logo_url(tenant, "invoice_logo") or logo_url(tenant)
 
 
 def render_doc(request, template, ctx, filename, *, title=None, ref=None):

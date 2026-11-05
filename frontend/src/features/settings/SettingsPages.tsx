@@ -26,12 +26,12 @@ export function CompanySettingsPage() {
   const t = me?.tenant;
   if (!t) return <Spinner />;
   const company = useQuery({ queryKey: ["company"], queryFn: () => api.get("/api/v1/settings/company") });
-  const logoRef = useRef<HTMLInputElement | null>(null);
+  const logoRef = useRef<Record<string, HTMLInputElement | null>>({});
   const save = async (patch: any) => { await api.patch("/api/v1/settings/company", patch); toast.success("Saved"); qc.invalidateQueries({ queryKey: ["me"] }); qc.invalidateQueries({ queryKey: ["company"] }); };
   const saveSettings = async (patch: any) => save({ settings: patch });
-  const uploadLogo = async (file: File) => {
-    const fd = new FormData(); fd.append("file", file);
-    try { await api.upload("/api/v1/settings/company/logo", fd); toast.success("Logo updated"); qc.invalidateQueries({ queryKey: ["me"] }); qc.invalidateQueries({ queryKey: ["company"] }); }
+  const sendLogo = async (kind: string, part: (fd: FormData) => void, done: string) => {
+    const fd = new FormData(); fd.append("kind", kind); part(fd);
+    try { await api.upload("/api/v1/settings/company/logo", fd); toast.success(done); qc.invalidateQueries({ queryKey: ["me"] }); qc.invalidateQueries({ queryKey: ["company"] }); }
     catch (e: any) { toast.error(e.message); }
   };
   const settingFields: FieldDef[] = [
@@ -77,17 +77,19 @@ export function CompanySettingsPage() {
       <PageHeader title="Company settings" crumbs={[{ label: "Settings" }, { label: "Company" }]} />
       <Tabs tabs={[{ key: "profile", label: "Profile" }, { key: "contact", label: "Contact & documents" }, { key: "rules", label: "Business rules" }]} active={tab} onChange={setTab} />
       {tab === "profile" && (
-        <div className="card mb-3"><div className="card-body d-flex align-items-center gap-3">
-          <div className="border rounded d-flex align-items-center justify-content-center bg-light" style={{ width: 120, height: 72 }}>
-            {company.data?.logo ? <img src={company.data.logo} alt="Company logo" style={{ maxHeight: 64, maxWidth: 112 }} /> : <span className="text-muted fs-12">no logo</span>}
-          </div>
-          <div>
-            <div className="fw-semibold">Company logo</div>
-            <div className="fs-12 text-muted mb-2">Printed on invoices, delivery notes and purchase orders. PNG or SVG, max 5 MB.</div>
-            <input ref={logoRef} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); }} />
-            <button className="btn btn-sm btn-outline-primary" onClick={() => logoRef.current?.click()}><i className="ti ti-upload me-1" />Upload logo</button>
-          </div>
-        </div></div>
+        <div className="card mb-3"><div className="card-body"><div className="row g-4">
+          {[{ kind: "company", image: company.data?.logo, label: "Company Logo" }, { kind: "invoice", image: company.data?.invoice_logo, label: "Invoice Logo" }].map(({ kind, image, label }) => <div className="col-md-6 d-flex align-items-center gap-3" key={kind}>
+            <div className="border rounded d-flex align-items-center justify-content-center bg-light" style={{ width: 120, height: 72 }}>
+              {image ? <img src={image} alt={label} style={{ maxHeight: 64, maxWidth: 112 }} /> : <span className="text-muted fs-12">no logo</span>}
+            </div>
+            <div>
+              <div className="fw-semibold mb-2">{label}</div>
+              <input ref={(el) => { logoRef.current[kind] = el; }} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) sendLogo(kind, (fd) => fd.append("file", f), `${label} updated`); e.target.value = ""; }} />
+              <button className="btn btn-sm btn-outline-primary" onClick={() => logoRef.current[kind]?.click()}><i className="ti ti-upload me-1" />{image ? "Replace" : "Upload"}</button>
+              {image && <button className="btn btn-sm btn-outline-danger ms-2" onClick={() => { if (window.confirm(`Remove the ${label}?`)) sendLogo(kind, (fd) => fd.append("clear", "1"), `${label} removed`); }}><i className="ti ti-trash me-1" />Remove</button>}
+            </div>
+          </div>)}
+        </div></div></div>
       )}
       {tab === "contact" && company.data && (
         <div className="card"><div className="card-body"><ResourceForm
@@ -164,7 +166,7 @@ export function BrandingPage() {
             {d.company_logo ? <img src={d.company_logo} alt="Company logo" style={{ maxHeight: 56, maxWidth: 112 }} /> : <span className="text-muted fs-12">none</span>}
           </div>
           <div className="flex-grow-1">
-            <div className="fs-13">Printed on invoices, delivery notes, purchase orders and emails. This is your own business identity, so it is yours to set whatever the plan says.</div>
+            <div className="fs-13">Printed on orders, purchase orders, vouchers and reports, and on invoices until an Invoice Logo is set. This is your own business identity, so it is yours to set whatever the plan says.</div>
             <div className="fs-12 text-muted">PNG, JPG or SVG · up to {d.max_image_mb || 5} MB · a wide logo around 400×120 looks best.</div>
           </div>
           <input ref={(el) => (files.current.company = el)} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCompanyLogo(f); }} />

@@ -115,3 +115,57 @@ def test_google_maps_is_a_map_choice_and_falls_back_without_a_key(admin_api, set
     cache.clear()
     m = APIClient().get("/api/v1/branding").data["map"]
     assert m["source"] == "esri_en" and not m["google_key"], "no key: a working map beats a blank one"
+
+
+def _logo_on_print(monkeypatch):
+    """The logo a printed document was given, whatever the document."""
+    from django.template import loader
+
+    seen, real = {}, loader.render_to_string
+
+    def capture(template, context=None, *a, **k):
+        seen["logo"] = (context or {}).get("logo_url")
+        return real(template, context, *a, **k)
+
+    monkeypatch.setattr(loader, "render_to_string", capture)
+    return seen
+
+
+def test_invoices_print_the_invoice_logo_and_everything_else_the_company_logo(api, tenant, settings, tmp_path, monkeypatch):
+    """Owner, 6 Nov 2026: "in company profile give invoice logo as well and use that for invoice and company logo will be on the top"."""
+    from apps.core.documents import logo_url
+
+    from .conftest import issue_order, seed_basic
+
+    settings.MEDIA_ROOT = str(tmp_path)
+    wh, _s, v, cust = seed_basic(tenant)
+    o = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "lines": [{"variant": str(v.id), "qty": "1"}]}, format="json").data
+    issue_order(api, o["id"])
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
+    seen = _logo_on_print(monkeypatch)
+
+    def printed(path):
+        seen.clear()
+        assert api.get(path).status_code == 200, path
+        return seen["logo"]
+
+    company = api.post("/api/v1/settings/company/logo", {"file": SimpleUploadedFile("company.png", PNG, content_type="image/png")}, format="multipart")
+    assert company.status_code == 200 and "company" in company.data["logo"] and company.data["invoice_logo"] is None
+    assert "company" in printed(f"/api/v1/invoices/{inv['id']}/pdf"), "no invoice logo yet: an invoice keeps the company logo"
+
+    up = api.post("/api/v1/settings/company/logo", {"kind": "invoice", "file": SimpleUploadedFile("onbill.png", PNG, content_type="image/png")}, format="multipart")
+    assert up.status_code == 200, up.content
+    assert "onbill" in up.data["invoice_logo"] and "company" in up.data["logo"], "the company logo is left alone"
+    assert "onbill" in printed(f"/api/v1/invoices/{inv['id']}/pdf")
+    assert "company" in printed(f"/api/v1/sales-orders/{o['id']}/pdf"), "an order keeps the company logo"
+    assert "company" in api.get("/api/v1/me").data["tenant"]["logo"], "and it is what the top of the app reads"
+    assert "onbill" in api.get("/api/v1/settings/company").data["invoice_logo"]
+    with tenant_context(tenant, tenant.owner):
+        tenant.refresh_from_db()
+        assert "company" in logo_url(tenant)
+
+    off = api.post("/api/v1/settings/company/logo", {"kind": "invoice", "clear": "1"}, format="multipart")
+    assert off.status_code == 200 and off.data["invoice_logo"] is None and "company" in off.data["logo"], "removing one leaves the other"
+    assert "company" in printed(f"/api/v1/invoices/{inv['id']}/pdf")
+    bad = api.post("/api/v1/settings/company/logo", {"kind": "stamp", "file": SimpleUploadedFile("x.png", PNG, content_type="image/png")}, format="multipart")
+    assert bad.status_code == 400

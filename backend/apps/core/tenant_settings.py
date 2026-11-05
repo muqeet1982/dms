@@ -61,7 +61,7 @@ def drop_old(url):
 
 
 class CompanyProfileView(APIView):
-    """GET / PATCH the company's own details, and POST a company logo (multipart `file`) for documents."""
+    """GET / PATCH the company's own details, and POST a logo (multipart `file`, `kind` = company | invoice)."""
 
     permission_classes = [IsTenantUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -111,19 +111,27 @@ class CompanyProfileView(APIView):
 
     @require_perm("settings.change_company")
     def post(self, request):
-        """Upload the company logo used on invoices, POs and delivery notes."""
+        """
+        Upload the company logo (the top of the app, and every printed document but the invoice) or, with kind=invoice, the
+        logo invoices print (owner, 6 Nov 2026).
+        """
         tenant = request.tenant
+        kind = request.data.get("kind") or "company"
+        if kind not in ("company", "invoice"):
+            raise DomainError("A logo is the company's or the invoice's.", status_code=400)
+        field = "invoice_logo" if kind == "invoice" else "logo"
+        image = getattr(tenant, field)
         clearing = request.data.get("clear") in ("1", "true", True)
         f = request.FILES.get("file")
         if clearing:
-            tenant.logo.delete(save=True)
+            image.delete(save=True)
         else:
             if f is None:
                 raise DomainError("Send the logo as `file`.", status_code=400)
             if f.size > MAX_IMAGE_MB * 1024 * 1024:
                 raise DomainError(f"Image too large — keep it under {MAX_IMAGE_MB} MB.", status_code=400)
-            tenant.logo.save(f.name, f, save=True)
-        AuditService.log("tenant.logo.updated", tenant, after={"logo": tenant.logo.name}, request=request)
+            image.save(f.name, f, save=True)
+        AuditService.log("tenant.logo.updated", tenant, after={"kind": kind, "logo": image.name}, request=request)
         return Response(self.payload(tenant))
 
 
