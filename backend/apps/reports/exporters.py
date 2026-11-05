@@ -96,7 +96,7 @@ def to_csv(result, title=""):
 
 def to_xlsx(result, title=""):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = Workbook()
     ws = wb.active
@@ -127,6 +127,7 @@ def to_xlsx(result, title=""):
         for head in ws[n]:  # not `cell`: that is the function above, and shadowing it broke every xlsx export
             head.font = Font(bold=True, color="FFFFFF")
             head.fill = PatternFill("solid", fgColor="F26522")
+            head.alignment = Alignment(wrap_text=True, vertical="center")   # a long column name wraps, it is not cut off
     for r in result["rows"]:
         row = []
         for c in cols:
@@ -177,12 +178,16 @@ def to_pdf(result, title="", tenant=None, params=None):
     units = sum(widths) + 2 * len(cols)
     landscape = units > 105
     budget = 160 if landscape else 105
-    fit = "" if units <= budget else ("fit-sm" if units <= budget * 1.35 else "fit-xs")
+    fit = "" if units <= budget else ("fit-sm" if units <= budget * 1.35 else ("fit-xs" if units <= budget * 1.8 else "fit-tiny"))
+
+    from apps.core.templatetags.docs import isnumber
 
     html = render_to_string("reports/report.html", {
         "title": title, "cols": cols, "col_labels": labels if result.get("column_labels") else None,
+        # a heading sits over its figures on the right, and over a column of words on the left
+        "left_heads": [i for i in range(len(cols)) if not any(isnumber(r["cells"][i]) for r in rows)], "faint_zeros": result.get("faint_zeros"),
         "groups": result.get("header_groups"), "rows": rows, "totals": _footer_totals(result), "tenant": tenant,
-        "params": params or {}, "landscape": landscape, "fit": fit,
+        "params": {**{k: cell(v) for k, v in (params or {}).items()}, **(result.get("print_params") or {})}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
     })
     return HTML(string=html).write_pdf()

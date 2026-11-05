@@ -3,6 +3,7 @@ ReportRegistry (§12): key → {title, area, params, query, permission}. Every r
 """
 from apps.accounting import reports as fin
 from apps.reports import operational as ops
+from apps.reports import rep_daily
 
 FIN = "accounting.view_financial_reports"
 # The Reports page's View switch opens the operational reports. They asked for the old coarse
@@ -32,7 +33,7 @@ REPORTS = {
     "sales_by_customer": {"title": "Sales by customer", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_customer, "perm": OPS},
     "sales_by_territory": {"title": "Sales by territory", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_territory, "perm": OPS},
     "sales_by_route": {"title": "Sales by route", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_route, "perm": OPS},
-    "sales_by_rep": {"title": "Sales by rep", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_rep, "perm": OPS},
+    "sales_by_rep": {"title": "Sales by rep", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep"}], "query": rep_daily.sales_by_rep, "perm": OPS},
     "out_of_area_activity": {"title": "Out-of-area activity (working areas)", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep"}], "query": ops.out_of_area_activity, "perm": OPS},
     "area_coverage": {"title": "Working areas — coverage", "area": "sales", "params": [], "query": ops.area_coverage, "perm": OPS},
     "customers_without_area": {"title": "Customers in no working area", "area": "sales", "params": [], "query": ops.customers_without_area, "perm": OPS},

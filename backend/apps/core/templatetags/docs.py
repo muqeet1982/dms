@@ -50,6 +50,15 @@ def cell(value):
 
 
 @register.filter
+def iszero(value):
+    """A figure that reads nothing, so a wide report can let it fade behind the ones that say something."""
+    try:
+        return Decimal(str(value).replace(",", "")) == 0
+    except (InvalidOperation, ValueError):
+        return False
+
+
+@register.filter
 def label(value):
     """`opening_debit` → "Opening Debit". Django's `cut` deletes the underscore instead of replacing it."""
     return str(value or "").replace("_", " ").strip().title()
@@ -58,7 +67,7 @@ def label(value):
 @register.filter
 def isnumber(value):
     """Whether a report cell is a figure, so it can be right-aligned and formatted and a code is left alone."""
-    text = str(value or "").strip()
+    text = ("" if value is None else str(value)).strip()   # not `value or ""`: a count of 0 is a figure
     if not text or text in {"-", "—"}:
         return False
     try:

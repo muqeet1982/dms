@@ -19,6 +19,10 @@ landscape when there are more columns than a portrait page can hold.
   table.lines.fit-xs th{font-size:6.3pt;padding:2.2pt 2.6pt} table.lines.fit-xs td{font-size:6.5pt;padding:2pt 2.6pt}
   table.lines.fit-sm .rg thead th, .rg.fit-sm thead tr.rg-top th{font-size:7.4pt}
   .rg.fit-sm thead tr.rg-sub th{font-size:6.6pt} .rg.fit-xs thead tr.rg-top th{font-size:6.6pt} .rg.fit-xs thead tr.rg-sub th{font-size:6pt}
+  /* the widest reports: smaller again, and the headings plain, because capitals and spacing cost more than anything */
+  table.lines.fit-tiny th{font-size:5.6pt;padding:1.8pt 1.6pt;text-transform:none;letter-spacing:0} table.lines.fit-tiny td{font-size:6pt;padding:1.8pt 1.6pt}
+  .rg.fit-tiny thead tr.rg-top th{font-size:6pt;text-transform:none;letter-spacing:0} .rg.fit-tiny thead tr.rg-sub th{font-size:5.6pt;text-transform:none;letter-spacing:0}
+  td.z{color:#C3C8D2}
   /* a statement's rows: its section headings, the totals that close them, and the two results it turns on */
   tr.st-heading td{font-weight:700;background:#F3F4F6}
   tr.st-account td:nth-child(2){padding-left:12pt}
@@ -35,11 +39,11 @@ landscape when there are more columns than a portrait page can hold.
   </style>{% endif %}
   <thead>
   {% if groups %}<tr class="rg-top">{% for g in groups %}<th colspan="{{ g.span }}">{{ g.label }}</th>{% endfor %}</tr>{% endif %}
-  {% if col_labels %}<tr class="rg-sub">{% for c in col_labels %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
-  {% else %}<tr>{% for c in cols %}<th{% if forloop.counter > 2 %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
+  {% if col_labels %}<tr class="rg-sub">{% for c in col_labels %}<th{% if forloop.counter > 2 and forloop.counter0 not in left_heads %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
+  {% else %}<tr>{% for c in cols %}<th{% if forloop.counter > 2 and forloop.counter0 not in left_heads %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
   </thead>
   <tbody>
-  {% for r in rows %}<tr{% if r.kind %} class="st-{{ r.kind }}"{% endif %}>{% for v in r.cells %}{% if forloop.counter > 2 and v|isnumber %}<td class="r">{{ v|cell }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+  {% for r in rows %}<tr{% if r.kind %} class="st-{{ r.kind }}"{% endif %}>{% for v in r.cells %}{% if forloop.counter > 2 and v|isnumber %}<td class="r{% if faint_zeros and v|iszero %} z{% endif %}">{{ v|cell }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
   {% if not rows %}<tr><td colspan="{{ cols|length }}" style="text-align:center;color:#6B7280;padding:14px">Nothing in this range.</td></tr>{% endif %}
   </tbody>
 </table>

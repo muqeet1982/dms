@@ -69,10 +69,6 @@ def sales_by_customer(date_from=None, date_to=None, **_):
     return _group(_inv_lines(date_from, date_to), lambda l: l.invoice.customer_id, lambda l: f"{l.invoice.customer.code} {l.invoice.customer.name}")
 
 
-def sales_by_rep(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to), lambda l: l.invoice.rep_id, lambda l: l.invoice.rep.name if l.invoice.rep_id else "(staff)")
-
-
 def sales_by_territory(date_from=None, date_to=None, **_):
     return _group(_inv_lines(date_from, date_to).select_related("invoice__customer__territory", "invoice__customer__route"), lambda l: l.invoice.customer.territory_id, lambda l: l.invoice.customer.territory.name if l.invoice.customer.territory_id else "(no territory)")
 
