@@ -1,6 +1,7 @@
 """
-Sales by rep, as the sheet a rep sends the office each day (owner, 5 Nov 2026): name, date, area, shops visited,
-productive and new, the units of each product family, and the day's and the month's money.
+The sheet a rep sends the office each day (owner, 5 Nov 2026): name, date, area, shops visited, productive and new, the
+units of each product family, and the day's and the month's money. A rep's name on Sales By Rep, the original invoice
+summary, opens it for the same dates.
 """
 import io
 from datetime import date, datetime
@@ -115,7 +116,7 @@ def _visit(tenant, customer, rep, on, hour=11):
 
 
 def _report(api, **params):
-    r = api.get("/api/v1/reports/sales_by_rep", params)
+    r = api.get("/api/v1/reports/rep_daily_sheet", params)
     assert r.status_code == 200, r.content
     return r.data
 
@@ -262,21 +263,21 @@ def test_print_pdf_and_excel_carry_the_same_sheet(api, excel_on, world):
     _order(excel_on, w, on, w["rep"], [(w["tinta"], "4"), (w["developer"], "2")])
     params = {"date_from": on.isoformat(), "date_to": on.isoformat()}
 
-    text = api.get("/api/v1/reports/sales_by_rep", {**params, "format": "csv"}).content.decode("utf-8-sig")
+    text = api.get("/api/v1/reports/rep_daily_sheet", {**params, "format": "csv"}).content.decode("utf-8-sig")
     head = text.splitlines()[0]
     assert head.startswith("Name,Date,Area,No Of Shops Visited,Productive Shops,New Shops,Tinta Regular Color,Tinta Lifting Colors,Developer 60 ml")
     assert head.endswith("Accessories,Total Today,Total Till Date")
     assert "03/11/2026" in text and "2026-11-03" not in text
     assert "\nsales," not in text and "\r\nsales," not in text, "the totals are the bottom row, not repeated underneath"
 
-    book = load_workbook(io.BytesIO(api.get("/api/v1/reports/sales_by_rep", {**params, "format": "xlsx"}).content)).active
+    book = load_workbook(io.BytesIO(api.get("/api/v1/reports/rep_daily_sheet", {**params, "format": "xlsx"}).content)).active
     assert [c.value for c in book[1]][6:8] == ["Tinta", ""] or book[1][6].value == "Tinta", "the two-row heading"
     assert book[2][6].value == "Regular Color" and book[2][3].value == "No Of Shops Visited"
     assert [c.value for c in book[3]][:2] == ["Talha", "03/11/2026"]
     assert book[3][6].value == 4 and book[3][8].value == 2
     assert book.cell(row=4, column=1).value == "Total" and book.cell(row=4, column=1).font.bold
 
-    pdf = api.get("/api/v1/reports/sales_by_rep", {**params, "format": "pdf"})
+    pdf = api.get("/api/v1/reports/rep_daily_sheet", {**params, "format": "pdf"})
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-")
 
 
@@ -297,9 +298,42 @@ def test_the_print_fits_the_page_and_names_the_rep_and_the_dates_properly(api, e
         return html
 
     monkeypatch.setattr(loader, "render_to_string", spy)
-    r = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat(), "rep": str(w["rep"].id), "format": "pdf"})
+    r = api.get("/api/v1/reports/rep_daily_sheet", {"date_from": on.isoformat(), "date_to": on.isoformat(), "rep": str(w["rep"].id), "format": "pdf"})
     assert r.status_code == 200 and r.content.startswith(b"%PDF-")
     assert seen["landscape"] and seen["fit"] == "fit-tiny"
     assert seen["params"] == {"date_from": "03/11/2026", "date_to": "03/11/2026", "rep": "Talha"}
     assert 'class="st-subtotal"' in seen["html"] and 'class="r z"' in seen["html"], "the Total row stands out and the zeros fade"
+    assert not seen["dark_header"] and 'class="lines fit-tiny"' in seen["html"], "the header is the colour of every other report"
     assert seen["left_heads"] == [0, 1, 2], "Name, Date and Area are words: their headings sit left"
+
+
+def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, world):
+    """Owner, 5 Nov 2026: "wanted the original report as well, when click on the name on that report then show this"."""
+    from .conftest import issue_order
+
+    w = world
+    on = timezone.localdate()
+    order = _order(tenant, w, on, w["rep"], [(w["tinta"], "4")])
+    with tenant_context(tenant, tenant.owner):
+        from apps.sales.services import OrderService
+
+        OrderService.confirm(order)
+    issue_order(api, order.pk)
+    assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
+
+    summary = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat()}).data
+    assert summary["columns"] == ["label", "qty", "sales", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns"
+    assert summary["totals"] and not summary.get("totals_in_rows") and not summary.get("header_groups")
+    row = next(r for r in summary["rows"] if r["label"] == "Talha")
+    assert D(row["qty"]) == 4 and D(row["sales"]) == 400 and row["invoices"] == 1
+    assert summary["drill"] == {"column": "label", "report": "rep_daily_sheet", "param": "rep"}
+    assert row["key"] == str(w["rep"].id), "what the link carries"
+
+    sheet = api.get(f"/api/v1/reports/{summary['drill']['report']}", {"date_from": on.isoformat(), "date_to": on.isoformat(), summary["drill"]["param"]: row["key"]}).data
+    assert [r["name"] for r in sheet["rows"]] == ["Talha", "Total"] and D(sheet["rows"][0]["tinta_regular"]) == 4
+    assert sheet["plain_header"] and sheet["header_groups"]
+
+
+def test_both_reports_are_in_the_catalogue(api, tenant):
+    keys = {r["key"]: r["title"] for r in api.get("/api/v1/reports").data}
+    assert keys["sales_by_rep"] == "Sales by rep" and keys["rep_daily_sheet"] == "Sales by rep — daily sheet"

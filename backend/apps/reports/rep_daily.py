@@ -1,6 +1,6 @@
 """
-Sales by rep, as the sheet a rep sends the office at the end of the day (owner, 5 Nov 2026): who, when and where, the
-shops they covered, the units of each product family, and the day's and the month's money.
+The sheet a rep sends the office at the end of the day (owner, 5 Nov 2026): who, when and where, the shops they covered,
+the units of each product family, and the day's and the month's money. A rep's name on Sales By Rep opens it.
 
 It reads ORDERS, because this is the rep's own day: the invoice follows when the warehouse has issued the goods, days
 later, and would leave a day of shops visited with nothing sold against it.
@@ -109,7 +109,7 @@ def _columns():
     return columns, labels, groups
 
 
-def sales_by_rep(date_from=None, date_to=None, rep=None, **_):
+def daily_sheet(date_from=None, date_to=None, rep=None, **_):
     from apps.partners.models import Customer, CustomerVisit, SupplierRep
     from apps.sales.models import SalesOrder, SalesOrderLine
 
@@ -199,6 +199,6 @@ def sales_by_rep(date_from=None, date_to=None, rep=None, **_):
     picked = SupplierRep.objects.filter(pk=rep).first() if rep else None
     return {
         "columns": columns, "column_labels": labels, "header_groups": groups, "column_styles": {"total_today": "bold", "total_till_date": "bold"},
-        "rows": rows, "totals": {"sales": str(today)}, "totals_in_rows": True, "faint_zeros": True,
+        "rows": rows, "totals": {"sales": str(today)}, "totals_in_rows": True, "faint_zeros": True, "plain_header": True,
         "print_params": {"rep": picked.name} if picked else {},   # the print names the rep, not their id
     }

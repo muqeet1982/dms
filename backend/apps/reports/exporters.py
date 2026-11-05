@@ -185,7 +185,7 @@ def to_pdf(result, title="", tenant=None, params=None):
     html = render_to_string("reports/report.html", {
         "title": title, "cols": cols, "col_labels": labels if result.get("column_labels") else None,
         # a heading sits over its figures on the right, and over a column of words on the left
-        "left_heads": [i for i in range(len(cols)) if not any(isnumber(r["cells"][i]) for r in rows)], "faint_zeros": result.get("faint_zeros"),
+        "left_heads": [i for i in range(len(cols)) if not any(isnumber(r["cells"][i]) for r in rows)], "faint_zeros": result.get("faint_zeros"), "dark_header": result.get("header_groups") and not result.get("plain_header"),
         "groups": result.get("header_groups"), "rows": rows, "totals": _footer_totals(result), "tenant": tenant,
         "params": {**{k: cell(v) for k, v in (params or {}).items()}, **(result.get("print_params") or {})}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
