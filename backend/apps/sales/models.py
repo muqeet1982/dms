@@ -215,6 +215,13 @@ class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     product_discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
     line_total = models.DecimalField(**MONEY)
     sequence = models.PositiveSmallIntegerField(default=0)
+    # who bears this line's discount, written when the invoice posts (owner, 8 Nov 2026: "store the discount breakdown
+    # against the sale"): the company's (manufacturer's) share; the distributor bears discount_amount less it. The rule
+    # says why: the discount table (non-salon), a salon sold at or above the T.P, a salon bracket, or no bracket set.
+    RULES = [("", "None"), ("table", "Discount table"), ("above_tp", "At or above T.P"), ("bracket", "Salon bracket"), ("no_bracket", "No bracket set")]
+    company_discount = models.DecimalField(**MONEY)
+    discount_rule = models.CharField(max_length=12, choices=RULES, blank=True, default="")
+    share_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
 
     class Meta:
         ordering = ["sequence", "id"]
@@ -349,6 +356,26 @@ class DiscountContribution(TenantModel):
 
     def __str__(self):
         return f"{self.total_pct}% = {self.distributor_pct}% + {self.company_pct}%"
+
+
+class SalonDiscountBracket(TenantModel):
+    """
+    Salon discount sharing (owner, 8 Nov 2026). A salon buys at the R.P and its discount is off the R.P. A line still at
+    or above the T.P after the discount is the distributor's alone; below the T.P, the bracket its discount % falls in
+    says how much the company (the product's manufacturer) bears: a discount up to `up_to_pct` %, above the bracket
+    before it. What the company bears is a share of the part below the T.P, or of the whole discount (the tenant
+    setting `salon_share_basis`). A discount above every bracket is the distributor's alone.
+    """
+    up_to_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    company_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["up_to_pct"]
+        unique_together = [("tenant", "up_to_pct")]
+
+    def __str__(self):
+        return f"up to {self.up_to_pct}%: company {self.company_pct}%"
 
 
 class CompanyClaim(DocumentModel):

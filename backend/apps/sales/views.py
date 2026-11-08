@@ -14,8 +14,8 @@ from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, require_perm
 from apps.core.viewsets import DocumentViewSet, ExportableMixin, TenantModelViewSet, warehouse_scope
 
-from .models import CompanyClaim, CreditNote, CreditNoteApplication, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesOrder
-from .serializers import CompanyClaimSerializer, CreditNoteSerializer, DiscountContributionSerializer, SalesInvoiceEditSerializer, RepCollectionSerializer, RepSettlementSerializer, SalesInvoiceSerializer, SalesOrderListSerializer, SalesOrderSerializer
+from .models import CompanyClaim, CreditNote, CreditNoteApplication, DiscountContribution, RepCollection, RepSettlement, SalesInvoice, SalesOrder, SalonDiscountBracket
+from .serializers import CompanyClaimSerializer, CreditNoteSerializer, DiscountContributionSerializer, SalonDiscountBracketSerializer, SalesInvoiceEditSerializer, RepCollectionSerializer, RepSettlementSerializer, SalesInvoiceSerializer, SalesOrderListSerializer, SalesOrderSerializer
 from .services import CompanyClaimService, CreditNoteService, InvoiceService, OrderService, RepCollectionService
 
 
@@ -746,8 +746,44 @@ class DiscountContributionViewSet(TenantModelViewSet):
 
     @action(detail=False, methods=["get"])
     def rates(self, request):
-        """`GET /api/v1/settings/discount-contributions/rates` — the active total %s, nothing else."""
-        return Response([{"id": str(r.id), "total_pct": str(r.total_pct)} for r in self.get_queryset().filter(is_active=True).order_by("total_pct")])
+        """
+        `GET /api/v1/settings/discount-contributions/rates` — the active total %s, nothing else. A salon bracket's
+        "up to" % is offered too (owner, 8 Nov 2026), so a salon discount is picked without inventing a split for it
+        in the discount table.
+        """
+        rows = {r.total_pct.normalize(): {"id": str(r.id), "total_pct": str(r.total_pct)} for r in self.get_queryset().filter(is_active=True)}
+        for b in SalonDiscountBracket.objects.filter(is_active=True):
+            rows.setdefault(b.up_to_pct.normalize(), {"id": str(b.id), "total_pct": str(b.up_to_pct)})
+        return Response([rows[k] for k in sorted(rows)])
+
+
+class SalonDiscountBracketViewSet(TenantModelViewSet):
+    """Salon discount sharing (Settings): who bears a salon's discount below the T.P, bracket by bracket."""
+    serializer_class = SalonDiscountBracketSerializer
+    perm_map = page_perms("settings_discount_contributions", {"basis": "settings.view_discount_contribution"})
+    pagination_class = None
+    queryset = SalonDiscountBracket.objects.all()
+    BASES = ("below_tp", "whole")
+
+    @action(detail=False, methods=["get", "post"])
+    def basis(self, request):
+        """
+        `GET|POST /api/v1/settings/salon-discount-sharing/basis` — what a bracket's company % is a share of: "below_tp",
+        the part of the discount below the T.P, or "whole", the whole discount. Changing it needs the page's Edit.
+        """
+        from apps.core.permissions import has_tenant_perm
+        from apps.core.tenancy import get_current_tenant
+
+        tenant = get_current_tenant()
+        if request.method == "POST":
+            if not has_tenant_perm(request, "settings.change_discount_contribution"):
+                raise DomainError("You may not change who bears a salon's discount.", status_code=403, code="forbidden")
+            value = request.data.get("basis")
+            if value not in self.BASES:
+                raise DomainError("Choose the part below the T.P or the whole discount.", status_code=400, code="bad_basis")
+            tenant.settings = {**(tenant.settings or {}), "salon_share_basis": value}
+            tenant.save(update_fields=["settings"])
+        return Response({"basis": tenant.setting("salon_share_basis")})
 
 
 class CompanyClaimViewSet(DocumentViewSet):

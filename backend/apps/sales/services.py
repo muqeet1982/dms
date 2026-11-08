@@ -1574,36 +1574,83 @@ class InvoiceService:
             raise DomainError(f"The manufacturer's claim on {inv.number} was settled by a payment — reverse that payment first, or record a return.", code="claim_paid")
 
     @staticmethod
+    def discount_split(inv):
+        """
+        Who bears each line's discount: [(line, supplier, company_amount, rule, pct)], one per discounted line. The
+        invoice posting, its claims and the stored breakdown (record_discount_split) all read THIS, so the split in
+        Discounts Allowed can never drift from what is claimed or what the reports show.
+
+        * A salon (owner, 8 Nov 2026) buys at the R.P, its discount off the R.P. Still at or above the T.P after the
+          discount, the line is the distributor's alone ("above_tp"). Below it, the salon bracket its discount %
+          falls in gives the company's % of the part below the T.P, or of the whole discount (setting
+          `salon_share_basis`); no bracket for that % = the distributor's alone ("no_bracket").
+        * Anyone else: the discount table row for the invoice's discount % (5% = 3 + 2), the company's points OF THE
+          SALE ("table"), so a product's own discount (not co-funded) never inflates the claim.
+        """
+        from .models import DiscountContribution, SalonDiscountBracket
+
+        out = []
+        lines = [l for l in inv.lines.select_related("variant", "variant__product__supplier", "variant__product__brand__supplier") if (l.discount_amount or 0) > 0]
+        if not lines:
+            return out
+
+        def supplier_of(line):
+            product = line.variant.product
+            return product.supplier or (product.brand.supplier if product.brand_id else None)
+
+        if inv.customer.type == "salon":
+            brackets = list(SalonDiscountBracket.objects.filter(is_active=True).order_by("up_to_pct"))
+            whole = get_current_tenant().setting("salon_share_basis") == "whole"
+            for line in lines:
+                gross = q4(line.qty * line.unit_price)
+                if gross <= 0:
+                    continue
+                disc = min(line.discount_amount, gross)
+                listed = line.tp if line.tp else line.unit_price          # the R.P as sold, tax included on a tax invoice
+                tp = line.variant.sale_price or Decimal("0")
+                off = disc / gross                                          # the share of the R.P given away
+                pct = (off * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if tp <= 0 or listed * (1 - off) >= tp - Decimal("0.005"):
+                    out.append((line, supplier_of(line), Decimal("0"), "above_tp", Decimal("0")))
+                    continue
+                bracket = next((b for b in brackets if b.up_to_pct >= pct), None)
+                if bracket is None or supplier_of(line) is None:
+                    out.append((line, supplier_of(line), Decimal("0"), "no_bracket", Decimal("0")))
+                    continue
+                # the part of the discount down to the T.P is the distributor's in every case; below it is shared
+                shared = disc if whole else min(disc, max(Decimal("0"), disc - gross * (1 - tp / listed)))
+                out.append((line, supplier_of(line), round2(shared * bracket.company_pct / 100), "bracket", bracket.company_pct))
+            return out
+
+        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first() if inv.discount_pct and inv.discount_pct > 0 else None
+        for line in lines:
+            supplier = supplier_of(line)
+            if row is None or row.company_pct <= 0 or row.total_pct <= 0 or supplier is None:
+                out.append((line, supplier, Decimal("0"), "", Decimal("0")))
+                continue
+            out.append((line, supplier, min(q4(q4(line.qty * line.unit_price) * row.company_pct / 100), line.discount_amount), "table", row.company_pct))
+        return out
+
+    @staticmethod
     def company_shares(inv):
-        """
-        The manufacturer-funded part of this invoice's discount, per supplier, from the DiscountContribution
-        row for inv.discount_pct. The invoice posting and the claim journals both read THIS, so the split in
-        Discounts Allowed can never drift from what is actually claimed.
-        """
+        """The manufacturer-funded part of this invoice's discount, per supplier: {supplier_id: [(supplier, line, amount)]}."""
         from collections import defaultdict
 
-        from .models import DiscountContribution
-
-        groups = defaultdict(list)  # supplier_id -> [(supplier, line, company_amount)]
-        if not inv.discount_pct or inv.discount_pct <= 0:
-            return groups
-        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
-        if row is None or row.company_pct <= 0 or row.total_pct <= 0:
-            return groups
-        # the company funds its percentage points OF THE SALE (5% = 3 + 2): its share is base x company%,
-        # so a product's own discount (not co-funded) never inflates the claim
-        for line in inv.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
-            if line.discount_amount <= 0:
-                continue
-            product = line.variant.product
-            supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
-            if supplier is None:
-                continue
-            company_amt = q4(q4(line.qty * line.unit_price) * row.company_pct / 100)
-            if company_amt <= 0:
-                continue
-            groups[supplier.pk].append((supplier, line, company_amt))
+        groups = defaultdict(list)
+        for line, supplier, amt, _rule, _pct in InvoiceService.discount_split(inv):
+            if supplier is not None and amt > 0:
+                groups[supplier.pk].append((supplier, line, amt))
         return groups
+
+    @staticmethod
+    def record_discount_split(inv):
+        """The breakdown on each line, as it was posted: the company's share, the rule and its %."""
+        split = {line.pk: (amt, rule, pct) for line, _s, amt, rule, pct in InvoiceService.discount_split(inv)}
+        for line in inv.lines.all():
+            amt, rule, pct = split.get(line.pk, (Decimal("0"), "", Decimal("0")))
+            if (line.company_discount, line.discount_rule, line.share_pct) != (amt, rule, pct):
+                line.company_discount, line.discount_rule, line.share_pct = amt, rule, pct
+                line.save(update_fields=["company_discount", "discount_rule", "share_pct"])
 
     @staticmethod
     def other_tax_context(doc, lines):
@@ -1685,27 +1732,27 @@ class InvoiceService:
 
         from .models import CompanyClaim, CompanyClaimLine
 
-        from .models import DiscountContribution
-
         groups = InvoiceService.company_shares(inv)
         if not groups:
             return
-        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first()
         for items in groups.values():
             supplier = items[0][0]
             total = sum((amt for _, _, amt in items), Decimal("0"))
             if total <= 0:
                 continue
+            # the company's points of the sale: the table's own, or what a salon's brackets came to on these lines
+            base = sum((q4(line.qty * line.unit_price) for _, line, _ in items), Decimal("0"))
+            company_pct = (total / base * 100).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP) if base else Decimal("0")
             # a reopened invoice re-posts onto the SAME row (one claim per invoice×supplier): the cancelled
             # claim revives with the corrected figures instead of colliding with itself
             claim = CompanyClaim.objects.filter(invoice=inv, supplier=supplier).first()
             if claim is not None:
-                claim.date, claim.discount_pct, claim.company_pct, claim.total = inv.date, inv.discount_pct, row.company_pct, total
+                claim.date, claim.discount_pct, claim.company_pct, claim.total = inv.date, inv.discount_pct, company_pct, total
                 claim.status, claim.paid_amount = "posted", Decimal("0")
                 claim.save(update_fields=["date", "discount_pct", "company_pct", "total", "status", "paid_amount", "updated_at"])
                 claim.lines.all().delete()
             else:
-                claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=row.company_pct, total=total)
+                claim = CompanyClaim.objects.create(number=derived_number(inv.number, "company_claim", CompanyClaim), invoice=inv, supplier=supplier, date=inv.date, discount_pct=inv.discount_pct, company_pct=company_pct, total=total)
             for _, line, amt in items:
                 CompanyClaimLine.objects.create(claim=claim, variant=line.variant, qty=line.qty, base_amount=q4(line.qty * line.unit_price), company_amount=amt)
             claim.journal = PostingService.post_company_claim(claim)
@@ -1736,6 +1783,7 @@ class InvoiceService:
         inv.journal = PostingService.post_sales_invoice(inv)
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])
+        InvoiceService.record_discount_split(inv)
         InvoiceService._raise_company_claims(inv)
         # entries held by a reopen that the corrected invoice no longer needs (a claim or COGS that fell away)
         PostingService.purge_held(inv)
@@ -1852,7 +1900,7 @@ class InvoiceService:
 def returned_company_shares(cn):
     """
     The manufacturer's share of the discount on the goods a return brings back, per supplier: {supplier_id: (claim,
-    share)} — the returned list value x the claim's company %, never more than the claim. The return's journal
+    share)} — what the company funded per unit of each returned item, never more than the claim. The return's journal
     credits it back to the incentive head and the claw-back reduces the claim by it, so the two always agree.
     """
     from collections import defaultdict
@@ -1863,18 +1911,33 @@ def returned_company_shares(cn):
     claims = {c.supplier_id: c for c in inv.company_claims.exclude(status__in=("cancelled", "written_off"))}
     if not claims:
         return {}
-    base_by_supplier = defaultdict(Decimal)
+    from .models import CompanyClaimLine
+
+    # what the company funded per unit of each item, as claimed: a salon's bracket differs line by line, so the claim's
+    # one % cannot say it; a claim from the discount table gives the same figure as its % would
+    funded = defaultdict(lambda: [Decimal("0"), Decimal("0")])
+    for cl in CompanyClaimLine.objects.filter(claim__in=list(claims.values())).values("claim__supplier_id", "variant_id", "qty", "company_amount"):
+        f = funded[(cl["claim__supplier_id"], cl["variant_id"])]
+        f[0] += cl["company_amount"]
+        f[1] += cl["qty"]
+    share_by_supplier = defaultdict(Decimal)
     for l in cn.lines.select_related("variant__product__supplier", "variant__product__brand__supplier"):
         product = l.variant.product
         supplier = product.supplier or (product.brand.supplier if product.brand_id else None)
-        if supplier is not None and supplier.pk in claims:
-            base_by_supplier[supplier.pk] += q4(l.qty * l.unit_price)
+        if supplier is None or supplier.pk not in claims:
+            continue
+        amount, qty = funded.get((supplier.pk, l.variant_id), (None, None))
+        if qty:
+            share_by_supplier[supplier.pk] += q4(amount / qty * l.qty)
+        elif not any(k[0] == supplier.pk for k in funded):
+            # a claim with no lines (none are raised that way): its one % is all there is
+            share_by_supplier[supplier.pk] += q4(q4(l.qty * l.unit_price) * claims[supplier.pk].company_pct / 100)
+        # an item on the claim's invoice the company funded nothing for brings nothing back
     out = {}
-    for supplier_id, base in base_by_supplier.items():
-        claim = claims[supplier_id]
-        share = min(q4(base * claim.company_pct / 100), claim.total)
+    for supplier_id, share in share_by_supplier.items():
+        share = min(share, claims[supplier_id].total)
         if share > 0:
-            out[supplier_id] = (claim, share)
+            out[supplier_id] = (claims[supplier_id], share)
     # never more than the discount the return actually reverses (a hand-edited line can carry less)
     total = sum((sh for _c, sh in out.values()), Decimal("0"))
     if total > cn.discount:

@@ -9,5 +9,6 @@ router.register("credit-notes", views.CreditNoteViewSet, basename="credit-notes"
 router.register("rep-collections", views.RepCollectionViewSet, basename="rep-collections")
 router.register("rep-settlements", views.RepSettlementViewSet, basename="rep-settlements")
 router.register("settings/discount-contributions", views.DiscountContributionViewSet, basename="discount-contributions")
+router.register("settings/salon-discount-sharing", views.SalonDiscountBracketViewSet, basename="salon-discount-sharing")
 router.register("company-claims", views.CompanyClaimViewSet, basename="company-claims")
 urlpatterns = router.urls

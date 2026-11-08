@@ -448,6 +448,76 @@ def wastage_by_reason(date_from=None, date_to=None, **_):
     return {"columns": ["reason", "category", "adjustments", "value"], "column_labels": {"adjustments": "Documents"}, "rows": rows, "totals": {"value": str(sum((Decimal(r["value"]) for r in rows), Z))}}
 
 
+CUSTOMER_TYPES = {"Salon": "salon", "Retailer": "retailer", "Wholesaler": "wholesaler", "LMT": "lmt", "Other": "other"}
+
+
+def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=None, supplier=None, **_):
+    """
+    Who bore every discount given (owner, 8 Nov 2026: salon discount sharing, "need report for this as well"): per
+    invoice line, the list price (a salon's R.P), the T.P, the discount, and the distributor's and the company's
+    shares as they were posted, with the rule that split it. The shares are what the books carry: the company's is
+    its claim, the distributor's is Discounts Allowed.
+    """
+    from apps.sales.models import CompanyClaimLine
+
+    filters = {"discount_amount__gt": 0}
+    if customer_type in CUSTOMER_TYPES:
+        filters["invoice__customer__type"] = CUSTOMER_TYPES[customer_type]
+    if customer:
+        filters["invoice__customer_id"] = customer
+    lines = _inv_lines(date_from, date_to, **filters).select_related("variant__product__brand__supplier").order_by("invoice__date", "invoice__number", "sequence")
+    if supplier:
+        lines = lines.filter(Q(variant__product__supplier_id=supplier) | Q(variant__product__supplier__isnull=True, variant__product__brand__supplier_id=supplier))
+    lines = list(lines)
+    # invoices posted before the breakdown was stored: the company's share is what their claims carry
+    claimed = defaultdict(lambda: [Z, Z])
+    old = {l.invoice_id for l in lines if not l.discount_rule}
+    if old:
+        for cl in CompanyClaimLine.objects.filter(claim__invoice_id__in=old).exclude(claim__status="cancelled").values("claim__invoice_id", "variant_id", "qty", "company_amount"):
+            c = claimed[(cl["claim__invoice_id"], cl["variant_id"])]
+            c[0] += cl["company_amount"]
+            c[1] += cl["qty"]
+
+    def pct(x):
+        return f"{Decimal(x).normalize():f}%"
+
+    rows, tot = [], defaultdict(Decimal)
+    for l in lines:
+        p = l.variant.product
+        gross = l.qty * l.unit_price
+        listed = l.tp if l.tp else l.unit_price
+        off = (l.discount_amount / gross) if gross else Z
+        company = l.company_discount
+        if l.discount_rule:
+            rule = {"table": f"Discount Table (Company {pct(l.share_pct)} Of Sale)", "above_tp": "Salon: At Or Above T.P",
+                    "bracket": f"Salon Bracket (Company Bears {pct(l.share_pct)})", "no_bracket": "Salon: No Bracket Set"}[l.discount_rule]
+        else:
+            amount, qty = claimed.get((l.invoice_id, l.variant_id), (Z, Z))
+            company = (amount / qty * l.qty).quantize(Decimal("0.01")) if qty else Z
+            rule = f"Discount Table {pct(l.invoice.discount_pct)}" if company else "No Company Share"
+        maker = p.supplier or (p.brand.supplier if p.brand_id else None)
+        rows.append({
+            "date": l.invoice.date, "invoice": l.invoice.number, "customer": l.invoice.customer.name, "customer_type": l.invoice.customer.get_type_display(),
+            "label": l.variant.name, "codes": " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x),
+            "qty": str(l.qty), "list_price": str(listed), "trade_price": str(l.variant.sale_price),
+            "discount_pct": str((off * 100).quantize(Decimal("0.01"))), "price_after": str((listed * (1 - off)).quantize(Decimal("0.01"))),
+            "discount": str(l.discount_amount), "distributor_share": str(l.discount_amount - company), "company_share": str(company),
+            "rule": rule, "company": maker.name if maker else "",
+        })
+        tot["discount"] += l.discount_amount
+        tot["company_share"] += company
+    tot["distributor_share"] = tot["discount"] - tot["company_share"]
+    return {
+        "columns": ["date", "invoice", "customer", "label", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
+        "rows": rows, "totals": {k: str(tot[k]) for k in ("discount", "distributor_share", "company_share")},
+        "column_labels": {"label": "Product Name", "list_price": "List Price", "trade_price": "T.P", "discount_pct": "Discount %", "price_after": "Price After Discount",
+                          "discount": "Total Discount", "distributor_share": "Distributor Share", "company_share": "Company Share"},
+        "column_styles": {"label": "bold"}, "notes": {"label": "codes", "customer": "customer_type"},
+        "export_columns": ["date", "invoice", "customer", "customer_type", "label", "codes", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
+        "text_columns": ["codes"],
+    }
+
+
 def returns_report(date_from=None, date_to=None, result=None, **_):
     """
     Everything that came back and where it went (owner, 5 Nov 2026: "report if item going back to stock or wastage"):

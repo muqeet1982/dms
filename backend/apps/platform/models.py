@@ -194,6 +194,9 @@ class Tenant(models.Model):
         # how a manufacturer claim settles: "manual" (receipt or net-off by hand) or "auto_net_off" — the
         # owner's rule: the Keune payable minuses the moment the claim posts
         "claim_settlement": "manual",
+        # salon discount sharing (owner, 8 Nov 2026): below the T.P the company bears its bracket's % of "below_tp", the
+        # part of the discount below the T.P, or of "whole", the whole discount (see sales.SalonDiscountBracket)
+        "salon_share_basis": "below_tp",
         "require_shift_for_orders": False,
         "shift_gap_minutes": 15,
         "shift_lost_end_minutes": 30,

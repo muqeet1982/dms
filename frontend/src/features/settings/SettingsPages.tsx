@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
 import { date, datetime, money, titleCase } from "@/lib/format";
 import { useOptions } from "@/lib/hooks";
-import { pageRights, usePerms } from "@/lib/perms";
+import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, Tabs } from "@/components/ui/Bits";
 import { CrudPage } from "@/components/ui/CrudPage";
@@ -421,6 +421,56 @@ export function DiscountContributionsPage() {
   );
 }
 
+
+/** Salon discount sharing (owner, 8 Nov 2026): a salon's discount is off the R.P. At or above the T.P after it, the
+ *  distributor bears it all; below the T.P, the bracket its discount % falls in says what the company bears. */
+export function SalonDiscountSharingPage() {
+  const qc = useQueryClient();
+  const rights = usePage("settings_discount_contributions");
+  const basis = useQuery({ queryKey: ["salon-share-basis"], queryFn: () => api.get("/api/v1/settings/salon-discount-sharing/basis") });
+  const [saving, setSaving] = useState(false);
+  const save = async (value: string) => {
+    setSaving(true);
+    try {
+      await api.post("/api/v1/settings/salon-discount-sharing/basis", { basis: value });
+      qc.invalidateQueries({ queryKey: ["salon-share-basis"] });
+      toast.success("Saved");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const pct = (v: any) => `${Number(v)}%`;
+  return (
+    <CrudPage
+      page="settings_discount_contributions"
+      title="Salon discount sharing"
+      crumbs={[{ label: "Settings" }, { label: "Salon discount sharing" }]}
+      endpoint="/api/v1/settings/salon-discount-sharing"
+      intro={<div className="card mb-3"><div className="card-body py-2"><div className="row g-2 align-items-end">
+        <Field label="Company Bears Its % Of" col="col-md-4">
+          <select className="form-select" value={(basis.data as any)?.basis || "below_tp"} disabled={saving || !rights.edit} onChange={(e) => save(e.target.value)}>
+            <option value="below_tp">The Part Of The Discount Below T.P</option>
+            <option value="whole">The Whole Discount</option>
+          </select>
+        </Field>
+      </div></div></div>}
+      columns={[
+        { key: "up_to_pct", header: "Discount Up To", render: (r: any) => pct(r.up_to_pct) },
+        { key: "company_pct", header: "Company Bears", render: (r: any) => pct(r.company_pct) },
+        { key: "distributor_pct", header: "Distributor Bears", render: (r: any) => pct(r.distributor_pct) },
+        { key: "is_active", header: "Active", render: (r: any) => (r.is_active ? "Yes" : "No") },
+      ]}
+      fields={[
+        { name: "up_to_pct", label: "Discount Up To %", type: "number", required: true },
+        { name: "company_pct", label: "Company Bears %", type: "number", required: true },
+        { name: "is_active", label: "Active", type: "checkbox", default: true },
+      ]}
+      onSaved={() => qc.invalidateQueries({ queryKey: ["discount-rates"] })}
+    />
+  );
+}
 
 /** FBR Digital Invoicing — identity, the two tokens, the sandbox switch, and reference data sync.
  *  Filing stays opt-in per invoice: nothing here files anything by itself. */
