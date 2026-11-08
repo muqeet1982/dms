@@ -1331,6 +1331,61 @@ class InvoiceService:
         return bool(tenant.setting("tp_includes_tax")) if tenant is not None else True
 
     @staticmethod
+    def files_with_fbr():
+        """Whether this company is set up for FBR e-invoicing (a token entered): then a sales tax invoice takes its STI
+        number when FBR accepts it, not when it is posted (owner, 8 Nov 2026)."""
+        from apps.fbr.models import FBRSettings
+
+        s = FBRSettings.objects.first()
+        return bool(s and (s.production_token or s.sandbox_token))
+
+    @staticmethod
+    def take_tax_number(inv):
+        """Into the sales tax invoice series: the next STI number."""
+        InvoiceService.renumber_everywhere(inv, next_number("tax_invoice", unique_for=(SalesInvoice, "number")), "invoice.tax_numbered")
+
+    @staticmethod
+    def leave_tax_number(inv):
+        """Out of the sales tax invoice series, back to its order's number. The STI number goes back to the series if it
+        was the last one given, so the series keeps no gap; an older one is not reused (two papers would share it)."""
+        from apps.core.numbering import derived_number, give_back
+
+        old = inv.number
+        InvoiceService.renumber_everywhere(inv, derived_number(inv.order.number if inv.order_id else None, "sales_invoice", SalesInvoice), "invoice.left_tax_series")
+        give_back("tax_invoice", old)
+
+    @staticmethod
+    def renumber_everywhere(inv, new, action):
+        """
+        A new number for an invoice, and every place that quotes the old one as text (owner, 8 Nov 2026: "make sure it
+        should update everywhere"): the stock ledger's references, and the memo and line descriptions of every journal
+        (its posting, COGS, manufacturer claims, receipts, returns), which the customer's ledger and the general ledger
+        read. Everything else points at the invoice itself and follows it. A -2 invoice is never mistaken for its parent.
+        """
+        import re
+
+        from django.db.models import Q
+
+        from apps.accounting.models import JournalEntry, JournalLine
+        from apps.core.numbering import renumber
+
+        old = inv.number
+        if not old or old == new:
+            return inv
+        renumber(inv, new)
+        quoted = re.compile(re.escape(old) + r"(?![-\w])")
+        for je in JournalEntry.objects.filter(Q(memo__contains=old) | Q(source_number=old)):
+            je.memo = quoted.sub(new, je.memo)
+            if je.source_number == old:
+                je.source_number = new
+            je.save(update_fields=["memo", "source_number", "updated_at"])
+        for line in JournalLine.objects.filter(description__contains=old):
+            line.description = quoted.sub(new, line.description)
+            line.save(update_fields=["description"])
+        AuditService.log(action, inv, before={"number": old}, after={"number": new})
+        return inv
+
+    @staticmethod
     def is_tax_numbered(inv):
         from apps.core.numbering import _prefix_for
 
@@ -1662,11 +1717,13 @@ class InvoiceService:
         retotal_advance_tax(inv, inv.customer.advance_income_tax_rate)
         # a tax invoice takes the next number of the tax-invoice series when it goes to the books — not before, so a
         # draft switched back or never posted leaves no gap in it (owner, 1 Nov 2026: TDN-STI-00001, TDN-STI-00002 …)
-        if inv.force_tax_type_id and not InvoiceService.is_tax_numbered(inv):
-            before = inv.number
-            inv.number = next_number("tax_invoice", unique_for=(SalesInvoice, "number"))
-            inv.save(update_fields=["number", "updated_at"])
-            AuditService.log("invoice.tax_numbered", inv, before={"number": before}, after={"number": inv.number})
+        # the sales tax invoice series (owner, 8 Nov 2026): a company that files with FBR numbers a tax invoice when FBR
+        # accepts it (fbr.services.submit), so the series is exactly the filed invoices, with no gap; one that does
+        # not, when it is posted. An invoice switched back to no tax returns to its order's number either way.
+        if inv.force_tax_type_id and not InvoiceService.is_tax_numbered(inv) and not InvoiceService.files_with_fbr():
+            InvoiceService.take_tax_number(inv)
+        elif not inv.force_tax_type_id and InvoiceService.is_tax_numbered(inv):
+            InvoiceService.leave_tax_number(inv)
         inv.journal = PostingService.post_sales_invoice(inv)
         inv.status = "posted"
         inv.save(update_fields=["journal", "status", "updated_at"])

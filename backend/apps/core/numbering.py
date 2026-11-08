@@ -68,6 +68,22 @@ def renumber(doc, number: str) -> None:
     doc.number = number
 
 
+def give_back(document_type: str, number: str, tenant_id=None) -> bool:
+    """A number the series gave last returns to it, so the next document takes it and the series has no gap. Any
+    other number is not reused: two papers must never carry the same one. True if it went back."""
+    tenant_id = tenant_id or get_current_tenant_id()
+    with transaction.atomic():
+        seq = NumberSequence.all_objects.select_for_update().filter(tenant_id=tenant_id, document_type=document_type).first()
+        if seq is None or seq.reset == "yearly" or seq.next_number <= 1:
+            return False
+        last = f"{_company_code(tenant_id)}{seq.prefix}{str(seq.next_number - 1).zfill(seq.padding)}"
+        if number != last:
+            return False
+        seq.next_number -= 1
+        seq.save(update_fields=["next_number", "updated_at"])
+        return True
+
+
 def derived_base(parent_number: str, document_type: str, tenant_id=None) -> str:
     """The number a child of this parent is meant to carry: SO-00001 -> DN-00001."""
     return f"{_prefix_for(document_type, tenant_id or get_current_tenant_id())}{numeric_core(parent_number)}"

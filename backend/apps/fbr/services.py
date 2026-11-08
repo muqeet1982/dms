@@ -382,7 +382,33 @@ def submit(inv, actor=None):
                      after={"number": filing.fbr_invoice_number, "error": filing.error_text[:300]}, actor=actor)
     if not ok:
         raise DomainError(f"FBR refused the invoice: {filing.error_text}", code="fbr_rejected")
+    if not sandbox:
+        _take_tax_number(inv)
     return filing
+
+
+def _take_tax_number(inv):
+    """
+    FBR accepted the invoice for real: it takes the next sales tax invoice (STI) number now (owner, 8 Nov 2026: "only set
+    invoice number for submit tax invoice to fbr"). Until then it carried its order's number, so switching the tax on or
+    off never touched the series, and a filed invoice cannot change, so the series is exactly the filed invoices, in
+    order. A sandbox filing is a test and takes none. FBR has the invoice whatever happens here, so a failure to renumber
+    must not undo the filing: it is recorded and left for the office.
+    """
+    import logging
+
+    from django.db import transaction
+
+    from apps.sales.services import InvoiceService
+
+    if InvoiceService.is_tax_numbered(inv):
+        return
+    try:
+        with transaction.atomic():
+            InvoiceService.take_tax_number(inv)
+    except Exception:  # pragma: no cover - the filing above stands; the number can be given by support
+        logging.getLogger(__name__).exception("FBR accepted %s but it could not take its STI number", inv.number)
+        AuditService.log("fbr.tax_number_failed", inv, after={"number": inv.number})
 
 
 # ── scenario tests (§10): FBR's sample payloads, seller fields and date replaced — NOTHING else ─────
