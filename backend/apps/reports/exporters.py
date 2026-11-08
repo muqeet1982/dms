@@ -55,6 +55,26 @@ def _qty_shape(col, v):
     return v
 
 
+# columns that hold codes, not amounts, even when every value is made of digits (a UPC, an NTN, a phone number)
+IDENT_COL = re.compile(r"(^|_)(code|sku|upc|barcode|ntn|strn|cnic|phone|mobile|whatsapp|number|no|batch|reference|ref)(_|$)", re.I)
+
+
+def numeric_columns(result, cols, rows):
+    """The columns that read right-aligned: every value a figure (owner, 8 Nov 2026: "if text, should be left align and if
+    number then right align ... in all tables and report"). The report screen applies the same rule."""
+    from apps.core.templatetags.docs import isnumber
+
+    text = set(result.get("text_columns") or ())
+    out = set()
+    for i, c in enumerate(cols):
+        if c in text or IDENT_COL.search(str(c)):
+            continue
+        values = [r["cells"][i] for r in rows if str(r["cells"][i]).strip() not in ("", "—")]
+        if values and all(isnumber(v) for v in values):
+            out.add(i)
+    return out
+
+
 def _col_label(result, c):
     return (result.get("column_labels") or {}).get(c) or c.replace("_", " ").title()
 
@@ -191,12 +211,10 @@ def to_pdf(result, title="", tenant=None, params=None):
                 if source.get(notes.get(c)):
                     row["cells"][i] = format_html('{}<div class="cell-note">{}</div>', row["cells"][i], source[notes[c]])
 
-    from apps.core.templatetags.docs import isnumber
-
     html = render_to_string("reports/report.html", {
         "title": title, "cols": cols, "col_labels": labels if result.get("column_labels") else None,
         # a heading sits over its figures on the right, and over a column of words on the left
-        "left_heads": [i for i in range(len(cols)) if not any(isnumber(r["cells"][i]) for r in rows)], "faint_zeros": result.get("faint_zeros"), "dark_header": result.get("header_groups") and not result.get("plain_header"),
+        "num_cols": numeric_columns(result, cols, rows), "bold_cols": [i for i, c in enumerate(cols) if (result.get("column_styles") or {}).get(c) == "bold"], "faint_zeros": result.get("faint_zeros"), "dark_header": result.get("header_groups") and not result.get("plain_header"),
         "groups": result.get("header_groups"), "rows": rows, "totals": _footer_totals(result), "tenant": tenant,
         "params": {**{k: cell(v) for k, v in (params or {}).items()}, **(result.get("print_params") or {})}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",

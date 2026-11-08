@@ -1,6 +1,7 @@
 """
-The sales reports read in the owner's words (6 Nov 2026): Sales By Product is headed Product Name with the item code and UPC
-under the name, Sales By Brand is headed Brand, Sales By Supplier is headed Supplier Name.
+The sales reports read in the owner's words (6 and 8 Nov 2026): Sales By Product is headed Product Name, in bold, with the item
+code and UPC under the name; Sales By Brand is headed Brand, Sales By Supplier Supplier Name; Sales By Customer Customer Name
+with the sale person under it; Sales by rep is Sales by Sale Person. Words read left and figures right, on screen and in print.
 """
 import io
 from decimal import Decimal as D
@@ -93,3 +94,56 @@ def test_brand_and_supplier_are_headed_in_their_own_words(api, sold):
     for key, head in (("sales_by_brand", "Brand"), ("sales_by_supplier", "Supplier Name")):
         csv = api.get(f"/api/v1/reports/{key}", {"format": "csv"})
         assert (b"".join(csv.streaming_content) if csv.streaming else csv.content).decode("utf-8-sig").startswith(f"{head},")
+
+
+def _pdf_html(api, monkeypatch, key):
+    from django.template import loader
+
+    seen, real = {}, loader.render_to_string
+
+    def capture(template, context=None, *a, **k):
+        seen["html"] = real(template, context, *a, **k)
+        return seen["html"]
+
+    monkeypatch.setattr(loader, "render_to_string", capture)
+    assert api.get(f"/api/v1/reports/{key}", {"format": "pdf"}).status_code == 200
+    return seen["html"]
+
+
+def test_product_names_print_bold_and_every_figure_reads_right(api, sold, monkeypatch):
+    v, _s = sold
+    data = api.get("/api/v1/reports/sales_by_product").data
+    assert data["column_styles"] == {"label": "bold"}
+    html = _pdf_html(api, monkeypatch, "sales_by_product")
+    assert f'<td class="b">{v.name}<div class="cell-note">' in html
+    assert '<th>Product Name</th><th class="r">Qty</th>' in html, "the quantity is a figure: right, though it is the second column"
+    assert '<th class="r">Invoices</th>' in html and '<td class="r">1</td>' in html
+
+
+def test_codes_stay_left_however_they_look(api, tenant, sold, monkeypatch):
+    html = _pdf_html(api, monkeypatch, "stock_summary")
+    assert '<th>Upc</th>' in html or '<th>UPC</th>' in html
+    assert '<th class="r">Upc</th>' not in html and '<th class="r">UPC</th>' not in html
+
+
+def test_sales_by_customer_shows_the_name_and_who_sold_to_them(api, tenant, sold):
+    from apps.partners.models import Customer, Supplier, SupplierRep
+
+    data = api.get("/api/v1/reports/sales_by_customer").data
+    row = data["rows"][0]
+    assert data["column_labels"]["label"] == "Customer Name" and row["label"] == "Salon One", "the name, not the code"
+    assert data["notes"] == {"label": "sold_by"} and data["export_columns"][:2] == ["label", "sale_person"]
+    with tenant_context(tenant, tenant.owner):
+        rep = SupplierRep.objects.create(supplier=Supplier.objects.first(), code="R-1", name="Imran", phone="03001110000")
+        Customer.objects.get(name="Salon One").assigned_reps.add(rep)
+    row = api.get("/api/v1/reports/sales_by_customer").data["rows"][0]
+    assert row["sale_person"] == "Imran" and row["sold_by"] == "Sale Person: Imran", "no rep on the invoices: the customer's own"
+    csv = api.get("/api/v1/reports/sales_by_customer", {"format": "csv"})
+    assert (b"".join(csv.streaming_content) if csv.streaming else csv.content).decode("utf-8-sig").startswith("Customer Name,Sale Person,")
+
+
+def test_sales_by_rep_reads_sales_by_sale_person_and_sales_by_product_has_no_saved_filters(api, sold):
+    reports = {r["key"]: r for r in api.get("/api/v1/reports").data}
+    assert reports["sales_by_rep"]["title"] == "Sales by Sale Person"
+    assert api.get("/api/v1/reports/sales_by_rep").data["column_labels"]["label"] == "Sale Person"
+    assert reports["sales_by_product"]["saved_filters"] is False and reports["sales_by_brand"]["saved_filters"] is True

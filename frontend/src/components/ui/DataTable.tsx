@@ -3,13 +3,24 @@ import { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { EmptyState, Spinner } from "./Bits";
 
+// a column of figures reads right-aligned unless it holds codes (owner, 8 Nov 2026: "if text, should be left align and if
+// number then right align ... in all tables"). A column says num: true or false to decide for itself.
+const IDENT = /(^|_)(code|sku|upc|barcode|ntn|strn|cnic|phone|mobile|whatsapp|number|no|batch|reference|ref|id)(_|$)/i;
+const figure = (v: any) => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) && v.length < 20);
+function autoNum<T>(c: Column<T>, rows: T[] | undefined) {
+  if (c.num !== undefined) return c.num;
+  if (IDENT.test(c.key) || !rows?.length) return false;
+  const raw = rows.map((r) => (r as any)[c.key]).filter((v) => v !== null && v !== undefined && v !== "");
+  return raw.length > 0 && raw.every(figure);
+}
+
 export type Column<T> = { key: string; header: ReactNode; render?: (row: T) => ReactNode; className?: string; num?: boolean; sortKey?: string; hidden?: boolean };
 
 export function DataTable<T extends { id?: string }>({ columns, rows, loading, rowLink, onRowClick, emptyText, ordering, onSort, footer, small, rowClass }: {
   columns: Column<T>[]; rows: T[] | undefined; loading?: boolean; rowLink?: (r: T) => string | undefined; onRowClick?: (r: T) => void; emptyText?: ReactNode; ordering?: string; onSort?: (k: string) => void; footer?: ReactNode; small?: boolean; rowClass?: (r: T) => string;
 }) {
   const nav = useNavigate();
-  const cols = columns.filter((c) => !c.hidden);
+  const cols = columns.filter((c) => !c.hidden).map((c) => ({ ...c, num: autoNum(c, rows) }));
   return (
     <div className="table-responsive">
       <table className={`table table-hover align-middle mb-0 ${small ? "table-sm" : ""}`}>

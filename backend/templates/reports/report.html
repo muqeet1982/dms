@@ -42,11 +42,11 @@ landscape when there are more columns than a portrait page can hold.
   </style>{% endif %}
   <thead>
   {% if groups %}<tr class="rg-top">{% for g in groups %}<th colspan="{{ g.span }}">{{ g.label }}</th>{% endfor %}</tr>{% endif %}
-  {% if col_labels %}<tr class="rg-sub">{% for c in col_labels %}<th{% if forloop.counter > 2 and forloop.counter0 not in left_heads %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
-  {% else %}<tr>{% for c in cols %}<th{% if forloop.counter > 2 and forloop.counter0 not in left_heads %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
+  {% if col_labels %}<tr class="rg-sub">{% for c in col_labels %}<th{% if forloop.counter0 in num_cols %} class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr>
+  {% else %}<tr>{% for c in cols %}<th{% if forloop.counter0 in num_cols %} class="r"{% endif %}>{{ c|label }}</th>{% endfor %}</tr>{% endif %}
   </thead>
   <tbody>
-  {% for r in rows %}<tr{% if r.kind %} class="st-{{ r.kind }}"{% endif %}>{% for v in r.cells %}{% if forloop.counter > 2 and v|isnumber %}<td class="r{% if faint_zeros and v|iszero %} z{% endif %}">{{ v|cell }}</td>{% else %}<td>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+  {% for r in rows %}<tr{% if r.kind %} class="st-{{ r.kind }}"{% endif %}>{% for v in r.cells %}{% if forloop.counter0 in num_cols %}<td class="r{% if faint_zeros and v|iszero %} z{% endif %}{% if forloop.counter0 in bold_cols %} b{% endif %}">{{ v|cell }}</td>{% else %}<td{% if forloop.counter0 in bold_cols %} class="b"{% endif %}>{{ v }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
   {% if not rows %}<tr><td colspan="{{ cols|length }}" style="text-align:center;color:#6B7280;padding:14px">Nothing in this range.</td></tr>{% endif %}
   </tbody>
 </table>

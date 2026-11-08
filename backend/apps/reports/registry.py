@@ -27,14 +27,14 @@ WAREHOUSE = [{"name": "warehouse", "type": "warehouse"}]
 
 REPORTS = {
     # ---- sales
-    "sales_by_product": {"title": "Sales by product", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_product, "perm": OPS},
+    "sales_by_product": {"title": "Sales by product", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_product, "perm": OPS, "saved_filters": False},
     "sales_by_brand": {"title": "Sales by brand", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_brand, "perm": OPS},
     "sales_by_supplier": {"title": "Sales by supplier (manufacturer)", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_supplier, "perm": OPS},
     "sales_by_customer": {"title": "Sales by customer", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_customer, "perm": OPS},
     "sales_by_territory": {"title": "Sales by territory", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_territory, "perm": OPS},
     "sales_by_route": {"title": "Sales by route", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_route, "perm": OPS},
-    "sales_by_rep": {"title": "Sales by rep", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_rep, "perm": OPS},
-    "rep_daily_sheet": {"title": "Sales by rep — daily sheet", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep"}], "query": rep_daily.daily_sheet, "perm": OPS},
+    "sales_by_rep": {"title": "Sales by Sale Person", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_rep, "perm": OPS},
+    "rep_daily_sheet": {"title": "Sales by Sale Person — daily sheet", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep"}], "query": rep_daily.daily_sheet, "perm": OPS},
     "out_of_area_activity": {"title": "Out-of-area activity (working areas)", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep"}], "query": ops.out_of_area_activity, "perm": OPS},
     "area_coverage": {"title": "Working areas — coverage", "area": "sales", "params": [], "query": ops.area_coverage, "perm": OPS},
     "customers_without_area": {"title": "Customers in no working area", "area": "sales", "params": [], "query": ops.customers_without_area, "perm": OPS},
@@ -103,4 +103,5 @@ REPORTS = {
 
 
 def catalog():
-    return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"], "feature": v.get("feature")} for k, v in REPORTS.items()]
+    return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"], "feature": v.get("feature"),
+             "saved_filters": v.get("saved_filters", True)} for k, v in REPORTS.items()]

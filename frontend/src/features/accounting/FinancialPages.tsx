@@ -214,7 +214,7 @@ export function GeneralLedgerPage() {
       <PageHeader title="General ledger" crumbs={[{ label: "Financial Reports" }, { label: "General ledger" }]}
         actions={<Exports k="general_ledger" params={params} />} />
       <Range from={from} to={to} setFrom={setFrom} setTo={setTo} extra={
-        <Field label="Account" col="col-md-4" hint="Leave empty for every account">
+        <Field label="Account" col="col-md-4">
           <EntitySelect endpoint="/api/v1/accounting/accounts" query={{ is_group: false }} value={account} onChange={setAccount}
             mapOption={(a: any) => ({ id: a.id, label: `${a.code} ${a.name}`, sub: a.type })} placeholder="All accounts" />
         </Field>} />

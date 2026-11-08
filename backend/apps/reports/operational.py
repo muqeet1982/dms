@@ -68,6 +68,7 @@ def sales_by_product(date_from=None, date_to=None, **_):
 
     out = _group(_inv_lines(date_from, date_to), lambda l: l.variant_id, lambda l: l.variant.name, codes)
     out["column_labels"] = {"label": "Product Name", "upc": "UPC"}
+    out["column_styles"] = {"label": "bold"}   # owner, 8 Nov 2026
     out["notes"] = {"label": "codes"}
     out["export_columns"] = ["label", "item_code", "upc", *out["columns"][1:]]
     out["text_columns"] = ["item_code", "upc"]
@@ -87,7 +88,25 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
 
 
 def sales_by_customer(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to), lambda l: l.invoice.customer_id, lambda l: f"{l.invoice.customer.code} {l.invoice.customer.name}")
+    """Headed Customer Name, with who sold to them under the name (owner, 8 Nov 2026): the sale persons on its invoices in
+    the period, else the reps the customer is assigned to. A spreadsheet takes them as a column of their own."""
+    lines = _inv_lines(date_from, date_to).select_related("invoice__customer", "invoice__rep")
+    out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
+    sold_by = defaultdict(dict)
+    for l in lines:
+        if l.invoice.rep_id:
+            sold_by[str(l.invoice.customer_id)][l.invoice.rep.name] = None
+    from apps.partners.models import Customer
+
+    assigned = {str(c.pk): [r.name for r in c.assigned_reps.all()] for c in Customer.objects.filter(pk__in=[r["key"] for r in out["rows"] if r["key"] not in sold_by]).prefetch_related("assigned_reps")}
+    for r in out["rows"]:
+        names = list(sold_by.get(r["key"], {})) or assigned.get(r["key"], [])
+        r["sale_person"] = ", ".join(names)
+        r["sold_by"] = f"Sale Person: {r['sale_person']}" if names else ""
+    out["column_labels"] = {"label": "Customer Name", "sale_person": "Sale Person"}
+    out["notes"] = {"label": "sold_by"}
+    out["export_columns"] = ["label", "sale_person", *out["columns"][1:]]
+    return out
 
 
 def _sold_on_credit(invoice):
@@ -100,6 +119,7 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     lines = _inv_lines(date_from, date_to).select_related("invoice__order", "invoice__customer")
     out = _group(lines, lambda l: l.invoice.rep_id, lambda l: l.invoice.rep.name if l.invoice.rep_id else "(staff)")
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
+    out["column_labels"] = {"label": "Sale Person"}   # owner, 8 Nov 2026: "Sales by Sale Person"
 
     # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
     credit, returns, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()

@@ -304,7 +304,7 @@ def test_the_print_fits_the_page_and_names_the_rep_and_the_dates_properly(api, e
     assert seen["params"] == {"date_from": "03/11/2026", "date_to": "03/11/2026", "rep": "Talha"}
     assert 'class="st-subtotal"' in seen["html"] and 'class="r z"' in seen["html"], "the Total row stands out and the zeros fade"
     assert not seen["dark_header"] and 'class="lines fit-tiny"' in seen["html"], "the header is the colour of every other report"
-    assert seen["left_heads"] == [0, 1, 2], "Name, Date and Area are words: their headings sit left"
+    assert not {0, 1, 2} & seen["num_cols"] and {3, 4} <= seen["num_cols"], "Name, Date and Area are words: left; the figures after them right"
 
 
 def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, world):
@@ -336,7 +336,7 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
 
 def test_both_reports_are_in_the_catalogue(api, tenant):
     keys = {r["key"]: r["title"] for r in api.get("/api/v1/reports").data}
-    assert keys["sales_by_rep"] == "Sales by rep" and keys["rep_daily_sheet"] == "Sales by rep — daily sheet"
+    assert keys["sales_by_rep"] == "Sales by Sale Person" and keys["rep_daily_sheet"] == "Sales by Sale Person — daily sheet"
 
 
 def _billed(api, tenant, w, rep, qty, mode, customer=None):
