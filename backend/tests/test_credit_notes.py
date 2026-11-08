@@ -67,7 +67,7 @@ def test_broken_return_is_written_off_not_restocked(tenant):
         before = StockService.on_hand(v, wh)[0]
         _return(tenant, cust, v, condition="damaged", restock=False)
         assert StockService.on_hand(v, wh)[0] == before, "broken goods do NOT go back to sellable stock"
-        assert StockService.on_hand(v, quar)[0] == 5, "they sit in quarantine"
+        assert StockService.on_hand(v, quar)[0] == 0, "nor anywhere else: damaged goods are not stock (owner, 8 Nov 2026)"
         b = _balances(["damaged_goods", "expiry_loss", "inventory", "cogs"])
         assert b["damaged_goods"][0] == Decimal("500"), b  # cost written off to Damaged Goods
         assert b["expiry_loss"][0] == Decimal("0"), b

@@ -547,19 +547,13 @@ class DeliveryService:
 
     @staticmethod
     def write_off_damaged(dn, lines, on=None):
-        """Damaged units no invoice billed: Dr the loss, Cr Stock in Hand. They left the shelf when issued, so no stock moves here;
-        where a quarantine warehouse exists they are held there at no value."""
-        from apps.inventory.models import Warehouse
+        """Damaged units no invoice billed: Dr the loss, Cr Stock in Hand. They left the shelf when issued and are not stock
+        anywhere, not even a quarantine warehouse (owner, 8 Nov 2026), so no stock moves here."""
         from apps.inventory.services import AdjustmentService
 
         reason = TripService.damage_reason()
         adj = AdjustmentService.create(warehouse=dn.warehouse, type="decrease", reason=reason, lines=lines, date=on, notes=f"Returned damaged at delivery {dn.number}",
                                        source=dn, skip_stock=True, auto_approve=True)
-        quarantine = Warehouse.objects.filter(type="quarantine", is_active=True).first()
-        if quarantine is not None:
-            for w in lines:
-                StockService.move(warehouse=quarantine, variant=w["variant"], qty=w["qty"], movement_type="delivery_return", batch=w["batch"], unit_cost=Decimal("0"),
-                                  reference=dn, note=f"Returned damaged at delivery {dn.number}")
         return adj
 
     @staticmethod

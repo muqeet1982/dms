@@ -239,7 +239,8 @@ export async function request<T = any>(path: string, opts: RequestOptions = {}, 
   if (tenantId && !opts.noTenant) headers["X-Tenant-ID"] = tenantId;
   if (opts.idempotent && !headers["Idempotency-Key"]) headers["Idempotency-Key"] = crypto.randomUUID();
   const url = `${BASE}${path}${qs(opts.query)}`;
-  const res = await fetch(url, { method: opts.method || (opts.body !== undefined ? "POST" : "GET"), headers, body: opts.body === undefined ? undefined : isForm ? opts.body : JSON.stringify(normalizeBody(opts.body)) });
+  const method = opts.method || (opts.body !== undefined ? "POST" : "GET");
+  const res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : isForm ? opts.body : JSON.stringify(normalizeBody(opts.body)) });
   if (res.status === 401 && retry && access) {
     const outcome = await doRefresh();
     if (outcome === "ok") return request<T>(path, opts, false);
@@ -259,6 +260,9 @@ export async function request<T = any>(path: string, opts: RequestOptions = {}, 
     // the company was suspended while this page was open: re-read /me, and the guard puts up the suspended screen
     if (code.includes("tenant_suspended")) import("@/lib/queryClient").then(({ queryClient }) => queryClient.invalidateQueries({ queryKey: ["me"] }));
   }
+  // a change anywhere moves an order along (confirmed, issued, delivered, invoiced, paid): every "Order to delivery" /
+  // "Order to payment" flow on screen reads itself again, instead of waiting for a page refresh (owner, 8 Nov 2026)
+  if (res.ok && method !== "GET") import("@/lib/queryClient").then(({ queryClient }) => queryClient.invalidateQueries({ queryKey: ["workflow"] }));
   if (opts.raw) {
     if (!res.ok) throw new ApiError(await safeProblem(res));
     return res as any;

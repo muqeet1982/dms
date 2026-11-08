@@ -694,3 +694,19 @@ def test_the_stepper_says_how_many_came_back(api, w):
     stop(api, dn)
     steps = {s["key"]: s for s in api.get(f"/api/v1/sales-orders/{o['id']}/workflow").data["steps"]}
     assert steps["delivered"]["detail"].startswith("Partially delivered · 1 returned")
+
+
+@pytest.mark.parametrize("invoice", ["post", None])
+def test_a_damaged_return_adds_no_stock_even_where_a_quarantine_warehouse_exists(api, w, invoice):
+    """DD-CN-00012 (8 Nov 2026): the 2 damaged units were put in demo's Quarantine warehouse and read as stock."""
+    from apps.inventory.models import StockMovement, Warehouse
+    from apps.inventory.services import StockService
+
+    with tenant_context(w.tenant, w.tenant.owner):
+        quar = Warehouse.objects.create(code="QUAR", name="Quarantine", type="quarantine")
+    _o, _inv, t, dn = out(api, w, invoice=invoice)
+    assert stop(api, dn, back="2", reason="damaged", condition="damaged").status_code == 200
+    close(api, t)
+    with tenant_context(w.tenant):
+        assert StockService.on_hand(w.v, quar)[0] == 0 and not StockMovement.objects.filter(warehouse=quar).exists()
+    assert on_hand(w) == 95, "and not back on the shelf"

@@ -2230,17 +2230,15 @@ class CreditNoteService:
                     raise DomainError(f"{cn.number} returns more than is left of {inv.number} — another return took some of it since this draft was saved. "
                                       "Delete the draft and record the return again.", code="over_return")
         wh = cn.warehouse or Warehouse.objects.filter(type="main").first()
-        quarantine = Warehouse.objects.filter(type="quarantine", is_active=True).first()
         for line in cn.lines.select_related("variant", "variant__product", "batch"):
             if line.stock_back:
                 continue  # already in stock — refused at the door or the order cancelled; the cost still goes back
-            # Only good stock the user chose to restock goes back as sellable; broken and expired goods are
-            # written off — held in the quarantine warehouse at zero value (see PostingService.post_credit_note
-            # for the matching loss accounts). Keep this predicate identical to the one accounting uses.
+            # Only good stock the user chose to restock goes back as sellable. Broken and expired goods are written off
+            # and are not stock anywhere, not even a quarantine warehouse (owner, 8 Nov 2026: "when return and damage it
+            # should not add in stock"): their cost goes to Damaged Goods or Expiry Loss (PostingService.post_credit_note).
+            # Keep this predicate identical to the one accounting uses.
             if line.restock and line.condition == "good":
                 StockService.move(warehouse=wh, variant=line.variant, qty=line.qty, movement_type="sales_return", batch=line.batch, unit_cost=line.unit_cost, reference=cn, note=line.reason or cn.reason)
-            elif quarantine is not None:
-                StockService.move(warehouse=quarantine, variant=line.variant, qty=line.qty, movement_type="sales_return", batch=line.batch, unit_cost=Decimal("0"), reference=cn, note=line.reason or line.get_condition_display())
         cn.journal = PostingService.post_credit_note(cn)
         cn.status = "posted"
         cn.save(update_fields=["journal", "status", "updated_at"])
