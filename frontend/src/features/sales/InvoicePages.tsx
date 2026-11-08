@@ -10,7 +10,7 @@ import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
-import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, SaveError, Tabs } from "@/components/ui/Bits";
+import { Alert, Field, InfoItem, PageHeader, ShortText, Spinner, StatCard, StatusBadge, SaveError, Tabs } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ListPage } from "@/components/ui/ListPage";
@@ -415,7 +415,7 @@ export function CreditNotesPage() {
   const { can } = usePerms();
   const cols: Column<any>[] = [
     { key: "number", header: "Credit note #", render: (c) => <span className="fw-semibold text-dark">{c.number}</span> },
-    { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "customer_name", header: "Customer" }, { key: "invoice_number", header: "Invoice" }, { key: "reason", header: "Reason" },
+    { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "customer_name", header: "Customer" }, { key: "invoice_number", header: "Invoice" }, { key: "reason", header: "Reason", render: (c) => <ShortText text={c.reason} /> },
     { key: "total", header: "Total", num: true, render: (c) => money(c.total) }, { key: "status", header: "Status", render: (c) => <StatusBadge status={c.status} /> },
   ];
   return <ListPage title="Credit notes & sales returns" page="credit_notes" endpoint="/api/v1/credit-notes" columns={cols} rowLink={(c) => `/app/sales/credit-notes/${c.id}`} createTo="/app/sales/credit-notes/new" createLabel="New credit note" defaultOrdering="-date" filters={[{ name: "status", label: "Status", type: "select", options: ["draft", "posted", "cancelled"].map((s) => ({ value: s, label: s })) }]} />;

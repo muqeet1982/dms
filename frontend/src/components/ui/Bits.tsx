@@ -55,6 +55,15 @@ export function EmptyState({ icon = "ti-inbox", text = "Nothing here yet.", acti
   );
 }
 
+/** A long note in a table cell (owner, 8 Nov 2026: "show few words … rest show .. and on hover, it should show complete"):
+ *  its first few words and "…"; the whole of it on hover. */
+export function ShortText({ text, words = 3 }: { text?: string | null; words?: number }) {
+  const full = (text || "").trim();
+  const parts = full.split(/\s+/);
+  if (parts.length <= words) return <>{full}</>;
+  return <span title={full} className="text-nowrap" style={{ cursor: "help" }}>{parts.slice(0, words).join(" ")}…</span>;
+}
+
 export function Spinner({ text = "Loading…" }: { text?: string }) {
   return (
     <div className="d-flex align-items-center gap-2 text-muted py-4 justify-content-center">
