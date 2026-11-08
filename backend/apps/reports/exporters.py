@@ -216,7 +216,7 @@ def to_pdf(result, title="", tenant=None, params=None):
         # a heading sits over its figures on the right, and over a column of words on the left
         "num_cols": numeric_columns(result, cols, rows), "bold_cols": [i for i, c in enumerate(cols) if (result.get("column_styles") or {}).get(c) == "bold"], "faint_zeros": result.get("faint_zeros"), "dark_header": result.get("header_groups") and not result.get("plain_header"),
         "groups": result.get("header_groups"), "rows": rows, "totals": _footer_totals(result), "tenant": tenant,
-        "params": {**{k: cell(v) for k, v in (params or {}).items()}, **(result.get("print_params") or {})}, "landscape": landscape, "fit": fit,
+        "params": {k: v for k, v in {**{k: cell(v) for k, v in (params or {}).items()}, **(result.get("print_params") or {})}.items() if v not in (None, "")}, "landscape": landscape, "fit": fit,
         "logo_url": logo_url(tenant), "printed_at": f"Printed {timezone.localtime():%d/%m/%Y %H:%M}",
     })
     return HTML(string=html).write_pdf()

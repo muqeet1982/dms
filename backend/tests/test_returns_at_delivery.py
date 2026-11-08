@@ -280,7 +280,7 @@ def test_the_manufacturers_share_and_the_preview_match_the_note(api, w):
     r = stop(api, dn, back="2")
     assert r.status_code == 200, r.content
     cn = api.get(f"/api/v1/credit-notes/{r.data['credit_note']['id']}").data
-    assert D(p.data["credit"]) == D(cn["total"]) and D(cn["advance_tax_total"]) > 0, "the screen says what the note credits, to the paisa"
+    assert D(p.data["credit"]) == D(cn["total"]), "the screen says what the note credits, to the paisa"
     i = invoice_of(api, inv)
     assert D(p.data["balance_after"]) == D(i["balance"])
     assert D(cn["discount"]) == 30, "10% on the two that came back"

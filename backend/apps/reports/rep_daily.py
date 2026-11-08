@@ -97,7 +97,7 @@ def _area(customer, location=None):
 
 def _columns():
     columns = ["name", "date", "area", "visited_count", "productive_count", "new_count", *[k for k, _h, _l in FAMILIES], "total_today", "total_till_date"]
-    labels = {"name": "Name", "date": "Date", "area": "Area", "visited_count": "No Of Shops Visited", "productive_count": "Productive Shops", "new_count": "New Shops",
+    labels = {"name": "Sale Person", "date": "Date", "area": "Area", "visited_count": "No Of Shops Visited", "productive_count": "Productive Shops", "new_count": "New Shops",
               **{k: label for k, _h, label in FAMILIES}, "total_today": "Today", "total_till_date": "Till Date"}
     groups = [{"label": "", "span": 1} for _ in range(6)]
     for _k, heading, _l in FAMILIES:
@@ -197,8 +197,15 @@ def daily_sheet(date_from=None, date_to=None, rep=None, **_):
     if rows:
         rows.append({"name": "Total", "date": "", "area": "", **{k: str(v) for k, v in summed.items()}, "total_today": str(today), "total_till_date": "", "is_group": True, "kind": "subtotal"})
     picked = SupplierRep.objects.filter(pk=rep).first() if rep else None
+    if picked is not None:
+        # one sale person's sheet: their name heads it, not a column repeating it on every row (owner, 8 Nov 2026)
+        columns = columns[1:]
+        groups = [{"label": "", "span": groups[0]["span"] - 1}, *groups[1:]] if groups and groups[0]["span"] > 1 else groups[1:]
+        for r in rows:
+            if r.get("kind") == "subtotal":
+                r["date"] = "Total"
     return {
         "columns": columns, "column_labels": labels, "header_groups": groups, "column_styles": {"total_today": "bold", "total_till_date": "bold"},
         "rows": rows, "totals": {"sales": str(today)}, "totals_in_rows": True, "faint_zeros": True, "plain_header": True,
-        "print_params": {"rep": picked.name} if picked else {},   # the print names the rep, not their id
+        "title_suffix": picked.name if picked else "", "print_params": {"rep": None} if picked else {},
     }

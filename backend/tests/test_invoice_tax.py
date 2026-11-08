@@ -132,7 +132,7 @@ def test_the_pdf_shows_tax_per_item_and_in_totals(api, tenant, taxed_world):
         for row in ("Sub Total", "Net Total", "Total Tax", "Grand Total", "Total Payable"):
             assert row in html, row
         assert "HS 7306.3090" in html
-        assert "FBR: Unregistered" in html
+        assert "FBR: Unregistered" not in html, "the buyer's FBR status is not printed (owner, 8 Nov 2026)"
 
 
 def test_the_products_gst_rate_counts_and_an_invoice_percent_does_not(api, tenant, taxed_world):

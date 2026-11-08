@@ -89,7 +89,7 @@ def test_advance_income_tax_comes_last_on_the_grand_total(api, tenant, world):
     assert D(inv["advance_tax_rate"]) == D("0.5") and D(inv["advance_tax_total"]) == D("59.61") and D(inv["total"]) == D("11982.11")
 
     plain = _invoice(api, _order(api, wh, cust, v, qty="10", discount="5", charge_tax=False), apply_tax=False)
-    assert D(plain["advance_tax_total"]) == D("59.61"), "a plain invoice too: its Grand Total is the same 11,922.50"
+    assert D(plain["advance_tax_total"]) == 0, "a plain invoice carries none (owner, 8 Nov 2026)"
 
 
 def test_with_no_discount_the_line_comes_back_to_its_tp(api, tenant, world):

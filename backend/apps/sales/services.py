@@ -35,12 +35,21 @@ def round2(v):
 
 def advance_income_tax(rate, grand_total):
     """Advance income tax 236G/236H on the Grand Total (net + GST + FED + Extra + Further, before the WHT the buyer
-    withholds), to the paisa, half up — the customer's rate, on every invoice of theirs, taxed or not (owner, 31 Oct
-    2026). Returns (rate, amount); a customer with no rate pays none."""
+    withholds), to the paisa, half up, at the customer's rate (owner, 31 Oct 2026). Which documents carry it is
+    advance_rate's call. Returns (rate, amount); a rate of nothing charges nothing."""
     rate = Decimal(str(rate or 0))
     if rate <= 0 or grand_total <= 0:
         return (rate if rate > 0 else Decimal("0")), Decimal("0")
     return rate, (Decimal(grand_total) * rate / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
+
+
+def advance_rate(doc):
+    """The advance income tax rate a document is charged at: its customer's, on a tax invoice or an order to be invoiced with
+    tax, and nothing on any other (owner, 8 Nov 2026: "advance income tax will also only show when tax on on invoice")."""
+    from .models import SalesInvoice
+
+    taxed = bool(doc.force_tax_type_id) if isinstance(doc, SalesInvoice) else bool(getattr(doc, "charge_tax", False))
+    return doc.customer.advance_income_tax_rate if taxed else Decimal("0")
 
 
 def retotal_advance_tax(doc, rate):
@@ -152,7 +161,7 @@ class OrderService:
         order.subtotal, order.discount, order.scheme_discount, order.tax1_total, order.tax2_total = subtotal, disc, sd, t1, t2
         order.fed_total, order.extra_tax_total, order.further_tax_total, order.wht_total = fed, extra, further, wht
         grand = subtotal - disc - sd + t1 + t2 + fed + extra + further
-        order.advance_tax_rate, order.advance_tax_total = advance_income_tax(order.customer.advance_income_tax_rate, grand)
+        order.advance_tax_rate, order.advance_tax_total = advance_income_tax(advance_rate(order), grand)
         order.total = grand + order.advance_tax_total - wht
         order.price_flags = flags
         order.save(update_fields=["subtotal", "discount", "scheme_discount", "tax1_total", "tax2_total", "fed_total", "extra_tax_total",
@@ -290,7 +299,7 @@ class OrderService:
                          "further_tax_amount": str(line.further_tax_amount), "wht_amount": str(line.wht_amount), "line_total": str(line.line_total)})
         t = totals
         grand = t["subtotal"] - t["discount"] - t["scheme_discount"] + t["tax1_total"] + t["tax2_total"] + t["fed_total"] + t["extra_tax_total"] + t["further_tax_total"]
-        t["advance_tax_rate"], t["advance_tax_total"] = advance_income_tax(customer.advance_income_tax_rate, grand)
+        t["advance_tax_rate"], t["advance_tax_total"] = advance_income_tax(customer.advance_income_tax_rate if o.charge_tax else 0, grand)
         total = grand + t["advance_tax_total"] - t["wht_total"]
         return {**{k: str(v) for k, v in t.items()}, "grand_total": str(grand), "discount_pct": str(o.discount_pct if o.discount_pct is not None else default_pct),
                 "charge_tax": bool(o.charge_tax), "total": str(total), "lines": rows,
@@ -691,10 +700,10 @@ class OrderService:
         for o in SalesOrder.objects.filter(customer=customer, status__in=in_flight):
             if o.invoices.exclude(status__in=["draft", "cancelled"]).exists():
                 continue   # billed: the posted invoice is what the customer owes
-            if retotal_advance_tax(o, rate):
+            if retotal_advance_tax(o, rate if o.charge_tax else 0):
                 moved.append(o.number)
         for inv in SalesInvoice.objects.filter(customer=customer, status="draft"):
-            if retotal_advance_tax(inv, rate):
+            if retotal_advance_tax(inv, rate if inv.force_tax_type_id else 0):
                 moved.append(inv.number)
         if moved:
             AuditService.log("customer.advance_tax_followed", customer, after={"rate": str(rate), "documents": moved}, actor=actor)
@@ -941,7 +950,7 @@ class InvoiceService:
             disc += line_disc
         inv.subtotal, inv.discount, inv.tax1_total, inv.tax2_total = subtotal, disc, t1, t2
         inv.tax1_type, inv.tax2_type = tax1_type, tax2_type
-        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(customer.advance_income_tax_rate, subtotal - disc + t1 + t2)
+        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(advance_rate(inv), subtotal - disc + t1 + t2)   # the tax switch, if asked for, re-totals it
         inv.total = subtotal - disc + t1 + t2 + inv.advance_tax_total
         # the co-funded discount % comes from the order (which seeded it from the customer, changeable there);
         # it drives the manufacturer claim on posting
@@ -1489,7 +1498,7 @@ class InvoiceService:
         inv.tax1_type, inv.tax2_type = forced, None
         grand = subtotal - discount + t1 + t2 + fed + extra + further
         # a draft takes the customer's rate as it stands — reopened, it is charged again at today's, like its FBR rates
-        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(inv.customer.advance_income_tax_rate, grand)
+        inv.advance_tax_rate, inv.advance_tax_total = advance_income_tax(advance_rate(inv), grand)
         inv.total = grand + inv.advance_tax_total - wht
         inv.save(update_fields=["subtotal", "discount", "tax1_type", "tax2_type", "tax1_total", "tax2_total", "fed_total",
                                 "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "total", "updated_at"])
@@ -1714,7 +1723,7 @@ class InvoiceService:
         from apps.accounting.services import PostingService
 
         # it goes to the books at the customer's advance income tax rate as it stands now, whatever the draft held
-        retotal_advance_tax(inv, inv.customer.advance_income_tax_rate)
+        retotal_advance_tax(inv, advance_rate(inv))
         # a tax invoice takes the next number of the tax-invoice series when it goes to the books — not before, so a
         # draft switched back or never posted leaves no gap in it (owner, 1 Nov 2026: TDN-STI-00001, TDN-STI-00002 …)
         # the sales tax invoice series (owner, 8 Nov 2026): a company that files with FBR numbers a tax invoice when FBR

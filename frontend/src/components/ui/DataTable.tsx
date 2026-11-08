@@ -1,5 +1,5 @@
 import { labelCase } from "@/lib/format";
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EmptyState, Spinner } from "./Bits";
 
@@ -16,12 +16,22 @@ function autoNum<T>(c: Column<T>, rows: T[] | undefined) {
 
 export type Column<T> = { key: string; header: ReactNode; render?: (row: T) => ReactNode; className?: string; num?: boolean; sortKey?: string; hidden?: boolean };
 
-export function DataTable<T extends { id?: string }>({ columns, rows, loading, rowLink, onRowClick, emptyText, ordering, onSort, footer, small, rowClass }: {
-  columns: Column<T>[]; rows: T[] | undefined; loading?: boolean; rowLink?: (r: T) => string | undefined; onRowClick?: (r: T) => void; emptyText?: ReactNode; ordering?: string; onSort?: (k: string) => void; footer?: ReactNode; small?: boolean; rowClass?: (r: T) => string;
+export function DataTable<T extends { id?: string }>({ columns, rows, loading, rowLink, onRowClick, emptyText, ordering, onSort, footer, small, rowClass, paginate = true }: {
+  columns: Column<T>[]; rows: T[] | undefined; paginate?: boolean; loading?: boolean; rowLink?: (r: T) => string | undefined; onRowClick?: (r: T) => void; emptyText?: ReactNode; ordering?: string; onSort?: (k: string) => void; footer?: ReactNode; small?: boolean; rowClass?: (r: T) => string;
 }) {
   const nav = useNavigate();
   const cols = columns.filter((c) => !c.hidden).map((c) => ({ ...c, num: autoNum(c, rows) }));
+  // every table pages (owner, 8 Nov 2026: "in all tables and report add pagination like first, prv, 1 2 3 4 5 next, last");
+  // a list the server pages itself (ListPage) says paginate={false}
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(25);
+  const all = rows || [];
+  const paged = paginate && all.length > 10;
+  const pages = Math.max(1, Math.ceil(all.length / size));
+  const cur = Math.min(page, pages);
+  const shown = paged ? all.slice((cur - 1) * size, cur * size) : rows;
   return (
+    <>
     <div className="table-responsive">
       <table className={`table table-hover align-middle mb-0 ${small ? "table-sm" : ""}`}>
         <thead className="table-light">
@@ -39,7 +49,7 @@ export function DataTable<T extends { id?: string }>({ columns, rows, loading, r
         <tbody>
           {loading && (!rows || !rows.length) && <tr><td colSpan={cols.length}><Spinner /></td></tr>}
           {!loading && rows && rows.length === 0 && <tr><td colSpan={cols.length}><EmptyState text={emptyText || "No records found."} /></td></tr>}
-          {rows?.map((r, i) => {
+          {shown?.map((r, i) => {
             const link = rowLink?.(r);
             const clickable = Boolean(link || onRowClick);
             return (
@@ -52,12 +62,14 @@ export function DataTable<T extends { id?: string }>({ columns, rows, loading, r
         {footer && <tfoot>{footer}</tfoot>}
       </table>
     </div>
+    {paged && <Pagination page={cur} pages={pages} count={all.length} pageSize={size} onPage={setPage} onPageSize={(n) => { setSize(n); setPage(1); }} />}
+    </>
   );
 }
 
 export function Pagination({ page, pages, count, pageSize, onPage, onPageSize }: { page: number; pages: number; count: number; pageSize: number; onPage: (p: number) => void; onPageSize?: (n: number) => void }) {
   if (!count) return null;
-  // a window of up to 5 page numbers centred on the current page: 1st ‹ 3 4 [5] 6 7 › Last
+  // a window of up to 5 page numbers centred on the current page: First Prev 3 4 [5] 6 7 Next Last
   const start = Math.max(1, Math.min(page - 2, pages - 4));
   const nums = Array.from({ length: Math.min(5, pages) }, (_, i) => start + i);
   const go = (p: number) => { if (p >= 1 && p <= pages && p !== page) onPage(p); };
@@ -74,7 +86,7 @@ export function Pagination({ page, pages, count, pageSize, onPage, onPageSize }:
       </div>
       <nav>
         <ul className="pagination pagination-sm mb-0 justify-content-end flex-wrap">
-          <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="First page" onClick={() => go(1)}>1st</a></li>
+          <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="First page" onClick={() => go(1)}>First</a></li>
           <li className={`page-item ${page <= 1 ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="Previous page" onClick={() => go(page - 1)}>Prev</a></li>
           {nums.map((n) => <li key={n} className={`page-item ${n === page ? "active" : ""}`}><a className="page-link cursor-pointer" onClick={() => go(n)}>{n}</a></li>)}
           <li className={`page-item ${page >= pages ? "disabled" : ""}`}><a className="page-link cursor-pointer" title="Next page" onClick={() => go(page + 1)}>Next</a></li>

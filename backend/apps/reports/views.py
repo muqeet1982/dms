@@ -56,18 +56,20 @@ class ReportRunView(APIView):
             params[p["name"]] = v
         result = spec["query"](**params)
         fmt = request.query_params.get("format", "json")
+        # a report about one thing names it in its heading (the daily sheet of one sale person, owner 8 Nov 2026)
+        title = f"{spec['title']}: {result['title_suffix']}" if result.get("title_suffix") else spec["title"]
         if fmt == "json":
-            return Response({"key": key, "title": spec["title"], "params": {k: str(v) for k, v in params.items()}, **result})
+            return Response({"key": key, "params": {k: str(v) for k, v in params.items()}, **result, "title": title})
         if not has_tenant_perm(request, "reports.export_reports"):
             raise DomainError("You cannot export reports.", status_code=403)
         if fmt == "xlsx" and not effective_features(request.tenant).get("excel_export"):
             raise DomainError("Excel export is not enabled for your plan.", status_code=403)
         if fmt == "csv":
-            data, ct = to_csv(result, spec["title"]), "text/csv"
+            data, ct = to_csv(result, title), "text/csv"
         elif fmt == "xlsx":
-            data, ct = to_xlsx(result, spec["title"]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            data, ct = to_xlsx(result, title), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif fmt == "pdf":
-            data, ct = to_pdf(result, spec["title"], request.tenant, {k: str(v) for k, v in params.items()}), "application/pdf"
+            data, ct = to_pdf(result, title, request.tenant, {k: str(v) for k, v in params.items()}), "application/pdf"
         else:
             raise DomainError("format must be json, csv, xlsx or pdf", status_code=400)
         resp = HttpResponse(data, content_type=ct)

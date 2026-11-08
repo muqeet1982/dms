@@ -104,7 +104,7 @@ export function ListPage<T extends { id?: string }>({ title, crumbs, endpoint, c
       <FilterBar filters={filters} values={list.filters} onChange={(p) => list.set(p)} search={list.search} onSearch={(s) => list.set({ search: s })} searchPlaceholder={searchPlaceholder} />
       <div className="card">
         <div className="card-body p-0">
-          <DataTable columns={columns} rows={list.data?.results} loading={list.isLoading} rowLink={rowLink} ordering={list.ordering} onSort={(k) => list.set({ ordering: k })} emptyText={emptyText} rowClass={rowClass} />
+          <DataTable paginate={false} columns={columns} rows={list.data?.results} loading={list.isLoading} rowLink={rowLink} ordering={list.ordering} onSort={(k) => list.set({ ordering: k })} emptyText={emptyText} rowClass={rowClass} />
           {list.data && <Pagination page={list.data.page} pages={list.data.pages} count={list.data.count} pageSize={list.pageSize} onPage={(p) => list.set({ page: p }, false)} onPageSize={(n) => list.set({ page_size: n })} />}
         </div>
       </div>

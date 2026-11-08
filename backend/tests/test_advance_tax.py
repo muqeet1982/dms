@@ -1,7 +1,7 @@
 """
 Advance income tax, section 236G/236H (owner, 31 Oct 2026: "in order and invoice it should also show advance tax …
 advance income tax on Grand Total"): the customer's own %, on the Grand Total (net + GST + FED + Extra + Further),
-shown after it and added to Total Payable; on every invoice of theirs, taxed or not. Booked to Advance Income Tax
+shown after it and added to Total Payable; on a tax invoice only (owner, 8 Nov 2026), none on a plain one. Booked to Advance Income Tax
 Payable, reversed by returns to the paisa, never in the FBR sales-tax filing, and reported.
 """
 from decimal import Decimal
@@ -68,13 +68,19 @@ def test_a_tax_invoice_adds_the_advance_tax_on_its_grand_total_and_books_it(api,
     assert "advance" not in str(payload).lower()
 
 
-def test_an_untaxed_invoice_carries_it_too(api, tenant, world):
+def test_an_untaxed_invoice_carries_none(api, tenant, world):
+    """Owner, 8 Nov 2026: "advance income tax will also only show when tax on on invoice"."""
     wh, cust, v, tt = world
     _rate(tenant, cust, "0.5")
     order = _issue(api, wh, cust, v, charge_tax=False)
+    assert D(order["advance_tax_total"]) == 0, "nor does an order to be billed without tax"
     inv = _invoice(api, order["id"], post=True)
-    assert (D(inv["advance_tax_total"]), D(inv["total"])) == (D("3.00"), D("603.00")), "0.5% of 600"
-    assert _journal(tenant, inv["journal"])[ADV] == D("-3.00")
+    assert (D(inv["advance_tax_total"]), D(inv["total"])) == (D("0"), D("600")), "no tax, no advance income tax"
+    assert ADV not in _journal(tenant, inv["journal"])
+    on = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": True}, format="json")
+    assert on.status_code == 200 and D(on.data["advance_tax_total"]) > 0, "switched to a tax invoice, it carries it"
+    off = api.post(f"/api/v1/invoices/{inv['id']}/tax", {"apply": False}, format="json")
+    assert D(off.data["advance_tax_total"]) == 0 and D(off.data["total"]) == D("600"), "and back off, it drops it"
 
 
 def test_returns_give_back_exactly_what_was_charged(api, tenant, world):
@@ -105,20 +111,25 @@ def test_returns_give_back_exactly_what_was_charged(api, tenant, world):
 
 def test_a_new_rate_reaches_what_is_not_on_the_books_and_posting_charges_the_current_one(api, tenant, world):
     wh, cust, v, tt = world
-    posted = _invoice(api, _issue(api, wh, cust, v, charge_tax=False)["id"], post=True)       # 600, no rate yet
-    draft = _invoice(api, _issue(api, wh, cust, v, charge_tax=False)["id"], post=False)
-    open_order = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "charge_tax": False,
-                                                   "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json").data
+    # taxed throughout (owner, 8 Nov 2026: only a tax invoice carries it): 4 × 150 → Grand Total 744, Total Payable 714
+    posted = _invoice(api, _issue(api, wh, cust, v)["id"], apply_tax=True, post=True)           # no rate yet
+    draft = _invoice(api, _issue(api, wh, cust, v)["id"], apply_tax=True, post=False)
+    open_order = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "charge_tax": True,
+                                                   "lines": [{"variant": str(v.id), "qty": "4"}]}, format="json").data
+    plain_order = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True, "charge_tax": False,
+                                                    "lines": [{"variant": str(v.id), "qty": "2"}]}, format="json").data
+    assert D(posted["total"]) == D("714") and D(draft["total"]) == D("714")
     r = api.patch(f"/api/v1/customers/{cust.id}", {"advance_income_tax_rate": "1.00"}, format="json")
     assert r.status_code == 200, r.content
-    assert D(api.get(f"/api/v1/sales-orders/{open_order['id']}").data["total"]) == D("303.00"), "300 + 1%"
-    assert D(api.get(f"/api/v1/invoices/{draft['id']}").data["total"]) == D("606.00")
-    assert D(api.get(f"/api/v1/invoices/{posted['id']}").data["total"]) == D("600"), "a posted invoice keeps what it was charged"
+    assert D(api.get(f"/api/v1/sales-orders/{open_order['id']}").data["total"]) == D("721.44"), "714 + 1% of 744"
+    assert D(api.get(f"/api/v1/invoices/{draft['id']}").data["total"]) == D("721.44")
+    assert D(api.get(f"/api/v1/invoices/{posted['id']}").data["total"]) == D("714"), "a posted invoice keeps what it was charged"
+    assert D(api.get(f"/api/v1/sales-orders/{plain_order['id']}").data["advance_tax_total"]) == 0, "an order without tax takes none"
     # a draft goes to the books at the rate standing when it is posted, whatever it held
     _rate(tenant, cust, "2")
     p = api.post(f"/api/v1/invoices/{draft['id']}/post", {}, format="json")
-    assert p.status_code == 200 and D(p.data["total"]) == D("612.00") and D(p.data["advance_tax_rate"]) == D("2")
-    assert _journal(tenant, p.data["journal"])[ADV] == D("-12.00")
+    assert p.status_code == 200 and D(p.data["total"]) == D("728.88") and D(p.data["advance_tax_rate"]) == D("2")
+    assert _journal(tenant, p.data["journal"])[ADV] == D("-14.88")
 
 
 def test_print_excel_preview_and_reports_show_it(api, tenant, world):
@@ -151,7 +162,7 @@ def test_print_excel_preview_and_reports_show_it(api, tenant, world):
 
     with tenant_context(tenant, tenant.owner):
         pv = OrderService.preview(Customer.objects.get(pk=cust.pk), [{"variant": v, "qty": "4"}])
-    assert (D(pv["grand_total"]), D(pv["advance_tax_total"]), D(pv["total"])) == (D("600"), D("3.00"), D("603.00")), "the customer prices untaxed: 0.5% of 600"
+    assert (D(pv["grand_total"]), D(pv["advance_tax_total"]), D(pv["total"])) == (D("600"), D("0"), D("600")), "the customer prices untaxed: no advance income tax"
 
     reg = api.get("/api/v1/reports/advance_tax_register").data
     assert [(r["number"], D(r["advance_tax"])) for r in reg["rows"]] == [(inv["number"], D("3.72"))] and D(reg["totals"]["advance_tax"]) == D("3.72")

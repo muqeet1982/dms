@@ -290,7 +290,7 @@ export function InvoiceEditPage() {
               <td>{!(delivered && !l.isNew) && <button type="button" className="btn btn-sm btn-outline-danger" title="Take this item off" onClick={() => set(i, { removed: true })}><i className="ti ti-x" /></button>}</td>
             </tr>))}</tbody>
           <tfoot>{taxed ? <TaxFooterRows span={span} trail={1} sub={gross} discount={disc} discountPct={inv.discount_pct} net={net} gst={tax} gstPct={gstPctOfLabels(fig.map((x: any) => x.gst?.label))}
-              fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} advanceRate={inv.customer_advance_tax_rate} /> : <PlainFooterRows span={span} trail={1} sub={gross} discount={disc} discountPct={inv.discount_pct} advanceRate={inv.customer_advance_tax_rate} />}</tfoot>
+              fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} advanceRate={inv.customer_advance_tax_rate} /> : <PlainFooterRows span={span} trail={1} sub={gross} discount={disc} discountPct={inv.discount_pct} />}</tfoot>
         </table></div>
         {!delivered && <div style={{ maxWidth: 420 }}><EntitySelect endpoint="/api/v1/variants" query={{ is_active: true }} value={null} size="sm" placeholder="Add an item…" onChange={() => {}} onSelectRaw={addItem} mapOption={(v: any) => ({ id: v.id, label: v.name, sub: v.sku })} /></div>}
       </div></div>}
@@ -384,7 +384,7 @@ export function InvoiceCreatePage() {
                     </tr>)}</tbody>
                     <tfoot>
                       {applyTax ? <TaxFooterRows span={span} sub={gross} discount={disc} discountPct={effDisc} net={net} gst={tax} gstPct={gstPctOfLabels(rows.map((r: any) => r.b.gst?.label))}
-                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} advanceRate={detail.data.customer_advance_tax_rate} /> : <PlainFooterRows span={span} sub={gross} discount={disc} discountPct={effDisc} advanceRate={detail.data.customer_advance_tax_rate} />}
+                          fed={sum((b) => b.gst?.fed || 0)} extra={sum((b) => b.gst?.extra || 0)} further={sum((b) => b.gst?.further || 0)} wht={sum((b) => b.gst?.wht || 0)} advanceRate={detail.data.customer_advance_tax_rate} /> : <PlainFooterRows span={span} sub={gross} discount={disc} discountPct={effDisc} />}
                     </tfoot></table>;
                 })()}
               </>

@@ -46,7 +46,7 @@ invoice sets its NTN apart, in bold, so it cannot be missed.{% endcomment %}
     {% if inv.customer.city %}<div>{{ inv.customer.city }}</div>{% endif %}
     <div class="muted">{% if inv.customer.phone %}Tel {{ inv.customer.phone }}{% endif %}{% if inv.customer.contact_person %} · {{ inv.customer.contact_person }}{% endif %}</div>
     {% if inv.customer.ntn %}<div class="muted">NTN: {{ inv.customer.ntn }}</div>{% endif %}
-    {% if tax_on %}{% if inv.customer.cnic and not inv.customer.ntn %}<div class="muted">CNIC: {{ inv.customer.cnic }}</div>{% endif %}{% if inv.customer.strn %}<div class="muted">STRN: {{ inv.customer.strn }}</div>{% endif %}{% if inv.customer.fbr_registration_type %}<div class="muted">FBR: {{ inv.customer.fbr_registration_type }}</div>{% endif %}{% endif %}
+    {% if tax_on %}{% if inv.customer.cnic and not inv.customer.ntn %}<div class="muted">CNIC: {{ inv.customer.cnic }}</div>{% endif %}{% if inv.customer.strn %}<div class="muted">STRN: {{ inv.customer.strn }}</div>{% endif %}{% endif %}
   </div>
 </div>
 {% endblock %}

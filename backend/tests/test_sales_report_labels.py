@@ -147,3 +147,4 @@ def test_sales_by_rep_reads_sales_by_sale_person_and_sales_by_product_has_no_sav
     assert reports["sales_by_rep"]["title"] == "Sales by Sale Person"
     assert api.get("/api/v1/reports/sales_by_rep").data["column_labels"]["label"] == "Sale Person"
     assert reports["sales_by_product"]["saved_filters"] is False and reports["sales_by_brand"]["saved_filters"] is True
+    assert reports["sales_by_customer"]["saved_filters"] is False, "owner, 8 Nov 2026"

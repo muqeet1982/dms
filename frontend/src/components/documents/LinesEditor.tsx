@@ -201,7 +201,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           {showPrice && lines.length > 0 && <tfoot>
             {gstShown ? <TaxFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} net={total} gst={taxTotal} gstPct={gstPctOfLabels(lines.map((l) => taxOf(l)?.label))}
                 fed={sumTax("fed")} extra={sumTax("extra")} further={sumTax("further")} wht={sumTax("wht")} advanceRate={advanceRate} payableLabel={payableLabel} />
-              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} advanceRate={advanceRate} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
+              : plainSale ? <PlainFooterRows span={preTotalCols} trail={readOnly ? 0 : 1} sub={grossTotal} discount={grossTotal - total} discountPct={defaultDiscountPct} payableLabel={payableLabel} hideZeroDiscount={discountless} /> : <tr><td colSpan={preTotalCols} className="text-end fw-semibold">Subtotal (before tax)</td><td className="num fw-bold">{money(total)}</td>{!readOnly && <td />}</tr>}
           </tfoot>}
         </table>
       </div>

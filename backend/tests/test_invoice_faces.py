@@ -88,6 +88,7 @@ def test_a_sales_tax_invoice_sets_its_ntn_apart_and_drops_the_order_and_delivery
     assert "<h1>SALES TAX INVOICE</h1>" in t and "<h1>SALES INVOICE</h1>" in printed(f"/api/v1/invoices/{plain['id']}/pdf")
     assert '<span class="k">Order</span>' not in t and '<span class="k">Delivery note</span>' not in t
     assert taxed["order_number"] not in t, "no order number anywhere on it"
+    assert "FBR: " not in t, "nor the buyer's FBR registration status (owner, 8 Nov 2026)"
     p = printed(f"/api/v1/invoices/{plain['id']}/pdf")
     assert '<span class="k">Order</span>' in p and '<span class="k">Delivery note</span>' in p, "a plain invoice keeps them"
     assert "<br>NTN: J833632-7" in p and 'class="ntn"' not in p

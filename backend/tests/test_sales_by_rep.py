@@ -134,7 +134,7 @@ def test_it_has_every_field_the_owner_listed_in_order(api, tenant, world):
             flat.append(f"{g['label']} {data['column_labels'][c]}".strip())
         at += g["span"]
     assert flat == [
-        "Name", "Date", "Area", "No Of Shops Visited", "Productive Shops", "New Shops",
+        "Sale Person", "Date", "Area", "No Of Shops Visited", "Productive Shops", "New Shops",
         "Tinta Regular Color", "Tinta Lifting Colors", "Developer 60 ml", "Developer 1000 ml", "Lifting Powder 500 gms", "Cream Blonde 50 g",
         "Care Shampoo", "Care Conditioner", "Care Mask", "Care Others", "Spray", "Gels", "Smooth Operator", "Others",
         "Hair Straightener Normal & Rebonding Extra Forte", "Keratin Straight Pack", "Keratin Straight 400 ml", "Accessories",
@@ -221,8 +221,12 @@ def test_the_rep_filter_shows_one_rep(api, tenant, world):
     _order(tenant, w, on, w["rep"], [(w["tinta"], "1")])
     _order(tenant, w, on, w["other"], [(w["tinta"], "1")])
     _visit(tenant, w["cust"], w["other"], on)
-    rows = _report(api, date_from=on, date_to=on, rep=str(w["rep"].id))["rows"]
+    data = _report(api, date_from=on, date_to=on, rep=str(w["rep"].id))
+    rows = data["rows"]
     assert [r["name"] for r in rows] == ["Talha", "Total"]
+    # one sale person's sheet: the name heads the report instead of filling a column (owner, 8 Nov 2026)
+    assert data["title"] == "Sales by Sale Person — daily sheet: Talha" and "name" not in data["columns"]
+    assert sum(g["span"] for g in data["header_groups"]) == len(data["columns"]) and rows[-1]["date"] == "Total"
 
 
 def test_area_is_the_shops_territory_then_route_then_city(api, tenant, world):
@@ -265,7 +269,7 @@ def test_print_pdf_and_excel_carry_the_same_sheet(api, excel_on, world):
 
     text = api.get("/api/v1/reports/rep_daily_sheet", {**params, "format": "csv"}).content.decode("utf-8-sig")
     head = text.splitlines()[0]
-    assert head.startswith("Name,Date,Area,No Of Shops Visited,Productive Shops,New Shops,Tinta Regular Color,Tinta Lifting Colors,Developer 60 ml")
+    assert head.startswith("Sale Person,Date,Area,No Of Shops Visited,Productive Shops,New Shops,Tinta Regular Color,Tinta Lifting Colors,Developer 60 ml")
     assert head.endswith("Accessories,Total Today,Total Till Date")
     assert "03/11/2026" in text and "2026-11-03" not in text
     assert "\nsales," not in text and "\r\nsales," not in text, "the totals are the bottom row, not repeated underneath"
@@ -301,10 +305,11 @@ def test_the_print_fits_the_page_and_names_the_rep_and_the_dates_properly(api, e
     r = api.get("/api/v1/reports/rep_daily_sheet", {"date_from": on.isoformat(), "date_to": on.isoformat(), "rep": str(w["rep"].id), "format": "pdf"})
     assert r.status_code == 200 and r.content.startswith(b"%PDF-")
     assert seen["landscape"] and seen["fit"] == "fit-tiny"
-    assert seen["params"] == {"date_from": "03/11/2026", "date_to": "03/11/2026", "rep": "Talha"}
+    assert seen["params"] == {"date_from": "03/11/2026", "date_to": "03/11/2026"}, "the heading names the sale person"
+    assert seen["title"] == "Sales by Sale Person — daily sheet: Talha"
     assert 'class="st-subtotal"' in seen["html"] and 'class="r z"' in seen["html"], "the Total row stands out and the zeros fade"
     assert not seen["dark_header"] and 'class="lines fit-tiny"' in seen["html"], "the header is the colour of every other report"
-    assert not {0, 1, 2} & seen["num_cols"] and {3, 4} <= seen["num_cols"], "Name, Date and Area are words: left; the figures after them right"
+    assert not {0, 1} & seen["num_cols"] and {2, 3} <= seen["num_cols"], "Date and Area are words: left; the figures after them right"
 
 
 def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, world):

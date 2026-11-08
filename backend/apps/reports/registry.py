@@ -30,7 +30,7 @@ REPORTS = {
     "sales_by_product": {"title": "Sales by product", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_product, "perm": OPS, "saved_filters": False},
     "sales_by_brand": {"title": "Sales by brand", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_brand, "perm": OPS},
     "sales_by_supplier": {"title": "Sales by supplier (manufacturer)", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_supplier, "perm": OPS},
-    "sales_by_customer": {"title": "Sales by customer", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_customer, "perm": OPS},
+    "sales_by_customer": {"title": "Sales by customer", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_customer, "perm": OPS, "saved_filters": False},
     "sales_by_territory": {"title": "Sales by territory", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_territory, "perm": OPS},
     "sales_by_route": {"title": "Sales by route", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_route, "perm": OPS},
     "sales_by_rep": {"title": "Sales by Sale Person", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_rep, "perm": OPS},
