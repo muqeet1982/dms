@@ -58,7 +58,6 @@ export function InvoiceDetailPage() {
   const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
   // ledger — the dialog says so, because "Edit" that silently refuses to edit the figures is worse than no Edit.
-  const [edit, setEdit] = useState<{ due_date: string; notes: string; date: string; lines: any[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [taxPct, setTaxPct] = useState("");
   const qc = useQueryClient();
@@ -109,12 +108,12 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <button className="btn btn-outline-primary" onClick={() => { setEdit({ due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "", lines: (inv.lines || []).map((l: any) => ({ id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty), disc_was: Number(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount), within: (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false && l.tp != null, unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount), product_discount_pct: String(Number(l.product_discount_pct) || 0), prod_pct_was: Number(l.product_discount_pct) || 0, tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), tax_rate_now: Number(l.tax1_rate) || 0, fbr_rate: l.fbr_rate || "", others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } })) }); }}><i className="ti ti-edit me-1" />Edit</button>}
+          {!["cancelled", "paid"].includes(inv.status) && page.edit && <Link to={`/app/sales/invoices/${inv.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}
           {inv.force_tax_type && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
-      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.edit ? <>, press <strong>Edit</strong> to change prices or discounts</> : null}{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
+      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.edit ? <>, press <strong>Edit</strong> to change quantities or discounts</> : null}{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
       {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && !inv.fbr && <Alert kind="info"><strong>Tax invoice — not filed with FBR yet.</strong> {inv.fbr_setup?.configured ? <>Press <strong>Post to FBR</strong>{inv.fbr_setup.sandbox ? " (FBR is set to its sandbox — a test filing)" : ""}; FBR's number and QR then print on the invoice.</> : <>Set up FBR under Settings → FBR e-invoicing to file it.</>}</Alert>}
       {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
         <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{Number(inv.advance_tax_total) > 0 && <> · filed {money(Number(inv.total) - Number(inv.advance_tax_total))}, advance income tax {money(inv.advance_tax_total)} is not part of FBR's sales-tax filing</>}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
@@ -169,105 +168,6 @@ export function InvoiceDetailPage() {
           {pays.data?.payments?.length > 0 && <table className="table table-sm fs-12"><thead className="table-light"><tr><th>Receipt</th><th>Date</th><th>Method</th><th>By</th><th className="num">Amount</th></tr></thead><tbody>{pays.data.payments.map((p: any) => <tr key={p.id}><td><Link to={`/app/accounting/payments/${p.id}`}>{p.number}</Link></td><td>{date(p.date)}</td><td>{p.method}{p.cheque_no ? ` ${p.cheque_no} (${p.cheque_status})` : ""}</td><td>{p.collected_by_name}</td><td className="num">{money(p.allocations.find((a: any) => a.document_id === inv.id)?.amount || p.amount)}</td></tr>)}</tbody></table>}
           {pays.data?.rep_collections?.length > 0 && <><h6 className="fs-13 mt-3">Rep collections</h6><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Collection</th><th>Date</th><th>Rep</th><th>Status</th><th className="num">Amount</th></tr></thead><tbody>{pays.data.rep_collections.map((c: any) => <tr key={c.id}><td>{c.number}</td><td>{date(c.date)}</td><td>{c.rep_name}</td><td><StatusBadge status={c.status} /></td><td className="num">{money(c.allocations.find((a: any) => a.invoice === inv.id)?.amount || c.amount)}</td></tr>)}</tbody></table></>}
         </div>) }]} />
-      <Modal open={Boolean(edit)} title={`Edit ${inv.number}`} onClose={() => setEdit(null)} size={inv.status === "draft" ? (inv.force_tax_type ? "xl" : "lg") : "md"}
-        footer={<><button className="btn btn-light" onClick={() => setEdit(null)}>Cancel</button>
-          <button className="btn btn-primary" disabled={saving} onClick={async () => {
-            setSaving(true);
-            try {
-              const body: any = { due_date: edit!.due_date || null, notes: edit!.notes };
-              if (inv.status === "draft") {
-                body.date = edit!.date || undefined;
-                body.lines = edit!.lines.filter((l: any) => !(l.isNew && l.removed)).map((l: any) => l.isNew
-                  ? { variant: l.variant, qty: l.qty, unit_price: l.unit_price }
-                  : l.removed ? { id: l.id, remove: true }
-                  : { id: l.id, qty: l.qty, unit_price: l.unit_price, discount_amount: l.discount_amount, product_discount_pct: l.product_discount_pct, ...(inv.force_tax_type ? { tax_pct: l.tax_pct } : {}) });
-              }
-              await api.patch(`/api/v1/invoices/${inv.id}`, body);
-              toast.success("Invoice updated");
-              qc.invalidateQueries({ queryKey: ["doc", "/api/v1/invoices", inv.id] });
-              qc.invalidateQueries({ queryKey: ["list", "/api/v1/invoices"] });
-              setEdit(null);
-            } catch (e: any) {
-              toast.error(e.message);
-            } finally {
-              setSaving(false);
-            }
-          }}>Save</button></>}>
-        {edit && <div className="row">
-          <Field label="Due date" col="col-md-6" hint={`Invoice dated ${date(inv.date)}`}>
-            <DateInput className="form-control" value={edit.due_date} onChange={(e) => setEdit({ ...edit, due_date: e.target.value })} />
-          </Field>
-          <Field label="Notes on the invoice" col="col-12" hint="Printed under the totals">
-            <textarea className="form-control" rows={3} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />
-          </Field>
-          {inv.status === "draft" ? <>
-            <Field label="Invoice date" col="col-md-6"><DateInput className="form-control" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>
-            <div className="col-12">
-              <label className="form-label fs-12 fw-semibold">Lines</label>
-              {(() => {
-                /* live figures, mirroring update_draft: the typed discount, then a changed Prod % moves it by gross ×
-                   the change; Taxable = qty × rate − discount; on a tax invoice GST is the FBR engine's (or the typed
-                   GST Rate), Line Total = Taxable + GST. PREVIEW — the server recomputes on Save. */
-                const taxed = Boolean(inv.force_tax_type);
-                // anything may change on a draft (owner, 27 Oct 2026) — quantity, items added or taken off; the delivery
-                // note, stock and the order follow on Save. Delivered goods keep their quantities (a return is a credit note).
-                const delivered = /^(delivered|partially delivered|returned)$/i.test(inv.delivery_status || "");
-                const fig = edit.lines.map((l: any) => {
-                  if (l.removed) return { gross: 0, disc: 0, taxable: 0, gst: null, total: 0 };
-                  const gross = Math.round(Number(l.qty) * Number(l.unit_price || 0) * 10000) / 10000;
-                  const base = l.isNew ? gross * Number(inv.discount_pct || 0) / 100 : Number(l.discount_amount || 0);
-                  const disc = Math.max(0, base + gross * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
-                  const taxable = gross - disc;
-                  if (taxed && l.within) {
-                    // the discount here is off the price without tax (owner, 5 Nov 2026), as the server reads what is typed
-                    const tp = Number(l.unit_price || 0), args = { rate: l.fbr_rate, overridePct: l.tax_pct, others: l.others }, unit = exTaxUnit(tp, args);
-                    const discEx = Math.max(0, base + Number(l.qty) * unit * (Number(l.product_discount_pct || 0) - l.prod_pct_was) / 100);
-                    const w = lineWithinTp({ ...args, tp, qty: Number(l.qty), discTp: l.isNew ? disc : unit ? (discEx * tp) / unit : 0 });
-                    return { gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
-                  }
-                  const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), overridePct: l.tax_pct, others: l.others }) : null;
-                  return { gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
-                });
-                const sum = (f: (x: any) => number) => fig.reduce((a: number, x: any) => a + f(x), 0);
-                const gross = sum((x) => x.gross), disc = sum((x) => x.disc), net = sum((x) => x.taxable), tax = sum((x) => x.gst?.amount || 0);
-                const showOther = taxed && sum((x) => x.gst?.other || 0) > 0;
-                const span = taxed ? 8 + (showOther ? 1 : 0) : 5;
-                const set = (i: number, patch: any) => { const ls = [...edit.lines]; ls[i] = { ...ls[i], ...patch }; setEdit({ ...edit, lines: ls }); };
-                // a changed quantity carries its discount along, until a discount is typed by hand
-                const setQty = (i: number, v: string) => { const l = edit.lines[i]; set(i, { qty: v, ...(!l.isNew && !l.disc_typed && l.qty_was ? { discount_amount: String(Math.round(l.disc_was * Number(v || 0) / l.qty_was * 100) / 100) } : {}) }); };
-                const addItem = async (v: any) => {
-                  let price = v.sale_price;
-                  try { price = (await api.get(`/api/v1/variants/${v.id}/price`, { customer: inv.customer })).unit_price; } catch { /* list price */ }
-                  // functional: the price fetch is async, and whatever was typed meanwhile must survive
-                  setEdit((cur: any) => cur && { ...cur, lines: [...cur.lines, { key: `new-${Date.now()}`, isNew: true, variant: v.id, description: v.name, qty: "1", unit_price: String(price ?? ""), discount_amount: "0", product_discount_pct: "0", prod_pct_was: 0, tax_pct: "",
-                    fbr_rate: v.tax_rate || "", others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } }] });
-                };
-                return <div className="table-responsive"><table className="table table-sm align-middle mb-1">
-                  <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 80 }}>Qty</th><th className="num" style={{ width: 120 }}>Rate</th><th className="num" style={{ width: 120 }}>Discount</th><th className="num" style={{ width: 90 }} title="The product's own standing discount — changing it adjusts the discount amount">Prod %</th>{taxed && <th className="num" style={{ width: 90 }} title="This line's tax % — blank follows the product's FBR rate">Tax %</th>}{taxed && <th className="num" style={{ width: 110 }}>Taxable</th>}{taxed && <th className="num" style={{ width: 100 }}>GST</th>}{showOther && <th className="num" style={{ width: 100 }} title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num" style={{ width: 110 }}>{taxed ? "Line Total" : "Amount"}</th><th style={{ width: 36 }} /></tr></thead>
-                  <tbody>{edit.lines.map((l: any, i: number) => (
-                    l.removed ? null : <tr key={l.key}>
-                      <td className="fs-12">{l.description}</td>
-                      <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} disabled={delivered && !l.isNew} title={delivered ? "Delivered — a quantity change is a return (credit note)" : undefined} onChange={(e) => setQty(i, e.target.value)} /></td>
-                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.unit_price} onChange={(e) => set(i, { unit_price: e.target.value })} /></td>
-                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.isNew ? String(Math.round(fig[i].disc * 100) / 100) : l.discount_amount} readOnly={l.isNew} onChange={(e) => set(i, { discount_amount: e.target.value, disc_typed: true })} /></td>
-                      <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? "0"} onChange={(e) => set(i, { product_discount_pct: e.target.value })} /></td>
-                      {taxed && <td><input type="number" step="0.01" min="0" max="100" className="form-control form-control-sm text-end" placeholder={String(l.tax_rate_now)} title="blank = the product's FBR rate" value={l.tax_pct} onChange={(e) => set(i, { tax_pct: e.target.value })} /></td>}
-                      {taxed && <td className="num fs-12">{money(fig[i].taxable)}</td>}
-                      {taxed && <td className="num fs-12">{fig[i].gst?.label ? <>{money(fig[i].gst.amount)}<div className="text-muted fs-11">{fig[i].gst.label}</div></> : <span className="text-warning" title="No FBR rate — this item carries no GST; classify it on the product's FBR card (HS code → rate)">—</span>}</td>}
-                      {showOther && <td className="num fs-12">{fig[i].gst?.other ? <>{money(fig[i].gst.other)}<div className="text-muted fs-11">{otherTaxLabel(l.others || {})}</div></> : "—"}</td>}
-                      <td className="num fs-12 fw-medium">{money(taxed ? fig[i].total : fig[i].gross)}</td>
-                      <td>{!(delivered && !l.isNew) && <button type="button" className="btn btn-sm btn-outline-danger" title="Take this item off" onClick={() => set(i, { removed: true })}><i className="ti ti-x" /></button>}</td>
-                    </tr>))}</tbody>
-                  <tfoot>{taxed ? <TaxFooterRows span={span} trail={1} className="fs-12" sub={gross} discount={disc} discountPct={inv.discount_pct} net={net} gst={tax} gstPct={gstPctOfLabels(fig.map((x: any) => x.gst?.label))}
-                      fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} advanceRate={inv.customer_advance_tax_rate} /> : <PlainFooterRows span={span} trail={1} className="fs-12" sub={gross} discount={disc} discountPct={inv.discount_pct} advanceRate={inv.customer_advance_tax_rate} />}</tfoot>
-                </table>
-                  {!delivered && <div style={{ maxWidth: 420 }}><EntitySelect endpoint="/api/v1/variants" query={{ is_active: true }} value={null} size="sm" placeholder="Add an item…" onChange={() => {}} onSelectRaw={addItem} mapOption={(v: any) => ({ id: v.id, label: v.name, sub: v.sku })} /></div>}
-                </div>;
-              })()}
-            </div>
-          </> : <div className="col-12"><Alert kind="info">The amounts cannot be changed here. This invoice is already in the ledger and owed by the customer, so a wrong figure is corrected with a <strong>credit note</strong>, which the customer also receives.</Alert></div>}
-        </div>}
-      </Modal>
       {fbrView && <FbrDataModal invoiceId={inv.id} number={inv.number} onClose={() => setFbrView(false)} />}
       <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); }} />
       <ConfirmDialog open={rejecting} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
@@ -278,6 +178,129 @@ export function InvoiceDetailPage() {
   );
 }
 
+
+/** What the edit page starts from: each line as the invoice holds it, in the price as quoted (TP) where it has one. */
+function editState(inv: any) {
+  const within = (useAuth.getState().me as any)?.tenant?.settings?.tp_includes_tax !== false;
+  return {
+    due_date: inv.due_date || "", notes: inv.notes || "", date: inv.date || "",
+    lines: (inv.lines || []).map((l: any) => ({
+      id: l.id, key: l.id, description: l.description, qty: String(Number(l.qty)), qty_was: Number(l.qty),
+      disc_was: Number(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount), within: within && l.tp != null,
+      unit_price: String(l.tp != null ? l.tp : l.unit_price), discount_amount: String(Math.round(Number(l.tp != null && !inv.force_tax_type ? l.tp_discount : l.discount_amount) * 100) / 100),
+      tax_pct: l.tax_pct_override == null ? "" : String(Number(l.tax_pct_override)), fbr_rate: l.fbr_rate || "",
+      others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate },
+    })),
+  };
+}
+
+/**
+ * Edit an invoice on a page of its own (owner, 8 Nov 2026: "make this page full not modal"). The price, the product's own
+ * discount % and the tax % come from the product, so they are shown, not edited (owner, 8 Nov 2026). A draft changes its
+ * date, quantities, discount and items; the delivery note, stock and order follow on Save, and delivered goods keep their
+ * quantities (a return is a credit note). A posted invoice changes only its due date and notes.
+ */
+export function InvoiceEditPage() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const q = useDoc("/api/v1/invoices", id);
+  const [edit, setEdit] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const inv = q.data;
+  useEffect(() => { if (inv && !edit) setEdit(editState(inv)); }, [inv]);
+  if (q.isLoading || !inv || !edit) return <Spinner />;
+  const draft = inv.status === "draft";
+  const back = `/app/sales/invoices/${inv.id}`;
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body: any = { due_date: edit.due_date || null, notes: edit.notes };
+      if (draft) {
+        body.date = edit.date || undefined;
+        body.lines = edit.lines.filter((l: any) => !(l.isNew && l.removed)).map((l: any) => l.isNew
+          ? { variant: l.variant, qty: l.qty }
+          : l.removed ? { id: l.id, remove: true }
+          : { id: l.id, qty: l.qty, discount_amount: l.discount_amount });
+      }
+      await api.patch(`/api/v1/invoices/${inv.id}`, body);
+      toast.success("Invoice updated");
+      qc.invalidateQueries({ queryKey: ["doc", "/api/v1/invoices", inv.id] });
+      qc.invalidateQueries({ queryKey: ["list", "/api/v1/invoices"] });
+      nav(back);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  /* live figures, mirroring update_draft: Taxable = qty × rate − discount; on a tax invoice GST is the FBR engine's (or the
+     line's own GST Rate), Line Total = Taxable + GST. PREVIEW — the server recomputes on Save. */
+  const taxed = Boolean(inv.force_tax_type);
+  const delivered = /^(delivered|partially delivered|returned)$/i.test(inv.delivery_status || "");
+  const fig = edit.lines.map((l: any) => {
+    if (l.removed) return { gross: 0, disc: 0, taxable: 0, gst: null, total: 0 };
+    const gross = Math.round(Number(l.qty) * Number(l.unit_price || 0) * 10000) / 10000;
+    const disc = Math.max(0, l.isNew ? gross * Number(inv.discount_pct || 0) / 100 : Number(l.discount_amount || 0));
+    const taxable = gross - disc;
+    if (taxed && l.within) {
+      // the discount here is off the price without tax (owner, 5 Nov 2026), as the server reads what is typed
+      const tp = Number(l.unit_price || 0), args = { rate: l.fbr_rate, overridePct: l.tax_pct, others: l.others }, unit = exTaxUnit(tp, args);
+      const w = lineWithinTp({ ...args, tp, qty: Number(l.qty), discTp: l.isNew ? disc : unit ? (disc * tp) / unit : 0 });
+      return { gross: w.gross, disc: w.disc, taxable: w.taxable, gst: w.gst, total: w.taxable + (w.gst?.amount || 0) + (w.gst?.other || 0) };
+    }
+    const gst = taxed ? fbrLineTax({ rate: l.fbr_rate, taxable, qty: Number(l.qty), overridePct: l.tax_pct, others: l.others }) : null;
+    return { gross, disc, taxable, gst, total: taxable + (gst?.amount || 0) + (gst?.other || 0) };
+  });
+  const sum = (f: (x: any) => number) => fig.reduce((a: number, x: any) => a + f(x), 0);
+  const gross = sum((x) => x.gross), disc = sum((x) => x.disc), net = sum((x) => x.taxable), tax = sum((x) => x.gst?.amount || 0);
+  const showOther = taxed && sum((x) => x.gst?.other || 0) > 0;
+  const span = taxed ? 6 + (showOther ? 1 : 0) : 4;
+  const set = (i: number, patch: any) => { const ls = [...edit.lines]; ls[i] = { ...ls[i], ...patch }; setEdit({ ...edit, lines: ls }); };
+  // a changed quantity carries its discount along, until a discount is typed by hand
+  const setQty = (i: number, v: string) => { const l = edit.lines[i]; set(i, { qty: v, ...(!l.isNew && !l.disc_typed && l.qty_was ? { discount_amount: String(Math.round(l.disc_was * Number(v || 0) / l.qty_was * 100) / 100) } : {}) }); };
+  const addItem = async (v: any) => {
+    let price = v.sale_price;
+    try { price = (await api.get(`/api/v1/variants/${v.id}/price`, { customer: inv.customer })).unit_price; } catch { /* list price */ }
+    // functional: the price fetch is async, and whatever was typed meanwhile must survive
+    setEdit((cur: any) => cur && { ...cur, lines: [...cur.lines, { key: `new-${Date.now()}`, isNew: true, variant: v.id, description: v.name, qty: "1", unit_price: String(price ?? ""), discount_amount: "0", tax_pct: "",
+      fbr_rate: v.tax_rate || "", others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } }] });
+  };
+  return (
+    <>
+      <PageHeader title={`Edit ${inv.number}`} badge={<StatusBadge status={inv.status} />} crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number, to: back }, { label: "Edit" }]} />
+      <div className="card mb-3"><div className="card-body"><div className="row">
+        {draft && <Field label="Invoice date" col="col-md-3"><DateInput className="form-control" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>}
+        <Field label="Due date" col="col-md-3"><DateInput className="form-control" value={edit.due_date} onChange={(e) => setEdit({ ...edit, due_date: e.target.value })} /></Field>
+        <Field label="Notes on the invoice" col={draft ? "col-md-6" : "col-md-9"}><textarea className="form-control" rows={2} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+      </div></div></div>
+      {draft && <div className="card mb-3"><div className="card-header"><strong>Lines</strong></div><div className="card-body">
+        <div className="table-responsive"><table className="table table-sm align-middle mb-1">
+          <thead className="table-light"><tr><th>Item</th><th className="num" style={{ width: 100 }}>Qty</th><th className="num" style={{ width: 120 }}>Rate</th><th className="num" style={{ width: 140 }}>Discount</th>{taxed && <th className="num" style={{ width: 120 }}>Taxable</th>}{taxed && <th className="num" style={{ width: 110 }}>GST</th>}{showOther && <th className="num" style={{ width: 110 }}>Other Tax</th>}<th className="num" style={{ width: 130 }}>{taxed ? "Line Total" : "Amount"}</th><th style={{ width: 40 }} /></tr></thead>
+          <tbody>{edit.lines.map((l: any, i: number) => (
+            l.removed ? null : <tr key={l.key}>
+              <td>{l.description}</td>
+              <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} disabled={delivered && !l.isNew} onChange={(e) => setQty(i, e.target.value)} /></td>
+              <td className="num">{money(l.unit_price)}</td>
+              <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.isNew ? String(Math.round(fig[i].disc * 100) / 100) : l.discount_amount} readOnly={l.isNew} onChange={(e) => set(i, { discount_amount: e.target.value, disc_typed: true })} /></td>
+              {taxed && <td className="num">{money(fig[i].taxable)}</td>}
+              {taxed && <td className="num">{fig[i].gst?.label ? <>{money(fig[i].gst.amount)}<div className="text-muted fs-11">{fig[i].gst.label}</div></> : <span className="text-warning">—</span>}</td>}
+              {showOther && <td className="num">{fig[i].gst?.other ? <>{money(fig[i].gst.other)}<div className="text-muted fs-11">{otherTaxLabel(l.others || {})}</div></> : "—"}</td>}
+              <td className="num fw-medium">{money(taxed ? fig[i].total : fig[i].gross)}</td>
+              <td>{!(delivered && !l.isNew) && <button type="button" className="btn btn-sm btn-outline-danger" title="Take this item off" onClick={() => set(i, { removed: true })}><i className="ti ti-x" /></button>}</td>
+            </tr>))}</tbody>
+          <tfoot>{taxed ? <TaxFooterRows span={span} trail={1} sub={gross} discount={disc} discountPct={inv.discount_pct} net={net} gst={tax} gstPct={gstPctOfLabels(fig.map((x: any) => x.gst?.label))}
+              fed={sum((x) => x.gst?.fed || 0)} extra={sum((x) => x.gst?.extra || 0)} further={sum((x) => x.gst?.further || 0)} wht={sum((x) => x.gst?.wht || 0)} advanceRate={inv.customer_advance_tax_rate} /> : <PlainFooterRows span={span} trail={1} sub={gross} discount={disc} discountPct={inv.discount_pct} advanceRate={inv.customer_advance_tax_rate} />}</tfoot>
+        </table></div>
+        {!delivered && <div style={{ maxWidth: 420 }}><EntitySelect endpoint="/api/v1/variants" query={{ is_active: true }} value={null} size="sm" placeholder="Add an item…" onChange={() => {}} onSelectRaw={addItem} mapOption={(v: any) => ({ id: v.id, label: v.name, sub: v.sku })} /></div>}
+      </div></div>}
+      <div className="d-flex justify-content-end gap-2 mb-4">
+        <Link to={back} className="btn btn-light">Cancel</Link>
+        <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </>
+  );
+}
 
 /** New invoice = invoice an order that has issued/delivered goods not yet invoiced — that is where invoices
  * come from in this flow. The button appears for anyone whose role holds the Invoices "Add" switch. */
