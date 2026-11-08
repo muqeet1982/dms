@@ -21,6 +21,7 @@ h2{font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.4px;co
 .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #202C4B;padding-bottom:8px}
 .head img{max-height:48px;max-width:170px;margin-bottom:5px}
 .head .co{font-size:15px;font-weight:bold}
+.head .ntn{font-size:11px;font-weight:bold;color:#202C4B;margin-top:3px}
 .head .doc{text-align:right}
 .head .doc .no{font-size:13px;font-weight:bold;margin-top:2px}
 .badge{display:inline-block;padding:2px 8px;border-radius:3px;background:#F26522;color:#fff;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}
@@ -68,13 +69,13 @@ table.totals tr.due td{font-weight:bold;background:#FFF4EE;border-bottom:0}
 {% block watermark %}{% endblock %}
 
 <div class="head">
-  <div>
+  <div>{% block company %}
     {% if logo_url %}<img src="{{ logo_url }}" alt="{{ tenant.display_name }}">{% endif %}
     <div class="co">{{ tenant.display_name }}</div>
     <div class="muted">{% if tenant.address %}{{ tenant.address|linebreaksbr }}{% endif %}
       {% if tenant.phone %}<br>Tel {{ tenant.phone }}{% endif %}{% if tenant.email %} · {{ tenant.email }}{% endif %}
-      {% block company_tax %}{% for k, v in tenant.tax_numbers.items %}{% if v and k|lower != "strn" %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}{% endblock %}</div>
-  </div>
+      {% for k, v in tenant.tax_numbers.items %}{% if v and k|lower != "strn" %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}</div>
+  {% endblock %}</div>
   <div class="doc">
     <h1>{% block doc_title %}{{ doc_title|default:"Document" }}{% endblock %}</h1>
     <div class="no">{% block doc_ref %}{{ doc_ref|default:"" }}{% endblock %}</div>

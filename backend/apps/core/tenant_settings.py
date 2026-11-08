@@ -27,6 +27,8 @@ MAX_IMAGE_MB = 5
 COMPANY_FIELDS = ["legal_name", "display_name", "address", "city", "phone", "email", "website", "tax_numbers", "base_currency", "fiscal_year_start_month", "timezone"]
 # Free-form company/document options kept in Tenant.settings
 SETTINGS_KEYS = {
+    # who a sales tax invoice and a plain one say they are from (owner, 8 Nov 2026); blank = the company profile's
+    **{f"{face}_invoice_{k}": "" for face in ("tax", "plain") for k in ("name", "address", "phone", "email", "ntn", "bank_details")}, "tax_invoice_strn": "",
     "invoice_footer": "", "quote_footer": "", "po_footer": "", "bank_details": "", "contact_person": "", "support_phone": "",
     "registration_no": "", "license_no": "", "default_credit_days": 45, "min_shelf_life_days": 0, "allow_negative_stock": False,
     "price_change_policy": "flag", "require_delivery_otp": False, "whatsapp": "", "facebook": "", "instagram": "", "linkedin": "",
@@ -61,7 +63,7 @@ def drop_old(url):
 
 
 class CompanyProfileView(APIView):
-    """GET / PATCH the company's own details, and POST a logo (multipart `file`, `kind` = company | invoice)."""
+    """GET / PATCH the company's own details, and POST a logo (multipart `file`, `kind` = company | tax_invoice | plain_invoice)."""
 
     permission_classes = [IsTenantUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -112,14 +114,15 @@ class CompanyProfileView(APIView):
     @require_perm("settings.change_company")
     def post(self, request):
         """
-        Upload the company logo (the top of the app, and every printed document but the invoice) or, with kind=invoice, the
-        logo invoices print (owner, 6 Nov 2026).
+        Upload the company logo (the top of the app and every printed document but invoices), or the logo a sales tax
+        invoice (kind=tax_invoice) or a plain invoice (kind=plain_invoice) prints instead (owner, 6 and 8 Nov 2026).
         """
         tenant = request.tenant
         kind = request.data.get("kind") or "company"
-        if kind not in ("company", "invoice"):
-            raise DomainError("A logo is the company's or the invoice's.", status_code=400)
-        field = "invoice_logo" if kind == "invoice" else "logo"
+        fields = {"company": "logo", "tax_invoice": "tax_invoice_logo", "plain_invoice": "plain_invoice_logo"}
+        if kind not in fields:
+            raise DomainError("A logo is the company's, the tax invoice's or the plain invoice's.", status_code=400)
+        field = fields[kind]
         image = getattr(tenant, field)
         clearing = request.data.get("clear") in ("1", "true", True)
         f = request.FILES.get("file")

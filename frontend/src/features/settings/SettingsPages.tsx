@@ -34,6 +34,33 @@ export function CompanySettingsPage() {
     try { await api.upload("/api/v1/settings/company/logo", fd); toast.success(done); qc.invalidateQueries({ queryKey: ["me"] }); qc.invalidateQueries({ queryKey: ["company"] }); }
     catch (e: any) { toast.error(e.message); }
   };
+  const logoTile = (kind: string, image: string | null | undefined, label: string) => (
+    <div className="d-flex align-items-center gap-3">
+      <div className="border rounded d-flex align-items-center justify-content-center bg-light" style={{ width: 120, height: 72 }}>
+        {image ? <img src={image} alt={label} style={{ maxHeight: 64, maxWidth: 112 }} /> : <span className="text-muted fs-12">no logo</span>}
+      </div>
+      <div>
+        <div className="fw-semibold mb-2">{label}</div>
+        <input ref={(el) => { logoRef.current[kind] = el; }} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) sendLogo(kind, (fd) => fd.append("file", f), `${label} updated`); e.target.value = ""; }} />
+        <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => logoRef.current[kind]?.click()}><i className="ti ti-upload me-1" />{image ? "Replace" : "Upload"}</button>
+        {image && <button type="button" className="btn btn-sm btn-outline-danger ms-2" onClick={() => { if (window.confirm(`Remove this ${label.toLowerCase()}?`)) sendLogo(kind, (fd) => fd.append("clear", "1"), `${label} removed`); }}><i className="ti ti-trash me-1" />Remove</button>}
+      </div>
+    </div>
+  );
+  // each invoice's own header (owner, 8 Nov 2026): a blank field prints the company profile's, which the placeholder shows
+  const invoiceFields = (face: "tax" | "plain"): FieldDef[] => {
+    const c: any = company.data || {};
+    const num = (k: string) => String(Object.entries(c.tax_numbers || {}).find(([n]) => n.toUpperCase() === k)?.[1] || "");
+    return [
+      { name: `${face}_invoice_name`, label: "Company name", col: "col-md-12", placeholder: c.display_name || "" },
+      { name: `${face}_invoice_address`, label: "Address", type: "textarea", col: "col-md-12", placeholder: c.address || "" },
+      { name: `${face}_invoice_phone`, label: "Phone", col: "col-md-6", placeholder: c.phone || "" },
+      { name: `${face}_invoice_email`, label: "Email", col: "col-md-6", placeholder: c.email || "" },
+      { name: `${face}_invoice_ntn`, label: "NTN", col: face === "tax" ? "col-md-6" : "col-md-12", placeholder: num("NTN") },
+      ...(face === "tax" ? [{ name: "tax_invoice_strn", label: "STRN", col: "col-md-6", placeholder: num("STRN") }] : []),
+      { name: `${face}_invoice_bank_details`, label: "Bank details", type: "textarea", col: "col-md-12", placeholder: c.settings?.bank_details || "" },
+    ];
+  };
   const settingFields: FieldDef[] = [
     { name: "credit_policy", label: "Credit policy when a customer exceeds the limit", type: "select", options: [{ value: "warn", label: "Warn — put order on credit hold for approval" }, { value: "hard", label: "Hard block — refuse confirmation" }], col: "col-md-6" },
     { name: "reserve_stock_on_confirm", label: "Reserve stock when an order is confirmed", type: "checkbox", col: "col-md-6" },
@@ -75,21 +102,15 @@ export function CompanySettingsPage() {
   return (
     <>
       <PageHeader title="Company settings" crumbs={[{ label: "Settings" }, { label: "Company" }]} />
-      <Tabs tabs={[{ key: "profile", label: "Profile" }, { key: "contact", label: "Contact & documents" }, { key: "rules", label: "Business rules" }]} active={tab} onChange={setTab} />
-      {tab === "profile" && (
-        <div className="card mb-3"><div className="card-body"><div className="row g-4">
-          {[{ kind: "company", image: company.data?.logo, label: "Company Logo" }, { kind: "invoice", image: company.data?.invoice_logo, label: "Invoice Logo" }].map(({ kind, image, label }) => <div className="col-md-6 d-flex align-items-center gap-3" key={kind}>
-            <div className="border rounded d-flex align-items-center justify-content-center bg-light" style={{ width: 120, height: 72 }}>
-              {image ? <img src={image} alt={label} style={{ maxHeight: 64, maxWidth: 112 }} /> : <span className="text-muted fs-12">no logo</span>}
-            </div>
-            <div>
-              <div className="fw-semibold mb-2">{label}</div>
-              <input ref={(el) => { logoRef.current[kind] = el; }} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) sendLogo(kind, (fd) => fd.append("file", f), `${label} updated`); e.target.value = ""; }} />
-              <button className="btn btn-sm btn-outline-primary" onClick={() => logoRef.current[kind]?.click()}><i className="ti ti-upload me-1" />{image ? "Replace" : "Upload"}</button>
-              {image && <button className="btn btn-sm btn-outline-danger ms-2" onClick={() => { if (window.confirm(`Remove the ${label}?`)) sendLogo(kind, (fd) => fd.append("clear", "1"), `${label} removed`); }}><i className="ti ti-trash me-1" />Remove</button>}
-            </div>
-          </div>)}
-        </div></div></div>
+      <Tabs tabs={[{ key: "profile", label: "Profile" }, { key: "contact", label: "Contact & documents" }, { key: "invoices", label: "Invoices" }, { key: "rules", label: "Business rules" }]} active={tab} onChange={setTab} />
+      {tab === "profile" && <div className="card mb-3"><div className="card-body">{logoTile("company", company.data?.logo, "Company Logo")}</div></div>}
+      {tab === "invoices" && company.data && (
+        <div className="row g-3">{([["tax", "Sales Tax Invoice"], ["plain", "Non-Tax Invoice"]] as const).map(([face, title]) => (
+          <div className="col-xl-6" key={face}><div className="card h-100"><div className="card-header"><strong>{title}</strong></div><div className="card-body">
+            <div className="mb-3">{logoTile(`${face}_invoice`, company.data?.[`${face}_invoice_logo`], "Logo")}</div>
+            <ResourceForm fields={invoiceFields(face)} initial={company.data.settings} onSubmit={saveSettings} />
+          </div></div></div>))}
+        </div>
       )}
       {tab === "contact" && company.data && (
         <div className="card"><div className="card-body"><ResourceForm
@@ -166,7 +187,7 @@ export function BrandingPage() {
             {d.company_logo ? <img src={d.company_logo} alt="Company logo" style={{ maxHeight: 56, maxWidth: 112 }} /> : <span className="text-muted fs-12">none</span>}
           </div>
           <div className="flex-grow-1">
-            <div className="fs-13">Printed on orders, purchase orders, vouchers and reports, and on invoices until an Invoice Logo is set. This is your own business identity, so it is yours to set whatever the plan says.</div>
+            <div className="fs-13">Printed on orders, purchase orders, vouchers and reports, and on invoices that have no logo of their own. This is your own business identity, so it is yours to set whatever the plan says.</div>
             <div className="fs-12 text-muted">PNG, JPG or SVG · up to {d.max_image_mb || 5} MB · a wide logo around 400×120 looks best.</div>
           </div>
           <input ref={(el) => (files.current.company = el)} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="d-none" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCompanyLogo(f); }} />

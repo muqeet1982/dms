@@ -2,7 +2,7 @@
 (/ext/v1), so a tax customer's documents read the same whoever prints or shares them."""
 from decimal import Decimal
 
-from apps.core.documents import invoice_logo_url, render_doc
+from apps.core.documents import invoice_issuer, render_doc
 
 
 def order_pdf(request, o):
@@ -59,5 +59,6 @@ def invoice_pdf(request, inv):
         extra["fbr_sandbox"] = filing.sandbox
     doc_title = "SALES TAX INVOICE" if extra.get("tax_on") else "SALES INVOICE"
     # every invoice download carries its number AND who it is for (owner, 27 Oct 2026)
-    return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, "logo_url": invoice_logo_url(getattr(request, "tenant", None)), **extra}, f"{inv.number} - {inv.customer.name}",
+    issuer = invoice_issuer(getattr(request, "tenant", None), bool(extra.get("tax_on")))
+    return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, "issuer": issuer, "logo_url": issuer.get("logo_url"), **extra}, f"{inv.number} - {inv.customer.name}",
                       title=doc_title, ref=inv.number)

@@ -150,22 +150,22 @@ def test_invoices_print_the_invoice_logo_and_everything_else_the_company_logo(ap
         return seen["logo"]
 
     company = api.post("/api/v1/settings/company/logo", {"file": SimpleUploadedFile("company.png", PNG, content_type="image/png")}, format="multipart")
-    assert company.status_code == 200 and "company" in company.data["logo"] and company.data["invoice_logo"] is None
+    assert company.status_code == 200 and "company" in company.data["logo"] and company.data["plain_invoice_logo"] is None
     assert "company" in printed(f"/api/v1/invoices/{inv['id']}/pdf"), "no invoice logo yet: an invoice keeps the company logo"
 
-    up = api.post("/api/v1/settings/company/logo", {"kind": "invoice", "file": SimpleUploadedFile("onbill.png", PNG, content_type="image/png")}, format="multipart")
+    up = api.post("/api/v1/settings/company/logo", {"kind": "plain_invoice", "file": SimpleUploadedFile("onbill.png", PNG, content_type="image/png")}, format="multipart")
     assert up.status_code == 200, up.content
-    assert "onbill" in up.data["invoice_logo"] and "company" in up.data["logo"], "the company logo is left alone"
+    assert "onbill" in up.data["plain_invoice_logo"] and "company" in up.data["logo"], "the company logo is left alone"
     assert "onbill" in printed(f"/api/v1/invoices/{inv['id']}/pdf")
     assert "company" in printed(f"/api/v1/sales-orders/{o['id']}/pdf"), "an order keeps the company logo"
     assert "company" in api.get("/api/v1/me").data["tenant"]["logo"], "and it is what the top of the app reads"
-    assert "onbill" in api.get("/api/v1/settings/company").data["invoice_logo"]
+    assert "onbill" in api.get("/api/v1/settings/company").data["plain_invoice_logo"]
     with tenant_context(tenant, tenant.owner):
         tenant.refresh_from_db()
         assert "company" in logo_url(tenant)
 
-    off = api.post("/api/v1/settings/company/logo", {"kind": "invoice", "clear": "1"}, format="multipart")
-    assert off.status_code == 200 and off.data["invoice_logo"] is None and "company" in off.data["logo"], "removing one leaves the other"
+    off = api.post("/api/v1/settings/company/logo", {"kind": "plain_invoice", "clear": "1"}, format="multipart")
+    assert off.status_code == 200 and off.data["plain_invoice_logo"] is None and "company" in off.data["logo"], "removing one leaves the other"
     assert "company" in printed(f"/api/v1/invoices/{inv['id']}/pdf")
     bad = api.post("/api/v1/settings/company/logo", {"kind": "stamp", "file": SimpleUploadedFile("x.png", PNG, content_type="image/png")}, format="multipart")
     assert bad.status_code == 400

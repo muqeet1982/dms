@@ -42,7 +42,7 @@ class TenantPublicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tenant
-        fields = ["id", "slug", "legal_name", "display_name", "status", "address", "city", "phone", "email", "website", "tax_numbers", "logo", "invoice_logo", "base_currency", "fiscal_year_start_month", "timezone", "settings", "branding", "plan"]
+        fields = ["id", "slug", "legal_name", "display_name", "status", "address", "city", "phone", "email", "website", "tax_numbers", "logo", "tax_invoice_logo", "plain_invoice_logo", "base_currency", "fiscal_year_start_month", "timezone", "settings", "branding", "plan"]
 
     def get_settings(self, obj):
         # clients act on the EFFECTIVE value, the same merge Tenant.setting() reads — the stored

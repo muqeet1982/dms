@@ -1,14 +1,23 @@
 {% extends "_doc.html" %}{% load docs %}
 {% comment %}
 The invoice the customer keeps. Everything a dispute needs is on it: what was delivered, against which order
-and delivery note, the tax shown per line and again in the total, the balance still due, and the amount in
-words under it.
+and delivery note (not on a sales tax invoice), the tax shown per line and again in the total, the balance still
+due, and the amount in words under it.
 {% endcomment %}
-{% block doc_title %}SALES INVOICE{% endblock %}
+{% block doc_title %}{% if tax_on %}SALES TAX INVOICE{% else %}SALES INVOICE{% endif %}{% endblock %}
 {% block doc_ref %}{{ inv.number }}{% endblock %}
 {% block watermark %}{% if inv.status == 'draft' %}<div class="mark">DRAFT</div>{% elif inv.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% endif %}{% endblock %}
 
-{% block company_tax %}{% if tax_on %}{% for k, v in tenant.tax_numbers.items %}{% if v %}<br>{{ k }}: {{ v }}{% endif %}{% endfor %}{% else %}{{ block.super }}{% endif %}{% endblock %}
+{% comment %}Who the invoice is from: a sales tax invoice and a plain one each have their own (owner, 8 Nov 2026). A sales tax
+invoice sets its NTN apart, in bold, so it cannot be missed.{% endcomment %}
+{% block company %}
+    {% if issuer.logo_url %}<img src="{{ issuer.logo_url }}" alt="{{ issuer.name }}">{% endif %}
+    <div class="co">{{ issuer.name }}</div>
+    <div class="muted">{% if issuer.address %}{{ issuer.address|linebreaksbr }}{% endif %}
+      {% if issuer.phone %}<br>Tel {{ issuer.phone }}{% endif %}{% if issuer.email %} · {{ issuer.email }}{% endif %}
+      {% if not tax_on %}{% for k, v in issuer.tax_lines %}<br>{{ k }}: {{ v }}{% endfor %}{% endif %}</div>
+    {% if tax_on %}{% for k, v in issuer.tax_lines %}<div class="ntn">{{ k }}: {{ v }}</div>{% endfor %}{% endif %}
+{% endblock %}
 
 {% block meta %}
 <table class="grid">
@@ -19,8 +28,9 @@ words under it.
     <td><span class="k">Sales person</span>{% if inv.rep %}{{ inv.rep.name }}{% elif inv.order.rep %}{{ inv.order.rep.name }}{% elif inv.order.trip.rep %}{{ inv.order.trip.rep.name }}{% elif inv.delivery_note.trip.rep %}{{ inv.delivery_note.trip.rep.name }}{% else %}—{% endif %}</td>
   </tr>
   <tr>
+    {% if not tax_on %}{% comment %}A sales tax invoice runs its own number series: the order's and the delivery note's would read as gaps in it (owner, 8 Nov 2026).{% endcomment %}
     <td><span class="k">Order</span>{{ inv.order.number|default:"—" }}</td>
-    <td><span class="k">Delivery note</span>{{ inv.delivery_note.number|default:"—" }}</td>
+    <td><span class="k">Delivery note</span>{{ inv.delivery_note.number|default:"—" }}</td>{% endif %}
     <td><span class="k">Delivery person</span>{% if inv.delivery_note.trip.delivery_rep %}{{ inv.delivery_note.trip.delivery_rep.full_name }}{% elif inv.delivery_note.delivered_by %}{{ inv.delivery_note.delivered_by.full_name }}{% else %}—{% endif %}</td>
   </tr>
 </table>
@@ -106,6 +116,7 @@ The HS code rides under the item name, where the classification belongs.
 {% endif %}{% endblock %}
 
 {% block notes %}
+{% if issuer.bank_details %}<div class="note"><strong>Bank details:</strong><br>{{ issuer.bank_details|linebreaksbr }}</div>{% endif %}
 {% if inv.notes %}<div class="note"><strong>Notes:</strong> {{ inv.notes }}</div>{% endif %}
 {% if inv.balance %}<div class="note">Please quote invoice number <strong>{{ inv.number }}</strong> with your payment.</div>{% endif %}
 {% endblock %}
@@ -144,4 +155,4 @@ carries none (owner, 27 Oct 2026): Sub Total (Σ Qty × Rate) − Total Discount
 {% endblock %}
 
 
-{% block signatures %}{% include "_signatures.html" %}{% endblock %}
+{% comment %}No Prepared / Checked / Approved By on an invoice (owner, 8 Nov 2026); orders and purchase orders keep them.{% endcomment %}

@@ -8,7 +8,7 @@ export type User = {
 export type Membership = { id: UUID; tenant_id: UUID; tenant_name: string; tenant_slug: string; tenant_status: string; is_owner: boolean; status: string; roles: string[] };
 export type Tenant = {
   id: UUID; slug: string; legal_name: string; display_name: string; status: string; address: string; city: string; phone: string; email: string; website: string;
-  tax_numbers: Record<string, string>; logo: string | null; invoice_logo?: string | null; base_currency: string; fiscal_year_start_month: number; timezone: string; settings: Record<string, any>; branding: Record<string, any>;
+  tax_numbers: Record<string, string>; logo: string | null; tax_invoice_logo?: string | null; plain_invoice_logo?: string | null; base_currency: string; fiscal_year_start_month: number; timezone: string; settings: Record<string, any>; branding: Record<string, any>;
   plan: { code: string; name: string; status: string; end_date: string; days_left: number } | null;
   white_label?: boolean;
 };
