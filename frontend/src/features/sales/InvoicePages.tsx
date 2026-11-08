@@ -51,9 +51,7 @@ export function InvoiceDetailPage() {
   const q = useDoc("/api/v1/invoices", id);
   const pays = useQuery({ queryKey: ["invoice-payments", id], queryFn: () => api.get(`/api/v1/invoices/${id}/payments`), enabled: Boolean(id) });
   const { run, busy } = useAction("/api/v1/invoices", id);
-  const [cancel, setCancel] = useState(false);
   const [reopen, setReopen] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
   const [fbrView, setFbrView] = useState(false);
   const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
   // What a posted invoice still allows: when it falls due, and what is written on it. The amounts belong to the
@@ -79,8 +77,6 @@ export function InvoiceDetailPage() {
           </div>}
           {open && pageRights("payments").extras.receive && <Link to={`/app/accounting/payments/new?direction=in&partner_type=customer&partner_id=${inv.customer}&invoice=${inv.id}&amount=${inv.balance}`} className="btn btn-success"><i className="ti ti-cash me-1" />Receive payment</Link>}
           {["posted", "partially_paid", "overdue", "paid", "returned"].includes(inv.status) && creditNotes.add && <Link to={`/app/sales/credit-notes/new?invoice=${inv.id}`} className="btn btn-outline-warning"><i className="ti ti-arrow-back-up me-1" />Credit note / return</Link>}
-          {["draft", "posted", "overdue", "returned"].includes(inv.status) && reversible && inv.fbr?.status !== "submitted" && page.delete && <button className="btn btn-outline-danger" onClick={() => setRejecting(true)}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}
-          {inv.status !== "cancelled" && reversible && page.delete && <button className="btn btn-outline-danger" onClick={() => setCancel(true)}>Cancel</button>}
           {["posted", "overdue", "returned"].includes(inv.status) && reversible && (isOwner || can("sales.edit_posted_invoice")) && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setReopen(true)}><i className="ti ti-lock-open me-1" />Reopen to edit</button>}
           {/* a posted, unpaid invoice can still become a tax invoice (owner, 26 Oct 2026): ONE atomic call
               reopens it and flips the switch — a refusal rolls the reopen back too, so nothing strands.
@@ -95,26 +91,25 @@ export function InvoiceDetailPage() {
                   toast.success(inv.force_tax_type ? "Tax removed — review, then press Post to ledger" : "Tax on — review the figures, then press Post to ledger");
                 } catch (e: any) { toast.error(e.message); } finally { setSaving(false); qc.invalidateQueries(); }
               }}><i className="ti ti-percentage me-1" />{inv.force_tax_type ? "Tax off" : "Tax on"}</button>)}
-          {/* a posted tax invoice files with FBR in ONE click (owner, 27 Oct 2026: "after submit also give button to post
-              to fbr"): the server validates and only on a pass files it — FBR's number and QR then print on the invoice */}
-          {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && page.can("fbr_file") && inv.fbr?.status !== "submitted" && <>
-            <button className="btn btn-info" disabled={!!busy || !inv.fbr_setup?.configured}
-              title={inv.fbr_setup?.configured ? "Checks the invoice with FBR and, if it passes, files it" : "Set up FBR first under Settings → FBR e-invoicing"}
-              onClick={() => run("fbr-post", {}, { success: inv.fbr_setup?.sandbox ? "Filed with FBR's SANDBOX — a test filing, not a legal one" : "Filed with FBR — number issued" })}>
-              <i className="ti ti-send me-1" />Post to FBR{inv.fbr_setup?.sandbox ? " (sandbox)" : ""}</button>
-            <button className="btn btn-outline-info" disabled={!!busy || !inv.fbr_setup?.configured} onClick={() => run("fbr-validate", {}, { success: "FBR accepted the dry run — ready to post" })}><i className="ti ti-building-bank me-1" />Validate only</button>
-          </>}
+          {/* FBR is one button at a time (owner, 8 Nov 2026): Validate with FBR; once FBR passes it, Post to FBR (the
+              server checks it again before filing); once filed, FBR invoice & JSON. FBR's number and QR then print on it */}
+          {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && page.can("fbr_file") && inv.fbr?.status !== "submitted" && (inv.fbr?.status === "validated"
+            ? <button className="btn btn-info" disabled={!!busy || !inv.fbr_setup?.configured}
+                onClick={() => run("fbr-post", {}, { success: inv.fbr_setup?.sandbox ? "Filed with FBR's SANDBOX — a test filing, not a legal one" : "Filed with FBR — number issued" })}>
+                <i className="ti ti-send me-1" />Post to FBR{inv.fbr_setup?.sandbox ? " (sandbox)" : ""}</button>
+            : <button className="btn btn-outline-info" disabled={!!busy || !inv.fbr_setup?.configured}
+                title={inv.fbr_setup?.configured ? undefined : "Set up FBR first under Settings → FBR e-invoicing"}
+                onClick={() => run("fbr-validate", {}, { success: "FBR passed it — ready to post" })}><i className="ti ti-building-bank me-1" />Validate with FBR</button>)}
           {inv.status === "draft" && page.can("discount") && (inv.force_tax_type
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
-          {!["cancelled", "paid"].includes(inv.status) && page.edit && <Link to={`/app/sales/invoices/${inv.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}
-          {inv.force_tax_type && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
+          {inv.force_tax_type && inv.fbr?.status === "submitted" && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
-      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.edit ? <>, press <strong>Edit</strong> to change quantities or discounts</> : null}{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
-      {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && !inv.fbr && <Alert kind="info"><strong>Tax invoice — not filed with FBR yet.</strong> {inv.fbr_setup?.configured ? <>Press <strong>Post to FBR</strong>{inv.fbr_setup.sandbox ? " (FBR is set to its sandbox — a test filing)" : ""}; FBR's number and QR then print on the invoice.</> : <>Set up FBR under Settings → FBR e-invoicing to file it.</>}</Alert>}
+      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
+      {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && !inv.fbr && <Alert kind="info"><strong>Tax invoice — not filed with FBR yet.</strong> {inv.fbr_setup?.configured ? <>Press <strong>{inv.fbr?.status === "validated" ? "Post to FBR" : "Validate with FBR"}</strong>{inv.fbr_setup.sandbox ? " (FBR is set to its sandbox — a test filing)" : ""}; FBR's number and QR then print on the invoice.</> : <>Set up FBR under Settings → FBR e-invoicing to file it.</>}</Alert>}
       {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
         <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{Number(inv.advance_tax_total) > 0 && <> · filed {money(Number(inv.total) - Number(inv.advance_tax_total))}, advance income tax {money(inv.advance_tax_total)} is not part of FBR's sales-tax filing</>}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
       </Alert>}
@@ -169,11 +164,7 @@ export function InvoiceDetailPage() {
           {pays.data?.rep_collections?.length > 0 && <><h6 className="fs-13 mt-3">Rep collections</h6><table className="table table-sm fs-12"><thead className="table-light"><tr><th>Collection</th><th>Date</th><th>Rep</th><th>Status</th><th className="num">Amount</th></tr></thead><tbody>{pays.data.rep_collections.map((c: any) => <tr key={c.id}><td>{c.number}</td><td>{date(c.date)}</td><td>{c.rep_name}</td><td><StatusBadge status={c.status} /></td><td className="num">{money(c.allocations.find((a: any) => a.invoice === inv.id)?.amount || c.amount)}</td></tr>)}</tbody></table></>}
         </div>) }]} />
       {fbrView && <FbrDataModal invoiceId={inv.id} number={inv.number} onClose={() => setFbrView(false)} />}
-      <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); }} />
-      <ConfirmDialog open={rejecting} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
-        message={<>The sale of <strong>{inv.number}</strong> is reversed: the goods come back to stock once, its entries come off the books and its order closes as Rejected. No return and no payment are recorded.</>}
-        onClose={() => setRejecting(false)} onConfirm={async (r) => { await run("reject", { reason: r }, { success: "Sale reversed — customer rejected" }); setRejecting(false); }} />
-      <ConfirmDialog open={cancel} title="Cancel invoice" withReason danger confirmText="Cancel invoice" onClose={() => setCancel(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancel(false); }} />
+      <ConfirmDialog open={reopen} title="Reopen to edit" withReason confirmText="Reopen invoice" message="Everything this invoice booked — its posting, COGS, manufacturer claims and their net-offs — is reversed and it returns to Draft. Edit the figures, then Post to ledger again and the books are rebuilt from the corrected invoice. Receipts must be removed before reopening." onClose={() => setReopen(false)} onConfirm={async (r) => { await run("reopen", { reason: r }, { success: "Back to draft — edit and post again" }); setReopen(false); nav(`/app/sales/invoices/${inv.id}/edit`); }} />
     </>
   );
 }
