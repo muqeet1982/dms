@@ -21,7 +21,10 @@ import { CreditChoice, CreditOptions, creditBody, emptyCreditChoice } from "@/co
 
 /** Invoices and Tax invoices are separate pages, each its own series — INV and STI (owner, 1 Nov 2026). */
 export function InvoicesPage({ tax = false }: { tax?: boolean }) {
-  const stats = useQuery({ queryKey: ["invoice-stats", tax], queryFn: () => api.get("/api/v1/invoices/stats", { tax: tax ? 1 : 0 }) });
+  // the cards count what the table shows: its search and filters ride along (owner, 10 Nov 2026: "count is not correct")
+  const [sp] = useSearchParams();
+  const shown = Object.fromEntries([...sp.entries()].filter(([k]) => !["page", "page_size", "ordering"].includes(k)));
+  const stats = useQuery({ queryKey: ["invoice-stats", tax, shown], queryFn: () => api.get("/api/v1/invoices/stats", { ...shown, tax: tax ? 1 : 0 }), placeholderData: (prev: any) => prev });
   const cols: Column<any>[] = [
     { key: "number", header: "Invoice #", sortKey: "number", render: (i) => <span className="fw-semibold text-dark">{i.number}</span> },
     { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
@@ -38,7 +41,7 @@ export function InvoicesPage({ tax = false }: { tax?: boolean }) {
   return (
     <ListPage key={tax ? "tax" : "plain"} title={tax ? "Tax invoices" : "Sales invoices"} page="invoices" endpoint="/api/v1/invoices" extraQuery={{ tax: tax ? 1 : 0 }} columns={cols} rowLink={(i) => `/app/sales/invoices/${i.id}`} createTo="/app/sales/invoices/new" createLabel="New invoice" defaultOrdering="-date" searchPlaceholder="Search invoice, customer, order…"
       filters={[{ name: "status", label: "Status", type: "select", options: ["draft", "posted", "partially_paid", "paid", "overdue", "cancelled"].map((s) => ({ value: s, label: s === "draft" ? "draft — to review & post" : s.replace(/_/g, " ") })) }, { name: "customer", label: "Customer", type: "entity", endpoint: "/api/v1/customers", mapOption: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, { name: "customer_type", label: "Customer type", type: "select", options: [["retailer", "Retailer"], ["salon", "Salon"], ["wholesaler", "Wholesaler"], ["lmt", "LMT"], ["other", "Other"]].map(([value, label]) => ({ value, label })) }, { name: "open", label: "Open only", type: "toggle" }, { name: "overdue", label: "Overdue only", type: "toggle" }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]}
-      stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Open invoices" value={stats.data.open_count} icon="ti-file-invoice" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Outstanding" value={money(stats.data.outstanding, 0)} icon="ti-receipt" color="warning" /></div><div className="col-6 col-md-3"><StatCard label="Overdue" value={money(stats.data.overdue, 0)} icon="ti-alert-circle" color="danger" /></div><div className="col-6 col-md-3"><StatCard label="Sales this month" value={money(stats.data.month_sales, 0)} icon="ti-chart-line" color="success" /></div></div>} />
+      stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Open invoices" value={stats.data.open_count} icon="ti-file-invoice" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Outstanding" value={money(stats.data.outstanding, 0)} icon="ti-receipt" color="warning" /></div><div className="col-6 col-md-3"><StatCard label="Overdue" value={money(stats.data.overdue, 0)} icon="ti-alert-circle" color="danger" sub={`${stats.data.overdue_count ?? 0} invoice${stats.data.overdue_count === 1 ? "" : "s"}`} /></div><div className="col-6 col-md-3"><StatCard label={stats.data.period ? "Sales in period" : "Sales this month"} value={money(stats.data.month_sales, 0)} icon="ti-chart-line" color="success" /></div></div>} />
   );
 }
 

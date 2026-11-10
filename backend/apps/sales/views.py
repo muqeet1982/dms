@@ -566,12 +566,24 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
 
     @action(detail=False, methods=["get"])
     def stats(self, request):
-        qs = self.get_queryset()
+        """
+        The cards above the list (owner, 10 Nov 2026: "count is not correct"): the invoices the table shows, with its
+        search and every filter, so a customer, a status or a date range picked there changes the cards too. Sales are
+        what is on the books: a draft is not a sale yet. With a date range the sales card is that period's, else this
+        month's.
+        """
+        qs = SalesInvoice.objects.filter(pk__in=self.filter_queryset(self.get_queryset()).order_by().values("pk"))
         today = timezone.localdate()
         open_qs = qs.filter(status__in=["posted", "partially_paid", "overdue"])
         agg = open_qs.aggregate(t=Sum("total"), p=Sum("paid_amount"))
         ov = open_qs.filter(due_date__lt=today).aggregate(t=Sum("total"), p=Sum("paid_amount"))
-        return Response({"open_count": open_qs.count(), "outstanding": str((agg["t"] or 0) - (agg["p"] or 0)), "overdue": str((ov["t"] or 0) - (ov["p"] or 0)), "month_sales": str(qs.filter(date__gte=today.replace(day=1)).exclude(status="cancelled").aggregate(s=Sum("total"))["s"] or 0)})
+        period = bool(request.query_params.get("date_from") or request.query_params.get("date_to"))
+        sales = qs.exclude(status__in=["draft", "cancelled"])
+        if not period:
+            sales = sales.filter(date__gte=today.replace(day=1))
+        return Response({"open_count": open_qs.count(), "outstanding": str((agg["t"] or 0) - (agg["p"] or 0)), "overdue": str((ov["t"] or 0) - (ov["p"] or 0)),
+                         "overdue_count": open_qs.filter(due_date__lt=today).count(),
+                         "month_sales": str(sales.aggregate(s=Sum("total"))["s"] or 0), "period": period})
 
 
 class CreditNoteViewSet(DocumentViewSet):
