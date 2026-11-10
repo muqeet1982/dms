@@ -1341,12 +1341,14 @@ class InvoiceService:
 
     @staticmethod
     def files_with_fbr():
-        """Whether this company is set up for FBR e-invoicing (a token entered): then a sales tax invoice takes its STI
-        number when FBR accepts it, not when it is posted (owner, 8 Nov 2026)."""
+        """Whether this company files with FBR for real (a production token, the sandbox switched off): then a sales tax
+        invoice takes its STI number when FBR accepts it, not when it is posted (owner, 8 Nov 2026). A sandbox filing is a
+        test and never numbers one, so a company on the sandbox numbers at posting like one with no FBR at all: counting
+        a sandbox token here left TDN's tax invoices printing their INV number for good (owner, 10 Nov 2026)."""
         from apps.fbr.models import FBRSettings
 
         s = FBRSettings.objects.first()
-        return bool(s and (s.production_token or s.sandbox_token))
+        return bool(s and not s.use_sandbox and s.production_token)
 
     @staticmethod
     def take_tax_number(inv):

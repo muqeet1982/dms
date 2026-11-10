@@ -3,8 +3,8 @@ The sales tax invoice series (owner, 8 Nov 2026: "tax invoice should be in sequa
 invoice to fbr"; "if i change tax to non tax invoice, it should change it invoice number squance ... make sure it should update
 everywhere").
 
-A company that files with FBR gives a tax invoice its STI number when FBR accepts it for real; until then every invoice carries
-its order's number, so the tax switch never touches the series and the series has no gap. A company that does not file numbers a
+A company that files with FBR for real gives a tax invoice its STI number when FBR accepts it; until then every invoice carries
+its order's number, so the tax switch never touches the series and the series has no gap. One that does not (or is on the sandbox) numbers a
 tax invoice when it is posted; switched back to no tax, the invoice returns to its order's number, and the STI number goes back
 to the series when it was the last one given. The journals, the customer's ledger and the stock ledger follow every renumbering.
 """
@@ -115,39 +115,47 @@ def test_a_dash_two_invoice_is_never_mistaken_for_its_parent(api, tenant, taxed_
 
 # ---------------------------------------------------------------- a company that files with FBR
 
-def test_with_fbr_the_sti_number_comes_only_when_fbr_accepts_a_real_filing(api, tenant):
+def _go_live(tenant):
     from apps.fbr.models import FBRSettings
 
-    inv = _taxed_invoice(api, tenant)   # FBR set up (sandbox), tax on, posted
-    assert inv["status"] != "draft" and "-INV-" in inv["number"], "posted, but not filed: its order's number"
+    with tenant_context(tenant, tenant.owner):
+        FBRSettings.objects.update(use_sandbox=False, production_token="tok-live")
+
+
+def test_on_the_sandbox_a_tax_invoice_is_numbered_when_posted(api, tenant):
+    """A sandbox filing is a test and never gives an STI number (owner, 10 Nov 2026: TDN, on the sandbox, printed its tax
+    invoices as TDN-INV)."""
+    inv = _taxed_invoice(api, tenant)   # FBR set up on the sandbox, tax on, posted
+    assert inv["number"].endswith("-STI-00001"), inv["number"]
     with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)):
         r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
         assert r.status_code == 200 and r.data["sandbox"] is True, r.content
-    assert "-INV-" in api.get(f"/api/v1/invoices/{inv['id']}").data["number"], "a sandbox filing is a test: no STI number"
+    assert api.get(f"/api/v1/invoices/{inv['id']}").data["number"] == inv["number"], "the sandbox filing keeps it"
 
-    inv2 = _another_filed_kind(api, tenant)
-    with tenant_context(tenant, tenant.owner):
-        FBRSettings.objects.update(use_sandbox=False, production_token="tok-live")
+
+def test_filing_for_real_the_sti_number_comes_only_when_fbr_accepts_it(api, tenant):
+    first = _taxed_invoice(api, tenant)            # posted on the sandbox: STI-00001
+    _go_live(tenant)
+    inv = _another_filed_kind(api, tenant)
+    assert inv["status"] != "draft" and "-INV-" in inv["number"], "posted, but not filed yet: its order's number"
     with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)):
-        r = api.post(f"/api/v1/invoices/{inv2['id']}/fbr-post", {}, format="json")
+        r = api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json")
         assert r.status_code == 200 and r.data["status"] == "submitted" and r.data["sandbox"] is False, r.content
-    filed = api.get(f"/api/v1/invoices/{inv2['id']}").data
-    assert "-STI-" in filed["number"] and filed["number"].endswith("00001"), "FBR accepted it: the next STI number"
+    filed = api.get(f"/api/v1/invoices/{inv['id']}").data
+    assert "-STI-" in filed["number"] and filed["number"].endswith("00002"), "FBR accepted it: the next STI number after " + first["number"]
     texts = _texts(tenant)
-    assert inv2["number"] not in texts and filed["number"] in texts, "its journals follow"
+    assert inv["number"] not in texts and filed["number"] in texts, "its journals follow"
     assert filed["fbr"]["status"] == "submitted" and filed["fbr"]["fbr_invoice_number"].endswith("857820")
 
 
-def test_with_fbr_the_tax_switch_never_touches_the_series(api, tenant):
-    from apps.fbr.models import FBRSettings
-
-    inv = _taxed_invoice(api, tenant)
+def test_filing_for_real_the_tax_switch_never_touches_the_series(api, tenant):
+    _taxed_invoice(api, tenant)                    # STI-00001, on the sandbox
+    _go_live(tenant)
+    inv = _another_filed_kind(api, tenant)
     off = _switch(api, inv, False)
     assert off["number"] == inv["number"], "it never had an STI number to give up"
     on = _switch(api, off, True)
     assert on["number"] == inv["number"] and Decimal(on["tax1_total"]) > 0
-    with tenant_context(tenant, tenant.owner):
-        FBRSettings.objects.update(use_sandbox=False, production_token="tok-live")
     with mock.patch("apps.fbr.services.requests.post", return_value=_resp(ACCEPT)):
         assert api.post(f"/api/v1/invoices/{inv['id']}/fbr-post", {}, format="json").status_code == 200
-    assert api.get(f"/api/v1/invoices/{inv['id']}").data["number"].endswith("STI-00001"), "the first filed is STI-00001: no gap"
+    assert api.get(f"/api/v1/invoices/{inv['id']}").data["number"].endswith("STI-00002"), "the next in the series: no gap"
