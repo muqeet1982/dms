@@ -236,7 +236,7 @@ class StockService:
         return plan, remaining
 
     @staticmethod
-    def fit_batches(warehouse, lines, qty_of, min_shelf_life_days=None):
+    def fit_batches(warehouse, lines, qty_of, min_shelf_life_days=None, short=None):
         """
         The batches stock leaves from, as they stand NOW. A batch written on a load form or delivery note when it was
         made may have been emptied since by another issue: TDN-PL-00214 (11 Nov 2026) held batch 204400, two other notes
@@ -276,7 +276,10 @@ class StockService:
                 if b is not None and b.expiry_date and (b.expiry_date < today or (min_shelf_life_days and (b.expiry_date - today).days < min_shelf_life_days)):
                     continue
                 others.append(b)
-            if max(free[own], Decimal("0")) + sum((max(free[key(v, b)], Decimal("0")) for b in others), Decimal("0")) < need:
+            there = max(free[own], Decimal("0")) + sum((max(free[key(v, b)], Decimal("0")) for b in others), Decimal("0"))
+            if there < need:
+                if short is not None:
+                    short.append((line, there, need))   # every batch together cannot cover it: the caller says so
                 continue
             pieces, left = [], need
             for b in [line.batch, *others]:

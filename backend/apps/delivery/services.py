@@ -286,8 +286,9 @@ class PickListService:
         for l in lines:
             cust = l.order_line.order.customer if l.order_line_id else None
             by_order.setdefault((cust.min_shelf_life_days if cust else None) or tenant.setting("min_shelf_life_days"), []).append(l)
+        short = []
         for shelf, group in by_order.items():
-            for line, pieces in StockService.fit_batches(pl.warehouse, group, lambda l: l.qty_picked, shelf).items():
+            for line, pieces in StockService.fit_batches(pl.warehouse, group, lambda l: l.qty_picked, shelf, short=short).items():
                 moved = line.qty_picked - pieces[0][1]
                 old = line.batch.batch_no if line.batch else "none"
                 line.batch, line.qty_picked = pieces[0]
@@ -298,6 +299,12 @@ class PickListService:
                     PickListLine.objects.create(picklist=pl, order_line=line.order_line, variant=line.variant, batch=b, qty_to_pick=q, qty_picked=q)
                 AuditService.log("batches_refitted", pl, after={"item": line.variant.name, "from_batch": old,
                                                                 "to": [f"{b.batch_no if b else 'none'} x {q:g}" for b, q in pieces]})
+        # an item short in every batch together (TDN-PL-00214, 11 Nov 2026: another order took the last 6 a minute before):
+        # say so plainly, item by item, instead of naming the one empty batch
+        if short and not StockService._negative_allowed(pl.warehouse):
+            items = "; ".join(f"{line.variant.name}: {format(there.normalize(), 'f')} in stock, {format(need.normalize(), 'f')} entered" for line, there, need in short)
+            raise DomainError(f"Not enough stock in {pl.warehouse.name}. {items}. Enter what the warehouse can hand over (0 leaves the item for later) and confirm again.",
+                              code="insufficient_stock", errors={"lines": [str(line.pk) for line, _t, _n in short]})
 
     @staticmethod
     @transaction.atomic

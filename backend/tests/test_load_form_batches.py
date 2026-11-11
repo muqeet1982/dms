@@ -103,8 +103,32 @@ def test_short_in_every_batch_still_says_so(api, tenant, world):
         StockService.move(warehouse=wh, variant=v, qty=D("-3"), movement_type="adjustment", batch=a)
         StockService.move(warehouse=wh, variant=v, qty=D("-6"), movement_type="adjustment", batch=b)
     r = _issue(api, first)
-    assert r.status_code == 422 and "Insufficient stock" in str(r.content), r.content
+    assert r.status_code == 422, r.content
+    assert r.data["detail"] == "Not enough stock in Main. 6.13 Dark Ash: 2 in stock, 5 entered. Enter what the warehouse can hand over (0 leaves the item for later) and confirm again.", r.data
     assert _on_hand(tenant, wh, a) == D("2"), "nothing went out"
+
+
+def test_an_item_out_of_stock_entered_as_0_lets_the_rest_go(api, tenant, world):
+    """TDN-PL-00214: another order took the last of one item; the warehouse issues everything else and that item waits."""
+    from apps.catalog.models import UnitOfMeasure
+    from apps.catalog.services import ProductService
+    from apps.inventory.services import StockService
+
+    wh, v, cust, a, b = world
+    with tenant_context(tenant, tenant.owner):
+        other = ProductService.create_product(tenant, {"sku": "OTHER-1", "name": "9.31 Golden Ash", "base_uom": UnitOfMeasure.objects.get(code="PC"), "cost_price": D("100"), "sale_price": D("150")}).variants.first()
+        StockService.move(warehouse=wh, variant=other, qty=D("10"), movement_type="grn", unit_cost=D("100"))
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "2"}, {"variant": str(other.id), "qty": "3"}]}, format="json")
+    assert r.status_code == 201, r.content
+    form = _form(api, r.data)
+    with tenant_context(tenant, tenant.owner):                 # every piece of the first item is gone
+        StockService.move(warehouse=wh, variant=v, qty=D("-5"), movement_type="adjustment", batch=a)
+        StockService.move(warehouse=wh, variant=v, qty=D("-6"), movement_type="adjustment", batch=b)
+    assert _issue(api, form).status_code == 422
+    issues = [{"line_id": l["id"], "qty_issued": "0" if l["variant_sku"] == "ASH-613" else l["qty_to_pick"]} for l in form["lines"]]
+    done = api.post(f"/api/v1/pick-lists/{form['id']}/issue", {"issues": issues}, format="json")
+    assert done.status_code == 200 and done.data["status"] == "partially_issued", done.content
 
 
 def test_an_order_on_a_load_form_keeps_its_hold(api, tenant, world):
