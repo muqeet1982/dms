@@ -95,16 +95,28 @@ def test_scenario_2_cancel_after_the_invoice_before_dispatch(api, tenant):
     inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
     assert inv["status"] == "posted"
 
-    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
-    assert r.status_code == 200 and r.data["status"] == "cancelled", r.content
-    assert _stock(tenant, v, wh) == before, "back on the shelf and free"
+    from apps.accounting.models import GL_LIVE
+    from apps.partners.services import CustomerService, PartnerLedgerService
+
     with tenant_context(tenant):
-        assert SalesInvoice.objects.get(pk=inv["id"]).status == "cancelled"
-        assert CreditNote.objects.count() == 0
-        live = JournalLine.objects.filter(entry__source_id=inv["id"], entry__status="posted")
-        assert sum(l.debit - l.credit for l in live if l.account.code.startswith("1-")) in (0, D("0")) or not live.exists(), "its entries are off the books"
+        assert PartnerLedgerService.balance("customer", cust.id) == D(inv["total"]), "the invoice was on the customer's account"
+
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "cancelled", "Sale Order Status: Cancelled"
+    assert _stock(tenant, v, wh) == before, "Reserved Stock: Released · Available Stock: Restored"
+    with tenant_context(tenant):
+        assert SalesInvoice.objects.get(pk=inv["id"]).status == "cancelled", "Invoice Status: Cancelled"
+        assert CreditNote.objects.count() == 0, "cancelled, not returned"
+        net = {}
+        for l in JournalLine.objects.filter(entry__source_id=inv["id"], entry__status__in=GL_LIVE).select_related("account"):
+            net[l.account.code] = net.get(l.account.code, D("0")) + l.debit - l.credit
+        assert all(x == 0 for x in net.values()), f"its entries are off the books: {net}"
+        assert PartnerLedgerService.balance("customer", cust.id) == 0 and CustomerService.outstanding(cust) == 0, "the customer owes nothing"
+        from apps.delivery.models import DeliveryNote
+
+        assert not DeliveryNote.objects.filter(order_id=o["id"], trip__isnull=False).exists(), "no dispatch"
     p = _paperwork(tenant, o["id"])
-    assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0, p
+    assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0 and p["live_holds"] == 0, p
 
 
 def test_scenario_2_with_money_received_asks_for_a_return(api, tenant):
