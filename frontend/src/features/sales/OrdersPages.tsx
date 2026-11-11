@@ -77,7 +77,7 @@ export function OrdersInboxPage() {
   return (
     <ListPage title="Orders inbox" crumbs={[{ label: "Sales orders", to: "/app/sales/orders" }, { label: "Inbox" }]} endpoint="/api/v1/sales-orders/inbox" columns={orderColumns} rowLink={(o) => `/app/sales/orders/${o.id}`} defaultOrdering="created_at" searchPlaceholder="Search…"
       filters={[{ name: "status", label: "Status", type: "select", options: ["submitted", "under_review", "on_hold_credit", "on_hold_stock"].map((s) => ({ value: s, label: s.replace(/_/g, " ") })) }, { name: "rep", label: "Rep", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r) => ({ id: r.id, label: r.name }) }]}>
-      <Alert kind="info">Orders submitted by manufacturer reps, the external API or staff land here. Review, adjust prices/quantities if allowed, then confirm, hold or reject. The rep is notified on every change.</Alert>
+      <Alert kind="info">Orders submitted by manufacturer reps, the external API or staff land here. Review, adjust prices/quantities if allowed, then confirm, hold or cancel. The rep is notified on every change.</Alert>
     </ListPage>
   );
 }
@@ -94,7 +94,7 @@ export function OrderDetailPage() {
   const tripsPage = usePage("trips");
   const q = useDoc("/api/v1/sales-orders", id);
   const { run, busy } = useAction("/api/v1/sales-orders", id, [["orders-stats"], ["orders-stats-badge"], ["dashboard"]]);
-  const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm" | "delete" | "rejected" | "again">(null);
+  const [dlg, setDlg] = useState<null | "cancel" | "hold" | "deliver" | "confirm" | "rejected" | "again">(null);
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
   const [crew, setCrew] = useState<Crew>(NO_CREW);
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
@@ -129,14 +129,14 @@ export function OrderDetailPage() {
           {confirmable && page.can("confirm") && <button className="btn btn-success" disabled={!!busy} onClick={() => (o.status === "on_hold_credit" ? setDlg("confirm") : run("confirm", {}, { success: "Order confirmed" }))}><i className="ti ti-circle-check me-1" />Confirm</button>}
           {o.status === "on_hold_stock" && page.can("confirm") && <button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("confirm", { allow_partial: true }, { success: "Confirmed with the stock there is — the rest stays on the order as a backorder" })}><i className="ti ti-package me-1" />Confirm with available stock</button>}
           {confirmable && page.can("confirm") && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setDlg("hold")}>Hold</button>}
-          {confirmable && page.can("hold") && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("reject")}>Reject</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}
           {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
+          {/* Cancel is the one way to drop an order: no Reject, no Delete (owner, 12 Nov 2026, Scenario 1); Customer rejected only for goods refused at the door */}
           {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
    : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
-   : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{(["issued", "dispatched"].includes(o.status) || failedDn) && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("rejected")}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}{["draft", "submitted", "under_review", "rejected"].includes(o.status) && page.delete && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("delete")}><i className="ti ti-trash me-1" />Delete</button>}
+   : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{failedDn && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("rejected")}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
@@ -199,11 +199,6 @@ export function OrderDetailPage() {
           {avail.data && <div className="card"><div className="card-header"><strong>Availability</strong> <span className={`badge ms-2 ${avail.data.ok ? "bg-success" : "bg-warning"}`}>{avail.data.ok ? "in stock" : "short"}</span></div><div className="card-body p-0"><table className="table table-sm fs-12 mb-0"><tbody>{avail.data.rows.map((r: any) => <tr key={r.line_id}><td>{r.sku}</td><td className="num">{qty(r.ordered)}</td><td className={`num ${Number(r.short) > 0 ? "text-danger" : "text-success"}`}>{qty(r.available)}</td></tr>)}</tbody></table></div></div>}
         </div>
       </div>
-      <ConfirmDialog open={dlg === "reject"} title="Reject order" withReason danger confirmText="Reject" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("reject", { reason: r }); setDlg(null); }} />
-      <ConfirmDialog open={dlg === "delete"} title={`Delete ${o.number}?`} danger confirmText="Delete order" message="This removes the order completely. Only an order that has not been confirmed, delivered or invoiced can be deleted — otherwise cancel it instead." onClose={() => setDlg(null)} onConfirm={async () => {
-        try { await api.delete(`/api/v1/sales-orders/${o.id}`); toast.success(`${o.number} deleted`); qc.invalidateQueries({ queryKey: ["list", "/api/v1/sales-orders"] }); nav("/app/sales/orders"); }
-        catch (e: any) { toast.error(e.message); }
-      }} />
       {failedDn && <ConfirmDialog open={dlg === "again"} title={`Deliver ${failedDn.number} again`} withReason confirmText="Deliver again"
         message={`The same goods and the same invoice${failedDn.invoice_number ? ` (${failedDn.invoice_number})` : ""} go out again — on the next trip, or deliver it from its delivery note.`}
         onClose={() => setDlg(null)} onConfirm={deliverAgain} />}
