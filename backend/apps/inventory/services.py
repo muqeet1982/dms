@@ -236,6 +236,62 @@ class StockService:
         return plan, remaining
 
     @staticmethod
+    def fit_batches(warehouse, lines, qty_of, min_shelf_life_days=None):
+        """
+        The batches stock leaves from, as they stand NOW. A batch written on a load form or delivery note when it was
+        made may have been emptied since by another issue: TDN-PL-00214 (11 Nov 2026) held batch 204400, two other notes
+        sold it out within the hour, and four days later the issue refused "on hand 0" while 6 sat in batch 212528. An
+        item that is not batch-tracked has no batch the customer asked for, so its line draws on whatever batches hold
+        it, its own first, then the others earliest expiry first (never an expired one, nor one too short-dated for the
+        customer). A batch-tracked item keeps the batch the warehouse chose.
+
+        `lines`: line objects with .variant and .batch; `qty_of(line)` the quantity going out. Returns {line: [(batch,
+        qty), ...]} for the lines that must change (the first piece is the line itself). When even all the batches
+        together cannot cover an item, it is left alone: taking it out says how much is on hand.
+        """
+        today = timezone.localdate()
+        free = {}
+
+        def key(variant, batch):
+            k = (variant.pk, batch.pk if batch else None)
+            if k not in free:
+                free[k] = StockLevel.objects.filter(warehouse=warehouse, variant=variant, batch=batch).aggregate(s=Sum("qty_on_hand"))["s"] or Decimal("0")
+            return k
+
+        changes = {}
+        for line in lines:
+            need = Decimal(qty_of(line) or 0)
+            v = line.variant
+            if need <= 0 or v.product.is_batch_tracked:
+                continue
+            own = key(v, line.batch)
+            if free[own] >= need:
+                free[own] -= need
+                continue
+            others = []
+            for lv in StockLevel.objects.filter(warehouse=warehouse, variant=v, qty_on_hand__gt=0).select_related("batch").order_by(F("batch__expiry_date").asc(nulls_last=True)):
+                b = lv.batch
+                if (b.pk if b else None) == (line.batch.pk if line.batch else None) or any((x.pk if x else None) == (b.pk if b else None) for x in others):
+                    continue
+                if b is not None and b.expiry_date and (b.expiry_date < today or (min_shelf_life_days and (b.expiry_date - today).days < min_shelf_life_days)):
+                    continue
+                others.append(b)
+            if max(free[own], Decimal("0")) + sum((max(free[key(v, b)], Decimal("0")) for b in others), Decimal("0")) < need:
+                continue
+            pieces, left = [], need
+            for b in [line.batch, *others]:
+                k = key(v, b)
+                take = min(max(free[k], Decimal("0")), left)
+                if take > 0:
+                    pieces.append((b, take))
+                    free[k] -= take
+                    left -= take
+                if left <= 0:
+                    break
+            changes[line] = pieces
+        return changes
+
+    @staticmethod
     @transaction.atomic
     def reserve(variant, warehouse, qty, batch=None):
         level = StockService._level(warehouse, variant, batch)

@@ -831,10 +831,15 @@ class OrderService:
         (issued, delivered, cancelled…) is a leak, released on sight whatever its expiry says."""
         n = 0
         live = ("confirmed", "on_hold_stock", "on_hold_credit")
+        # an order on a load form the warehouse has not issued yet keeps its hold whatever the clock says: TDN-SO-00214's
+        # ran out after 48 hours on its form, and the next order took its stock (11 Nov 2026)
+        from apps.delivery.models import PickListLine
+
+        on_form = set(PickListLine.objects.filter(picklist__status__in=("open", "sent", "picking", "picked")).values_list("order_line__order_id", flat=True))
         for r in StockReservation.objects.filter(released=False).select_related("order_line__variant", "order_line__order"):
             status = r.order_line.order.status
             stale = status not in live and status not in ("draft", "submitted", "under_review")
-            if stale or (status in ("confirmed", "on_hold_stock") and r.expires_at < timezone.now()):
+            if stale or (status in ("confirmed", "on_hold_stock") and r.expires_at < timezone.now() and r.order_line.order_id not in on_form):
                 StockService.unreserve(r.order_line.variant, r.warehouse, r.qty, r.batch)
                 r.released = True
                 r.save(update_fields=["released"])

@@ -234,6 +234,7 @@ class PickListService:
                 pl.status = "picking"   # packed is not issued: this is the step that follows it, and the only way out
             PickListService.record_picks(pl, [{"line_id": i["line_id"], "qty_picked": i.get("qty_issued", i.get("qty_picked", 0)), "batch": i.get("batch")} for i in issues])
             pl.refresh_from_db()
+        PickListService._fit_batches(pl)
         lines = list(pl.lines.select_related("order_line", "order_line__order", "variant", "batch"))
         issued_total = sum((l.qty_picked for l in lines), Decimal("0"))
         if issued_total <= 0:
@@ -274,6 +275,29 @@ class PickListService:
         AuditService.log("status.issued", pl, after={"issued": str(issued_total), "short_lines": len(short), "notes": [n.number for n in notes]})
         emit("load_form.issued", picklist=pl)
         return pl
+
+    @staticmethod
+    def _fit_batches(pl):
+        """What goes out comes from the batches holding it now (StockService.fit_batches): a line's batch emptied since the
+        form was made takes the rest from the others, and the form says which batches went."""
+        tenant = get_current_tenant()
+        lines = list(pl.lines.filter(qty_picked__gt=0).select_related("variant__product", "batch", "order_line__order__customer").order_by("pk"))
+        by_order = {}
+        for l in lines:
+            cust = l.order_line.order.customer if l.order_line_id else None
+            by_order.setdefault((cust.min_shelf_life_days if cust else None) or tenant.setting("min_shelf_life_days"), []).append(l)
+        for shelf, group in by_order.items():
+            for line, pieces in StockService.fit_batches(pl.warehouse, group, lambda l: l.qty_picked, shelf).items():
+                moved = line.qty_picked - pieces[0][1]
+                old = line.batch.batch_no if line.batch else "none"
+                line.batch, line.qty_picked = pieces[0]
+                line.qty_to_pick = max(line.qty_to_pick - moved, line.qty_picked)
+                line.bin = None
+                line.save(update_fields=["batch", "qty_picked", "qty_to_pick", "bin", "updated_at"])
+                for b, q in pieces[1:]:
+                    PickListLine.objects.create(picklist=pl, order_line=line.order_line, variant=line.variant, batch=b, qty_to_pick=q, qty_picked=q)
+                AuditService.log("batches_refitted", pl, after={"item": line.variant.name, "from_batch": old,
+                                                                "to": [f"{b.batch_no if b else 'none'} x {q:g}" for b, q in pieces]})
 
     @staticmethod
     @transaction.atomic
@@ -321,6 +345,13 @@ class DeliveryService:
         """Dispatch = stock out (§6.3 point 3). With two-step setting, move to the van warehouse instead."""
         if dn.stock_out_done:
             return
+        shelf = dn.order.customer.min_shelf_life_days or get_current_tenant().setting("min_shelf_life_days")
+        notes_lines = list(dn.lines.filter(qty_loaded__gt=0).select_related("variant__product", "batch").order_by("pk"))
+        for line, pieces in StockService.fit_batches(dn.warehouse, notes_lines, lambda l: l.qty_loaded, shelf).items():
+            line.batch, line.qty_loaded = pieces[0]
+            line.save(update_fields=["batch", "qty_loaded", "updated_at"])
+            for b, q in pieces[1:]:
+                DeliveryNoteLine.objects.create(delivery_note=dn, order_line=line.order_line, variant=line.variant, batch=b, qty_loaded=q, unit_cost=line.unit_cost)
         # an order line never leaves the warehouse beyond what was ordered — the guard that would have stopped
         # TDN-SO-00044 going out twice through two delivery notes (27 Oct 2026)
         taking = {}
