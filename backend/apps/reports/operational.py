@@ -448,6 +448,45 @@ def wastage_by_reason(date_from=None, date_to=None, **_):
     return {"columns": ["reason", "category", "adjustments", "value"], "column_labels": {"adjustments": "Documents"}, "rows": rows, "totals": {"value": str(sum((Decimal(r["value"]) for r in rows), Z))}}
 
 
+def stock_position(today=None):
+    """
+    Where the stock is, at cost (owner, 11 Nov 2026: the dashboard's stock panel). The stock we hold is what sits in the
+    warehouses, ready to sell or booked for confirmed orders, plus what is out for delivery: issued from the warehouse,
+    not yet handed over. Delivered this month is apart from it: it is the customers' now. A van or quarantine warehouse
+    is left out (quarantine holds a supplier's rejected goods; what a van carries is counted on its delivery notes).
+    """
+    from apps.catalog.models import ProductVariant
+    from apps.delivery.models import DeliveryNoteLine
+    from apps.inventory.models import StockLevel
+
+    today = today or timezone.localdate()
+    levels = list(StockLevel.objects.exclude(warehouse__type__in=["van", "quarantine"]).values("variant_id").annotate(h=Sum("qty_on_hand"), r=Sum("qty_reserved")))
+    cost = {pk: (avg if avg and avg > 0 else cp) for pk, avg, cp in ProductVariant.objects.filter(pk__in=[r["variant_id"] for r in levels]).values_list("pk", "avg_cost", "cost_price")}
+    free = {"value": Z, "units": Z}
+    booked = {"value": Z, "units": Z}
+    for r in levels:
+        held = max(r["h"] or Z, Z)
+        b = min(max(r["r"] or Z, Z), held)       # booked can never be more than is there
+        c = cost.get(r["variant_id"]) or Z
+        booked["units"] += b
+        booked["value"] += b * c
+        free["units"] += held - b
+        free["value"] += (held - b) * c
+
+    def lines(qs, qty):
+        agg = {"value": Z, "units": Z}
+        for q, uc in qs.values_list(qty, "unit_cost"):
+            agg["units"] += q or Z
+            agg["value"] += (q or Z) * (uc or Z)
+        return agg
+
+    out = lines(DeliveryNoteLine.objects.filter(delivery_note__stock_out_done=True, delivery_note__status__in=["pending", "loaded", "dispatched"]), "qty_loaded")
+    delivered = lines(DeliveryNoteLine.objects.filter(delivery_note__status__in=["delivered", "partially_delivered"], delivery_note__delivered_at__date__gte=today.replace(day=1)), "qty_delivered")
+    held = {"value": free["value"] + booked["value"] + out["value"], "units": free["units"] + booked["units"] + out["units"]}
+    fmt = lambda a: {"value": str(a["value"].quantize(Decimal("0.01"))), "units": format(a["units"].normalize(), "f") if a["units"] else "0"}  # noqa: E731
+    return {"held": fmt(held), "free": fmt(free), "booked": fmt(booked), "out": fmt(out), "delivered_month": fmt(delivered)}
+
+
 CUSTOMER_TYPES = {"Salon": "salon", "Retailer": "retailer", "Wholesaler": "wholesaler", "LMT": "lmt", "Other": "other"}
 
 

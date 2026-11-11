@@ -159,6 +159,9 @@ class TenantDashboardView(APIView):
         if can("inventory.view_stock"):
             alerts = InventoryAlert.objects.filter(resolved_at__isnull=True)
             data["inventory"] = {"low_stock": alerts.filter(type="low_stock").count(), "expiring": alerts.filter(type="expiring").count(), "expired": alerts.filter(type="expired").count(), "negative": alerts.filter(type="negative").count()}
+            from apps.reports.operational import stock_position
+
+            data["stock"] = stock_position(today)
         if can("cash.view_cash"):
             cash = sum((ReportQueries.account_balance(c.account) for c in CashAccount.objects.select_related("account")), Decimal("0"))
             rec = SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "overdue"]).aggregate(t=Sum("total"), p=Sum("paid_amount"))

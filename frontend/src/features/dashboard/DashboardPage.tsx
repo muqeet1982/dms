@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import Chart from "react-apexcharts";
 import { api } from "@/api/client";
 import { useAuth } from "@/lib/auth";
-import { date, money, titleCase } from "@/lib/format";
+import { date, labelCase, money, titleCase } from "@/lib/format";
 import { PageHeader, Spinner, StatCard, StatusBadge } from "@/components/ui/Bits";
 
 export function DashboardPage() {
@@ -17,18 +17,23 @@ export function DashboardPage() {
   const cur = me?.tenant?.base_currency || "PKR";
   const trend = d.sales_trend || [];
   const statuses = d.orders?.by_status || {};
+  // the cards share the top row with the stock panel when it shows (owner, 11 Nov 2026: "on dashboard at top right")
+  const cc = d.stock ? "col-6 col-lg-4" : "col-6 col-xl-3";
   return (
     <>
       <PageHeader title={`Welcome, ${me?.user.full_name?.split(" ")[0] || ""}`} crumbs={[]} actions={<span className="text-muted fs-13"><i className="ti ti-calendar me-1" />{date(d.date)}</span>} />
       <div className="row g-3 mb-3">
-        {d.orders && <><div className="col-6 col-xl-3"><StatCard label="Orders inbox" value={d.orders.inbox} icon="ti-inbox" color="warning" sub="awaiting review / on hold" to="/app/sales/inbox" /></div>
-          <div className="col-6 col-xl-3"><StatCard label="Orders today" value={d.orders.today} icon="ti-shopping-cart" color="primary" sub={`${d.orders.confirmed} confirmed · ${d.orders.dispatched} on the road`} to="/app/sales/orders" /></div></>}
-        {d.sales && <div className="col-6 col-xl-3"><StatCard label={`Sales this month (${cur})`} value={money(d.sales.month, 0)} icon="ti-cash" color="success" sub={<span className={Number(d.sales.change_pct) >= 0 ? "text-success" : "text-danger"}>{Number(d.sales.change_pct) >= 0 ? "▲" : "▼"} {Math.abs(Number(d.sales.change_pct))}% vs last month ({money(d.sales.last_month, 0)})</span>} to="/app/sales/invoices" /></div>}
-        {d.cash && <div className="col-6 col-xl-3"><StatCard label="Cash in hand" value={money(d.cash.in_hand, 0)} icon="ti-wallet" color="info" sub={`with reps: ${money(d.cash.with_reps, 0)} · collected today ${money(d.cash.collected_today, 0)}`} to="/app/accounting" /></div>}
-        {d.cash && <><div className="col-6 col-xl-3"><StatCard label="Receivables" value={money(d.cash.receivables, 0)} icon="ti-receipt" color="purple" sub={<span className="text-danger">overdue {money(d.cash.receivables_overdue, 0)}</span>} to="/app/sales/invoices?open=1" /></div>
-          <div className="col-6 col-xl-3"><StatCard label="Payables" value={money(d.cash.payables, 0)} icon="ti-building-factory-2" color="secondary" to="/app/purchasing/bills" /></div></>}
-        {d.trips && <div className="col-6 col-xl-3"><StatCard label="Trips out for delivery" value={d.trips.out} icon="ti-truck-delivery" color="primary" sub={`${d.trips.planned} planned · ${d.trips.to_close} to close`} to="/app/delivery/trips?active=1" /></div>}
-        {d.inventory && <div className="col-6 col-xl-3"><StatCard label="Stock alerts" value={d.inventory.low_stock + d.inventory.expiring + d.inventory.expired + d.inventory.negative} icon="ti-alert-triangle" color="danger" sub={`${d.inventory.low_stock} low · ${d.inventory.expiring} expiring · ${d.inventory.expired} expired`} to="/app/inventory/alerts" /></div>}
+        <div className={d.stock ? "col-xl-8" : "col-12"}><div className="row g-3">
+        {d.orders && <><div className={cc}><StatCard label="Orders inbox" value={d.orders.inbox} icon="ti-inbox" color="warning" sub="awaiting review / on hold" to="/app/sales/inbox" /></div>
+          <div className={cc}><StatCard label="Orders today" value={d.orders.today} icon="ti-shopping-cart" color="primary" sub={`${d.orders.confirmed} confirmed · ${d.orders.dispatched} on the road`} to="/app/sales/orders" /></div></>}
+        {d.sales && <div className={cc}><StatCard label={`Sales this month (${cur})`} value={money(d.sales.month, 0)} icon="ti-cash" color="success" sub={<span className={Number(d.sales.change_pct) >= 0 ? "text-success" : "text-danger"}>{Number(d.sales.change_pct) >= 0 ? "▲" : "▼"} {Math.abs(Number(d.sales.change_pct))}% vs last month ({money(d.sales.last_month, 0)})</span>} to="/app/sales/invoices" /></div>}
+        {d.cash && <div className={cc}><StatCard label="Cash in hand" value={money(d.cash.in_hand, 0)} icon="ti-wallet" color="info" sub={`with reps: ${money(d.cash.with_reps, 0)} · collected today ${money(d.cash.collected_today, 0)}`} to="/app/accounting" /></div>}
+        {d.cash && <><div className={cc}><StatCard label="Receivables" value={money(d.cash.receivables, 0)} icon="ti-receipt" color="purple" sub={<span className="text-danger">overdue {money(d.cash.receivables_overdue, 0)}</span>} to="/app/sales/invoices?open=1" /></div>
+          <div className={cc}><StatCard label="Payables" value={money(d.cash.payables, 0)} icon="ti-building-factory-2" color="secondary" to="/app/purchasing/bills" /></div></>}
+        {d.trips && <div className={cc}><StatCard label="Trips out for delivery" value={d.trips.out} icon="ti-truck-delivery" color="primary" sub={`${d.trips.planned} planned · ${d.trips.to_close} to close`} to="/app/delivery/trips?active=1" /></div>}
+        {d.inventory && <div className={cc}><StatCard label="Stock alerts" value={d.inventory.low_stock + d.inventory.expiring + d.inventory.expired + d.inventory.negative} icon="ti-alert-triangle" color="danger" sub={`${d.inventory.low_stock} low · ${d.inventory.expiring} expiring · ${d.inventory.expired} expired`} to="/app/inventory/alerts" /></div>}
+        </div></div>
+        {d.stock && <div className="col-xl-4"><StockPanel s={d.stock} cur={cur} /></div>}
       </div>
       <div className="row g-3 mb-3">
         {d.sales && (
@@ -76,5 +81,33 @@ export function DashboardPage() {
         )}
       </div>
     </>
+  );
+}
+
+/** Where the stock is, at cost (owner, 11 Nov 2026): what we hold — ready to sell, booked for orders, out for delivery —
+ *  and, apart from it, what customers received this month. */
+function StockPanel({ s, cur }: { s: any; cur: string }) {
+  const held = Number(s.held.value) || 0;
+  const share = (v: string) => (held > 0 ? Math.min(100, Math.round((Number(v) / held) * 100)) : 0);
+  const pcs = (u: string) => `${Number(u).toLocaleString()} pcs`;
+  const row = (label: string, a: any, color: string, note: string, partOfHeld = true) => (
+    <div className="mb-3" key={label}>
+      <div className="d-flex justify-content-between align-items-baseline"><span className="fw-semibold">{labelCase(label)}</span><span className={`fw-bold fs-16 text-${color}`}>{money(a.value, 0)}</span></div>
+      <div className="progress my-1" style={{ height: 8 }}><div className={`progress-bar bg-${color}`} style={{ width: `${share(a.value)}%` }} /></div>
+      <div className="text-muted fs-12">{note} · {partOfHeld ? `${share(a.value)}% of stock held · ` : ""}{pcs(a.units)}</div>
+    </div>
+  );
+  return (
+    <div className="card h-100">
+      <div className="card-header d-flex justify-content-between align-items-center"><h5 className="card-title mb-0">{labelCase("stock position")}</h5><span className="text-muted fs-12">at cost</span></div>
+      <div className="card-body">
+        <div className="fs-24 fw-bold">{cur} {money(s.held.value, 0)}</div>
+        <div className="text-muted fs-12 mb-3 pb-3 border-bottom">Stock we hold, in the warehouse and on the way to customers · {pcs(s.held.units)}</div>
+        {row("ready to sell", s.free, "success", "In the warehouse, free for new orders")}
+        {row("booked for orders", s.booked, "warning", "In the warehouse, held for confirmed orders")}
+        {row("out for delivery", s.out, "info", "Issued from the warehouse, not yet delivered")}
+        <div className="border-top pt-3">{row("delivered this month", s.delivered_month, "secondary", "Handed to customers since the 1st", false)}</div>
+      </div>
+    </div>
   );
 }
