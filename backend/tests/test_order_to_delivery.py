@@ -217,3 +217,27 @@ def test_delivered_on_a_trip_never_started_reads_out_for_delivery_done(api, tena
     steps = _steps(api, order.pk)
     assert steps["out_for_delivery"]["state"] == "done" and steps["out_for_delivery"]["action"] is None, "no Start trip after the delivery"
     assert steps["out_for_delivery"]["at"] and steps["delivered"]["state"] == "done"
+
+
+def test_delivered_with_no_trip_reads_dispatch_done(api, tenant, order_with_stock):
+    """TDN-SO-00308 (owner, 11 Nov 2026: "Delivery Completed but Dispatch in progress"): the delivery note was confirmed
+    without a trip. The goods went out all the same, so Dispatch is done, says no vehicle was recorded, and offers no
+    Create dispatch."""
+    from apps.core.tenancy import tenant_context
+    from apps.delivery.models import DeliveryNote
+
+    from .conftest import issue_order
+
+    order, _warehouse, _variant = order_with_stock
+    issue_order(api, order.pk)
+    steps = _steps(api, order.pk)
+    assert steps["dispatch"]["state"] == "current" and steps["dispatch"]["action"]["label"] == "Create dispatch", "issued: waiting for a vehicle"
+
+    with tenant_context(tenant, tenant.owner):
+        note = DeliveryNote.objects.get(order=order)
+    assert note.trip_id is None
+    assert api.post(f"/api/v1/delivery-notes/{note.pk}/deliver", {"receiver_name": "Shop"}, format="json").status_code == 200
+    steps = _steps(api, order.pk)
+    assert steps["dispatch"]["state"] == "done" and steps["dispatch"]["action"] is None, steps["dispatch"]
+    assert steps["dispatch"]["detail"] == "Delivered without a trip: no vehicle or driver recorded"
+    assert all(s["state"] == "done" for s in steps.values() if s["key"] != "invoice"), {k: s["state"] for k, s in steps.items()}
