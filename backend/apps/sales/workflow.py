@@ -114,15 +114,20 @@ def order_workflow(order):
         ),
     ))
 
-    # 6 · Out for delivery
-    out = trip is not None and trip.status in ("out_for_delivery", "completed", "closed")
+    # 6 · Out for delivery: the trip started, or the goods reached the customer. TDN confirms each stop on its delivery
+    # note and never presses Start trip, so its trips stay Planned after every stop is delivered (owner, 11 Nov 2026,
+    # TDN-SO-00292: "delivery is done but in flow its showing Out for delivery"); a delivery says the goods went out
+    started = trip is not None and trip.status in ("out_for_delivery", "completed", "closed")
+    reached = bool(delivered) or order.status in ("delivered", "partially_delivered", "invoiced")
+    out = started or reached
     steps.append(_step(
         "out_for_delivery", "Out for delivery", "done" if out else ("current" if trip is not None else "todo"),
-        at=trip.started_at if trip is not None else None,
-        detail=(trip.get_status_display() if trip is not None else "Starts when the vehicle leaves."),
+        at=trip.started_at if started else (delivered[0].delivered_at if delivered else None),
+        detail=(trip.get_status_display() if started else "Went out with the delivery" if reached
+                else trip.get_status_display() if trip is not None else "Starts when the vehicle leaves."),
         action=(
             {"label": "Start trip", "post": f"/api/v1/trips/{trip.pk}/start", "perm": "delivery.create_trip"}
-            if trip is not None and trip.status in ("planned", "loading") else None
+            if trip is not None and trip.status in ("planned", "loading") and not reached else None
         ),
     ))
 

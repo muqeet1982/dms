@@ -191,3 +191,29 @@ def test_an_invoiced_order_can_still_be_dispatched(api, tenant, order_with_stock
     assert r.data.get("number"), "a dispatch (trip) should have been created"
     order.refresh_from_db()
     assert order.trip_id, "the invoiced order is now on a trip"
+
+
+def test_delivered_on_a_trip_never_started_reads_out_for_delivery_done(api, tenant, order_with_stock):
+    """TDN confirms each stop on its delivery note and never presses Start trip (owner, 11 Nov 2026, TDN-SO-00292: "delivery
+    is done but in flow its showing Out for delivery"): the delivery itself says the goods went out."""
+    from apps.core.tenancy import tenant_context
+    from apps.delivery.models import DeliveryNote, Driver
+
+    from .conftest import issue_order
+
+    order, warehouse, _variant = order_with_stock
+    issue_order(api, order.pk)
+    with tenant_context(tenant, tenant.owner):
+        driver = Driver.objects.create(name="Akram", phone="03001234567")
+    trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(warehouse.pk), "driver": str(driver.pk), "order_ids": [str(order.pk)]}, format="json")
+    assert trip.status_code == 201, trip.content
+    steps = _steps(api, order.pk)
+    assert steps["out_for_delivery"]["state"] == "current" and steps["out_for_delivery"]["action"]["label"] == "Start trip"
+
+    with tenant_context(tenant, tenant.owner):
+        note = DeliveryNote.objects.get(order=order)
+    assert api.post(f"/api/v1/delivery-notes/{note.pk}/deliver", {"receiver_name": "Shop"}, format="json").status_code == 200
+    assert api.get(f"/api/v1/trips/{trip.data['id']}").data["status"] == "planned", "the trip was never started"
+    steps = _steps(api, order.pk)
+    assert steps["out_for_delivery"]["state"] == "done" and steps["out_for_delivery"]["action"] is None, "no Start trip after the delivery"
+    assert steps["out_for_delivery"]["at"] and steps["delivered"]["state"] == "done"
