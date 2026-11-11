@@ -79,3 +79,43 @@ def test_cancel_after_the_warehouse_issued_brings_the_goods_home(api, tenant):
     assert _stock(tenant, v, wh) == before, "back on the shelf and free"
     p = _paperwork(tenant, o["id"])
     assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0 and p["credit_notes"] == 0, p
+
+
+def test_scenario_2_cancel_after_the_invoice_before_dispatch(api, tenant):
+    """Owner's Scenario 2: here an invoice is raised on what the warehouse issued, so the goods are issued first.
+    Cancelled before any trip: the invoice is cancelled and its entries come off the books, the goods come home, the
+    order closes as Cancelled. No credit note, no trip."""
+    from apps.accounting.models import JournalLine
+    from apps.sales.models import CreditNote, SalesInvoice
+
+    wh, _s, v, cust = seed_basic(tenant)
+    before = _stock(tenant, v, wh)
+    o = _confirmed(api, wh, v, cust, "5")
+    issue_order(api, o["id"])
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
+    assert inv["status"] == "posted"
+
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "cancelled", r.content
+    assert _stock(tenant, v, wh) == before, "back on the shelf and free"
+    with tenant_context(tenant):
+        assert SalesInvoice.objects.get(pk=inv["id"]).status == "cancelled"
+        assert CreditNote.objects.count() == 0
+        live = JournalLine.objects.filter(entry__source_id=inv["id"], entry__status="posted")
+        assert sum(l.debit - l.credit for l in live if l.account.code.startswith("1-")) in (0, D("0")) or not live.exists(), "its entries are off the books"
+    p = _paperwork(tenant, o["id"])
+    assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0, p
+
+
+def test_scenario_2_with_money_received_asks_for_a_return(api, tenant):
+    wh, _s, v, cust = seed_basic(tenant)
+    o = _confirmed(api, wh, v, cust, "5")
+    issue_order(api, o["id"])
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
+    from apps.accounting.services import PaymentService
+
+    with tenant_context(tenant, tenant.owner):
+        PaymentService.record(direction="in", partner_type="customer", partner_id=str(cust.id), partner_name=cust.name, amount=D("100"), method="cash",
+                              allocations=[{"document_type": "sales_invoice", "document_id": inv["id"], "amount": D("100")}])
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
+    assert r.status_code == 422 and r.data["type"] == "invoice_settled", r.content
