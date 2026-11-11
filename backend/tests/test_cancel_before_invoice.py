@@ -119,3 +119,45 @@ def test_scenario_2_with_money_received_asks_for_a_return(api, tenant):
                               allocations=[{"document_type": "sales_invoice", "document_id": inv["id"], "amount": D("100")}])
     r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
     assert r.status_code == 422 and r.data["type"] == "invoice_settled", r.content
+
+
+def test_scenario_3_cancel_on_the_road_the_trip_carries_on(api, tenant):
+    """Owner's Scenario 3: invoiced, on a started trip with another customer's order, not yet delivered. Cancelled: its
+    note and invoice are cancelled, its goods come back into the warehouse, the order closes, and the trip stays on the
+    road for the other stop, completing when that one is delivered."""
+    from apps.delivery.models import DeliveryNote, Driver
+    from apps.partners.models import Customer
+    from apps.sales.models import CreditNote, SalesInvoice
+
+    tenant.settings = {**(tenant.settings or {}), "trip_needs_posted_invoice": True, "delivery_needs_trip": True}
+    tenant.save(update_fields=["settings"])
+    wh, _s, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        other = Customer.objects.create(code="C-2", name="Second Shop", credit_limit=D("100000"))
+        driver = Driver.objects.create(name="Akram", phone="03001234567")
+    before = _stock(tenant, v, wh)
+    a, b = _confirmed(api, wh, v, cust, "5"), _confirmed(api, wh, v, other, "3")
+    invs = {}
+    for o in (a, b):
+        issue_order(api, o["id"])
+        invs[o["id"]] = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]["id"]
+    trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.pk), "driver": str(driver.pk), "order_ids": [a["id"], b["id"]]}, format="json")
+    assert trip.status_code == 201, trip.content
+    assert api.post(f"/api/v1/trips/{trip.data['id']}/start", {}, format="json").status_code == 200
+    assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 8, "8 pcs on the vehicle"
+
+    r = api.post(f"/api/v1/sales-orders/{a['id']}/cancel", {"reason": "customer cancelled while the van was out"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "cancelled", r.content
+    with tenant_context(tenant):
+        assert DeliveryNote.objects.get(order_id=a["id"]).status == "cancelled"
+        assert SalesInvoice.objects.get(pk=invs[a["id"]]).status == "cancelled"
+        assert CreditNote.objects.count() == 0
+    assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 3, "the cancelled 5 are back in the warehouse"
+    assert _stock(tenant, v, wh)["available"] == before["available"] - 3
+    t = api.get(f"/api/v1/trips/{trip.data['id']}").data
+    assert t["status"] == "out_for_delivery", "the trip carries on"
+
+    with tenant_context(tenant):
+        nb = DeliveryNote.objects.get(order_id=b["id"])
+    assert api.post(f"/api/v1/delivery-notes/{nb.pk}/deliver", {"receiver_name": "Shop"}, format="json").status_code == 200
+    assert api.get(f"/api/v1/trips/{trip.data['id']}").data["status"] == "completed", "the other stop ends it"
