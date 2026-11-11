@@ -67,9 +67,15 @@ class Command(BaseCommand):
         owner = tenant.owner
         owner.must_change_password = False
         owner.save(update_fields=["must_change_password"])
+        # the sample history delivers some notes straight from the counter and dispatches before invoicing: the strict
+        # order (11 Nov 2026) is off while it is written, then on like any company
+        tenant.settings = {**(tenant.settings or {}), "trip_needs_posted_invoice": False, "delivery_needs_trip": False}
+        tenant.save(update_fields=["settings"])
         self.stdout.write(f"Tenant: {tenant.display_name} · Owner: {o['owner_email']} / {o['owner_password']}")
         with tenant_context(tenant, owner):
             self.seed_tenant(tenant, owner, skip_tx=o["skip_transactions"])
+        tenant.settings = {k: v for k, v in (tenant.settings or {}).items() if k not in ("trip_needs_posted_invoice", "delivery_needs_trip")}
+        tenant.save(update_fields=["settings"])
         self.stdout.write(self.style.SUCCESS("Demo data ready."))
 
     # ------------------------------------------------------------------ tenant

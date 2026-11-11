@@ -460,6 +460,10 @@ class DeliveryService:
         if dn.status in ("delivered", "partially_delivered", "returned"):
             raise DomainError("Delivery note already completed.")
         tenant = get_current_tenant()
+        # a delivery is recorded on a trip (owner, 11 Nov 2026): 20 TDN deliveries that afternoon had no vehicle on record
+        if tenant.setting("delivery_needs_trip") and not dn.trip_id:
+            raise DomainError(f"{dn.number} is on no trip. Choose the driver and the delivery person, and the trip is made with the delivery.",
+                              code="trip_required", errors={"driver": ["Required."], "delivery_rep": ["Required."]})
         two_step = tenant.setting("two_step_dispatch") and dn.trip_id
         if not dn.stock_out_done:
             van = dn.trip.vehicle.van_warehouse if (two_step and dn.trip and dn.trip.vehicle_id and hasattr(dn.trip.vehicle, "van_warehouse")) else None
@@ -478,6 +482,8 @@ class DeliveryService:
             dn.save()
             AuditService.log("delivery.failed", dn, after={"reason": failure_reason})
             emit("delivery.failed", delivery_note=dn, reason=failure_reason)
+            if dn.trip_id:
+                TripService.refresh_status(dn.trip)
             return dn
         by_id = {str(d["line_id"]): d for d in (delivered or [])}
         total_loaded = total_delivered = Decimal("0")
@@ -739,6 +745,41 @@ class DeliveryService:
         return order.delivery_notes.filter(status__in=("failed", "returned")).order_by("-created_at").first()
 
     @staticmethod
+    def invoice_posted(dn):
+        """The invoice for what this note carries is on the books: its own, or (older chains) one the order raised for no
+        particular note. A draft does not count."""
+        from apps.sales.models import SalesInvoice
+
+        live = SalesInvoice.objects.exclude(status__in=("draft", "cancelled"))
+        return live.filter(delivery_note=dn).exists() or live.filter(order_id=dn.order_id, delivery_note__isnull=True).exists()
+
+    @staticmethod
+    def invoiced_notes(qs):
+        """`qs` narrowed to the notes whose invoice is posted (the same test as invoice_posted, for a list)."""
+        from django.db.models import Exists, OuterRef
+
+        from apps.sales.models import SalesInvoice
+
+        live = SalesInvoice.objects.exclude(status__in=("draft", "cancelled"))
+        return qs.filter(Exists(live.filter(delivery_note=OuterRef("pk"))) | Exists(live.filter(order_id=OuterRef("order_id"), delivery_note__isnull=True)))
+
+    @staticmethod
+    @transaction.atomic
+    def trip_on_the_spot(dn, *, driver=None, vehicle=None, delivery_rep=None):
+        """A note delivered with no trip gets one there and then, with the driver, vehicle and delivery person the
+        delivery names (owner, 11 Nov 2026). Nothing to do when it has a trip or the company does not ask for one."""
+        if dn.trip_id or not get_current_tenant().setting("delivery_needs_trip"):
+            return None
+        if driver is None or delivery_rep is None:
+            raise DomainError(f"{dn.number} is on no trip. Choose the driver and the delivery person, and the trip is made with the delivery.",
+                              code="trip_required", errors={k: ["Required."] for k, v in (("driver", driver), ("delivery_rep", delivery_rep)) if v is None})
+        trip = TripService.create(warehouse=dn.warehouse, driver=driver, vehicle=vehicle, delivery_rep=delivery_rep, orders=[dn.order], prefer=dn,
+                                  notes=f"Made when {dn.number} was delivered")
+        AuditService.log("trip.made_at_delivery", trip, after={"note": dn.number, "driver": driver.name, "vehicle": trip.vehicle.reg_no if trip.vehicle_id else None})
+        dn.refresh_from_db()
+        return trip
+
+    @staticmethod
     def refuse_second_delivery(order):
         """A failed delivery is sent again as it is — its goods, its invoice. A second delivery note beside it would
         bill the order twice (TDN-SO-00044 had two invoices, 28 Oct 2026)."""
@@ -818,10 +859,10 @@ class TripService:
 
     @staticmethod
     @transaction.atomic
-    def create(*, warehouse, date=None, driver=None, vehicle=None, rep=None, delivery_rep=None, loader=None, helper=None, route=None, orders=(), notes="", picklist=None):
+    def create(*, warehouse, date=None, driver=None, vehicle=None, rep=None, delivery_rep=None, loader=None, helper=None, route=None, orders=(), notes="", picklist=None, prefer=None):
         trip = DeliveryTrip.objects.create(number=TripService._number_for(orders[0]) if orders else derived_number(None, "trip", DeliveryTrip), warehouse=warehouse, date=date or timezone.localdate(), driver=driver, vehicle=vehicle or (driver.default_vehicle if driver else None), rep=rep, delivery_rep=delivery_rep, loader=loader, helper=helper, route=route, notes=notes, picklist=picklist)
         if orders:
-            TripService.assign_orders(trip, orders)
+            TripService.assign_orders(trip, orders, prefer=prefer)
         AuditService.log("created", trip, after={"driver": driver.name if driver else None, "vehicle": vehicle.reg_no if vehicle else None})
         emit("delivery.assigned", trip=trip)
         return trip
@@ -843,9 +884,11 @@ class TripService:
 
     @staticmethod
     @transaction.atomic
-    def assign_orders(trip, orders):
+    def assign_orders(trip, orders, prefer=None):
+        """`prefer`: the issued note to put on the trip for its order (a delivery making its own trip), else its first."""
         if trip.status not in ("planned", "loading"):
             raise DomainError("Orders can only be assigned before the trip starts.")
+        needs_invoice = get_current_tenant().setting("trip_needs_posted_invoice")
         seq = trip.delivery_notes.count()
         for o in orders:
             if o.status not in TripService.DISPATCHABLE:
@@ -859,9 +902,13 @@ class TripService:
                 continue
             # no load form, no issue, no dispatch (owner, 5 Nov 2026): a trip only takes the delivery note the warehouse
             # issued. It used to make its own, and starting the trip took the stock with no load form at all.
-            issued = DeliveryNote.awaiting_trip().filter(order=o).order_by("created_at").first()
+            waiting = DeliveryNote.awaiting_trip().filter(order=o)
+            issued = waiting.filter(pk=prefer.pk).first() if prefer is not None and prefer.order_id == o.pk else waiting.order_by("created_at").first()
             if issued is None:
                 raise DomainError(f"{o.number} has not been issued yet — issue its load form first.", code="not_issued")
+            # the invoice is posted before the order goes on a trip, so the driver carries the bill (owner, 11 Nov 2026)
+            if needs_invoice and not DeliveryService.invoice_posted(issued):
+                raise DomainError(f"{o.number}: post its invoice first. An order goes on a trip once its invoice is posted.", code="invoice_first")
             seq += 1
             issued.trip = trip
             issued.sequence = seq
@@ -976,11 +1023,36 @@ class TripService:
 
     @staticmethod
     def refresh_status(trip):
-        notes = trip.delivery_notes.all()
-        if notes.exists() and not notes.filter(status__in=["pending", "loaded", "dispatched"]).exists() and trip.status == "out_for_delivery":
+        """
+        A trip starts with its first delivery and completes with its last (owner, 11 Nov 2026): TDN confirms each stop
+        and never presses Start Trip, so its trips sat at Planned with every stop done. Start Trip stays for whoever
+        presses it. With two-step dispatch the start moves the stock to the van, so there it is still pressed.
+        """
+        notes = list(trip.delivery_notes.exclude(status="cancelled").select_related("order").prefetch_related("lines"))
+        if not notes:
+            return
+        done = [n for n in notes if n.status in ("delivered", "partially_delivered", "failed", "returned")]
+        waiting = [n for n in notes if n.status in ("pending", "loaded", "dispatched")]
+        if trip.status in ("planned", "loading") and done and not get_current_tenant().setting("two_step_dispatch"):
+            trip.status = "out_for_delivery"
+            trip.started_at = min((n.delivered_at or timezone.now() for n in done))
+            trip.loaded_value = sum(((l.qty_loaded * l.unit_cost).quantize(Q4) for n in notes for l in n.lines.all()), Decimal("0"))
+            trip.save(update_fields=["status", "started_at", "loaded_value", "updated_at"])
+            for n in waiting:
+                if n.status in ("pending", "loaded"):
+                    n.status = "dispatched"
+                    n.save(update_fields=["status", "updated_at"])
+                if n.order.status == "issued":
+                    n.order.status = "dispatched"
+                    n.order.save(update_fields=["status", "updated_at"])
+            AuditService.log("status.started", trip, after={"status": "out_for_delivery", "loaded_value": str(trip.loaded_value), "stops": trip.stops_count,
+                                                            "by": "first delivery", "note": done[0].number})
+            emit("trip.started", trip=trip)
+        if trip.status == "out_for_delivery" and not waiting:
             trip.status = "completed"
-            trip.completed_at = timezone.now()
+            trip.completed_at = max((n.delivered_at or timezone.now() for n in done), default=timezone.now())
             trip.save(update_fields=["status", "completed_at", "updated_at"])
+            AuditService.log("status.completed", trip, after={"status": "completed", "by": "last delivery"})
 
     @staticmethod
     def reconciliation(trip):

@@ -157,6 +157,10 @@ class Tenant(models.Model):
         "allow_negative_stock": False,
         "reserve_stock_on_confirm": True,
         "two_step_dispatch": False,
+        # the owner's order of work (11 Nov 2026): the invoice is posted before the order goes on a trip, and a delivery
+        # is recorded on a trip (one is made on the spot, with its driver and vehicle, when the note has none)
+        "trip_needs_posted_invoice": True,
+        "delivery_needs_trip": True,
         "credit_policy": "warn",  # hard | warn
         "backorder_auto_cancel_days": 30,
         "accept_external_prices": "flag",  # accept | price_list | flag

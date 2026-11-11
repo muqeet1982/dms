@@ -19,6 +19,24 @@ from .serializers import DeliveryNoteSerializer, DeliveryTripListSerializer, Del
 from .services import DeliveryService, PickListService, TripService
 
 
+def trip_for_delivery(request, dn):
+    """The trip a delivery with none makes on the spot (owner, 11 Nov 2026), from the driver, vehicle and delivery person
+    the request names. Making a trip is the trips page's right; whoever lacks it is told to put the order on one."""
+    from apps.accounts.models import User
+
+    if dn.trip_id or not request.tenant.setting("delivery_needs_trip"):
+        return None
+    d = request.data
+    if (d.get("driver") or d.get("delivery_rep")) and not has_tenant_perm(request, "delivery.add_trip"):
+        raise DomainError(f"You can record deliveries but not make trips: ask someone who can to put {dn.order.number} on a trip.", code="forbidden", status_code=403)
+    return DeliveryService.trip_on_the_spot(
+        dn,
+        driver=Driver.objects.filter(pk=d.get("driver") or None).first(),
+        vehicle=Vehicle.objects.filter(pk=d.get("vehicle") or None).first(),
+        delivery_rep=User.objects.filter(pk=d.get("delivery_rep") or None, memberships__tenant=request.tenant).first(),
+    )
+
+
 def _money(value):
     """Group thousands. A driver reads this sheet on paper in a van, where 105120.9484 is easily misread."""
     return f"{Decimal(value or 0):,.2f}"
@@ -417,10 +435,14 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
             gps = json.loads(gps) if gps else None
         if gps is None and data.get("gps_lat"):
             gps = {"lat": data.get("gps_lat"), "lng": data.get("gps_lng")}
-        dn = DeliveryService.deliver(
-            dn, delivered=delivered, receiver_name=data.get("receiver_name", ""), signature_file=request.FILES.get("signature"), photo_file=request.FILES.get("photo"), gps=gps,
-            cash_collected=Decimal(str(data.get("cash_collected", 0) or 0)), delivered_at=data.get("delivered_at") or None, failure_reason=data.get("failure_reason", ""), failed=str(data.get("failed", "")).lower() in ("1", "true", "yes"), remarks=data.get("remarks", ""),
-        )
+        from django.db import transaction
+
+        with transaction.atomic():   # the trip made for it stands or falls with the delivery
+            trip_for_delivery(request, dn)
+            dn = DeliveryService.deliver(
+                dn, delivered=delivered, receiver_name=data.get("receiver_name", ""), signature_file=request.FILES.get("signature"), photo_file=request.FILES.get("photo"), gps=gps,
+                cash_collected=Decimal(str(data.get("cash_collected", 0) or 0)), delivered_at=data.get("delivered_at") or None, failure_reason=data.get("failure_reason", ""), failed=str(data.get("failed", "")).lower() in ("1", "true", "yes"), remarks=data.get("remarks", ""),
+            )
         dn = self.get_queryset().get(pk=dn.pk)   # its lines and its credit note as they now stand, not the copy read before
         return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
 

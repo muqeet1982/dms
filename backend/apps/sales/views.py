@@ -119,9 +119,12 @@ class SalesOrderViewSet(DocumentViewSet):
                            delivery_notes__status__in=DeliveryNote.BILLABLE).exclude(status__in=["cancelled", "rejected"]).distinct()
         if p.get("ready_for_trip") == "1":   # what New Trip and Add Orders offer: exactly what TripService.assign_orders accepts
             from apps.delivery.models import DeliveryNote
-            from apps.delivery.services import TripService
+            from apps.delivery.services import DeliveryService, TripService
 
-            qs = qs.filter(trip__isnull=True, status__in=TripService.DISPATCHABLE, pk__in=DeliveryNote.awaiting_trip().values("order_id"))
+            waiting = DeliveryNote.awaiting_trip()
+            if self.request.tenant.setting("trip_needs_posted_invoice"):
+                waiting = DeliveryService.invoiced_notes(waiting)
+            qs = qs.filter(trip__isnull=True, status__in=TripService.DISPATCHABLE, pk__in=waiting.values("order_id"))
         if p.get("updated_after"):
             qs = qs.filter(updated_at__gt=p["updated_after"])
         return qs
@@ -238,7 +241,17 @@ class SalesOrderViewSet(DocumentViewSet):
 
     @action(detail=True, methods=["post"], url_path="mark-delivered")
     def mark_delivered(self, request, pk=None):
-        order = OrderService.mark_delivered(self.get_object(), receiver_name=request.data.get("receiver_name", ""), cash_collected=Decimal(str(request.data.get("cash_collected", 0) or 0)), delivered_at=request.data.get("delivered_at"))
+        from django.db import transaction
+
+        from apps.delivery.models import DeliveryNote
+        from apps.delivery.views import trip_for_delivery
+
+        order = self.get_object()
+        with transaction.atomic():   # a note on no trip gets one with the delivery (owner, 11 Nov 2026), or neither happens
+            dn = DeliveryNote.objects.filter(order=order, stock_out_done=True, status__in=("pending", "loaded", "dispatched")).order_by("created_at").first()
+            if dn is not None:
+                trip_for_delivery(request, dn)
+            order = OrderService.mark_delivered(order, receiver_name=request.data.get("receiver_name", ""), cash_collected=Decimal(str(request.data.get("cash_collected", 0) or 0)), delivered_at=request.data.get("delivered_at"))
         order.refresh_from_db()
         return Response(SalesOrderSerializer(order).data)
 

@@ -7,6 +7,7 @@ import { date, datetime, labelCase, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
+import { useAuth } from "@/lib/auth";
 import { Alert, Field, InfoItem, PageHeader, Spinner, StatCard, StatusBadge } from "@/components/ui/Bits";
 import { CrudPage } from "@/components/ui/CrudPage";
 import { Column } from "@/components/ui/DataTable";
@@ -104,6 +105,7 @@ export function TripDetailPage() {
   const [odo, setOdo] = useState("");
   const [addSel, setAddSel] = useState<string[]>([]);
   const [deliverNote, setDeliverNote] = useState<any>(null);
+  const [removing, setRemoving] = useState<any>(null);   // the stop the × takes off the trip, asked first
   const rec = useQuery({ queryKey: ["trip-rec", id], queryFn: () => api.get(`/api/v1/trips/${id}/reconciliation`), enabled: Boolean(q.data && ["out_for_delivery", "completed", "closed"].includes(q.data.status)) });
   const candidates = useQuery({ queryKey: ["trip-add-orders", q.data?.warehouse], queryFn: () => api.list("/api/v1/sales-orders", { ready_for_trip: 1, warehouse: q.data?.warehouse, page_size: 200 }), enabled: dlg === "add" });
   if (q.isLoading) return <Spinner />;
@@ -134,7 +136,7 @@ export function TripDetailPage() {
         <table className="table align-middle mb-0 fs-13"><thead className="table-light"><tr><th>#</th><th>Delivery note</th><th>Customer</th><th>Order</th><th className="num">Loaded</th><th className="num">Delivered</th><th className="num">Returned</th><th className="num">Cash</th><th>Status</th><th /></tr></thead>
           <tbody>{notes.map((n: any) => { const loaded = n.lines.reduce((s: number, l: any) => s + Number(l.qty_loaded), 0); const del = n.lines.reduce((s: number, l: any) => s + Number(l.qty_delivered), 0); const ret = n.lines.reduce((s: number, l: any) => s + Number(l.qty_returned), 0); return (
             <tr key={n.id}><td>{n.sequence}</td><td><Link to={`/app/delivery/notes/${n.id}`}>{n.number}</Link></td><td>{n.customer_name}<div className="text-muted fs-11">{n.customer_address}</div></td><td><Link to={`/app/sales/orders/${n.order}`}>{n.order_number}</Link><div className="text-muted fs-11">{money(n.order_total)}</div></td><td className="num">{qty(loaded)}</td><td className="num">{qty(del)}</td><td className="num">{qty(ret)}</td><td className="num">{money(n.cash_collected)}</td><td><StatusBadge status={n.status} />{n.invoice_number && <div className="fs-11"><Link to={`/app/sales/invoices/${n.invoice_id}`}>{n.invoice_number}</Link></div>}</td>
-              <td className="text-end no-row-click">{["loaded", "pending", "dispatched"].includes(n.status) && t.status === "out_for_delivery" && pageRights("delivery_notes").extras.complete && <><button className="btn btn-sm btn-primary" onClick={() => setDeliverNote(n)}>Deliver</button><button className="btn btn-sm btn-outline-danger ms-1" title="Store refused the whole delivery" onClick={() => setDeliverNote({ ...n, _startFailed: true })}>Refused</button></>}{planned && pageRights("trips").edit &&<button className="btn btn-sm btn-outline-danger ms-1" onClick={() => run("remove-order", { order_id: n.order }, { success: "Order removed" })}><i className="ti ti-x" /></button>}</td></tr>); })}</tbody></table>
+              <td className="text-end no-row-click">{["loaded", "pending", "dispatched"].includes(n.status) && (t.status === "out_for_delivery" || planned) && pageRights("delivery_notes").extras.complete && <><button className="btn btn-sm btn-primary" onClick={() => setDeliverNote(n)}>Deliver</button><button className="btn btn-sm btn-outline-danger ms-1" title="Store refused the whole delivery" onClick={() => setDeliverNote({ ...n, _startFailed: true })}>Refused</button></>}{planned && pageRights("trips").edit && <button className="btn btn-sm btn-outline-danger ms-1" title={`Take ${n.order_number} off this trip`} onClick={() => setRemoving(n)}><i className="ti ti-x me-1" />Remove</button>}</td></tr>); })}</tbody></table>
       </div></div>
       <DocTabs model="DeliveryTrip" id={t.id} showMovements />
       <Modal open={dlg === "start"} title="Start trip" onClose={() => setDlg(null)} size="sm" footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-success" disabled={!!busy} onClick={async () => { await run("start", { odometer_start: odo || null }, { success: "Trip started — stock dispatched" }); setDlg(null); }}>Start & dispatch</button></>}><p className="fs-13">Starting the trip removes the loaded goods from the warehouse ledger and marks every order <strong>dispatched</strong>. The driver is notified.</p><Field label="Odometer start"><input type="number" className="form-control" value={odo} onChange={(e) => setOdo(e.target.value)} /></Field></Modal>
@@ -143,12 +145,32 @@ export function TripDetailPage() {
         <div className="row"><Field label="Odometer end" col="col-6"><input type="number" className="form-control" value={closeForm.odometer_end} onChange={(e) => setCloseForm({ ...closeForm, odometer_end: e.target.value })} /></Field><Field label="Fuel amount" col="col-6"><input type="number" step="0.01" className="form-control" value={closeForm.fuel_amount} onChange={(e) => setCloseForm({ ...closeForm, fuel_amount: e.target.value })} /></Field><Field label="Other trip expense" col="col-6"><input type="number" step="0.01" className="form-control" value={closeForm.expense_amount} onChange={(e) => setCloseForm({ ...closeForm, expense_amount: e.target.value })} /></Field></div>
         {pageRights("adjustments").extras.approve && <div className="form-check"><input className="form-check-input" type="checkbox" id="ovr" checked={closeForm.override} onChange={(e) => setCloseForm({ ...closeForm, override: e.target.checked })} /><label className="form-check-label" htmlFor="ovr">Override mismatch / mark pending stops as failed</label></div>}
       </Modal>
+      <ConfirmDialog open={!!removing} title={`Take ${removing?.order_number} off this trip?`} danger confirmText="Remove from trip" loading={!!busy}
+        message={`${removing?.customer_name || ""} · ${removing?.number || ""} goes back to waiting for a trip. Its stock stays issued and its invoice stays as it is.`}
+        onClose={() => setRemoving(null)} onConfirm={async () => { await run("remove-order", { order_id: removing.order }, { success: `${removing.order_number} taken off the trip` }); setRemoving(null); }} />
       <ConfirmDialog open={dlg === "cancel"} title="Cancel trip" withReason danger confirmText="Cancel trip" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <Modal open={dlg === "add"} title="Add issued orders" onClose={() => setDlg(null)} footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!addSel.length} onClick={async () => { await run("assign-orders", { order_ids: addSel }, { success: "Orders added" }); setAddSel([]); setDlg(null); }}>Add {addSel.length}</button></>}>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{(candidates.data?.results || []).filter((o: any) => !o.trip).map((o: any) => <tr key={o.id}><td><input type="checkbox" className="form-check-input" checked={addSel.includes(o.id)} onChange={(e) => setAddSel(e.target.checked ? [...addSel, o.id] : addSel.filter((x) => x !== o.id))} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
       </Modal>
       {deliverNote && <DeliverModal note={deliverNote} onClose={() => setDeliverNote(null)} onDone={() => { setDeliverNote(null); qc.invalidateQueries({ queryKey: ["doc", "/api/v1/trips", id] }); qc.invalidateQueries({ queryKey: ["trip-rec", id] }); }} />}
     </>
+  );
+}
+
+/** A delivery is recorded on a trip (owner, 11 Nov 2026): one on no trip names its driver and delivery person, and the
+ *  trip is made with the delivery. Off only when the company turns "Deliveries need a trip" off in Settings. */
+export const deliveryNeedsTrip = () => (useAuth.getState().me as any)?.tenant?.settings?.delivery_needs_trip !== false;
+export type Crew = { driver: string | null; vehicle: string | null; delivery_rep: string | null };
+export const NO_CREW: Crew = { driver: null, vehicle: null, delivery_rep: null };
+export const crewMissing = (c: Crew) => (!c.driver ? "Please choose the driver." : !c.delivery_rep ? "Please choose the delivery person." : null);
+
+export function TripCrewFields({ crew, setCrew, col = "col-md-4" }: { crew: Crew; setCrew: (c: Crew) => void; col?: string }) {
+  return (
+    <div className="row">
+      <Field label="Driver *" col={col}><EntitySelect endpoint="/api/v1/drivers" query={{ is_active: true }} value={crew.driver} onChange={(v, raw) => setCrew({ ...crew, driver: v, vehicle: raw?.default_vehicle || crew.vehicle })} mapOption={(d) => ({ id: d.id, label: d.name, sub: d.default_vehicle_reg, raw: d })} /></Field>
+      <Field label="Vehicle" col={col}><EntitySelect endpoint="/api/v1/vehicles" query={{ is_active: true }} value={crew.vehicle} onChange={(v) => setCrew({ ...crew, vehicle: v })} mapOption={(v) => ({ id: v.id, label: v.reg_no, sub: v.make_model })} /></Field>
+      <Field label="Delivery person *" col={col}><EntitySelect endpoint="/api/v1/people" value={crew.delivery_rep} onChange={(v) => setCrew({ ...crew, delivery_rep: v })} mapOption={(u) => ({ id: u.user_id || u.id, label: u.full_name || u.email, sub: (u.role_names || []).join(", ") || u.email })} /></Field>
+    </div>
   );
 }
 
@@ -161,6 +183,8 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
   const [sig, setSig] = useState<File | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const needsCrew = !note.trip && deliveryNeedsTrip();
+  const [crew, setCrew] = useState<Crew>(NO_CREW);
   // what saving this will credit the customer, worked out by the server the way the credit note will be
   const [preview, setPreview] = useState<any>(null);
   const backKey = lines.map((l) => l.qty_returned).join("|");
@@ -180,9 +204,12 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
     setLine(i, { qty_returned: String(back), qty_delivered: String(Number((loaded - back).toFixed(3))), return_reason: back > 0 ? l.return_reason || "rejected" : "", return_condition: back > 0 ? l.return_condition : "good" });
   };
   const submit = async () => {
+    const missing = needsCrew ? crewMissing(crew) : null;
+    if (missing) return toast.error(missing);
     setBusy(true);
     try {
       const fd = new FormData();
+      if (needsCrew) { fd.append("driver", crew.driver || ""); fd.append("vehicle", crew.vehicle || ""); fd.append("delivery_rep", crew.delivery_rep || ""); }
       fd.append("delivered", JSON.stringify(lines.map((l) => ({ line_id: l.line_id, qty_delivered: l.qty_delivered, qty_returned: l.qty_returned, return_reason: l.return_reason, return_condition: l.return_condition }))));
       fd.append("receiver_name", form.receiver_name); fd.append("cash_collected", form.cash_collected || "0"); fd.append("failed", String(form.failed)); fd.append("failure_reason", form.failure_reason);
       fd.append("remarks", form.remarks); if (form.delivered_at) fd.append("delivered_at", new Date(form.delivered_at).toISOString());
@@ -194,6 +221,7 @@ export function DeliverModal({ note, onClose, onDone }: { note: any; onClose: ()
   };
   return (
     <Modal open title={`Deliver ${note.number} — ${note.customer_name}`} onClose={onClose} footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className={`btn ${form.failed ? "btn-danger" : "btn-primary"}`} disabled={busy} onClick={submit}>{form.failed ? "Mark failed" : "Confirm delivery"}</button></>}>
+      {needsCrew && <TripCrewFields crew={crew} setCrew={setCrew} />}
       <div className="form-check form-switch mb-2"><input className="form-check-input" type="checkbox" id="failed" checked={form.failed} onChange={(e) => setForm({ ...form, failed: e.target.checked })} /><label className="form-check-label" htmlFor="failed">Delivery failed (shop closed, refused…)</label></div>
       {form.failed ? <><Field label="Failure reason"><input className="form-control" value={form.failure_reason} onChange={(e) => setForm({ ...form, failure_reason: e.target.value })} /></Field><Field label="Remarks"><input className="form-control" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="what the driver reported" /></Field></> : <>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th>Item</th><th className="num">Issued</th><th style={{ width: 90 }}>Delivered</th><th style={{ width: 90 }}>Returned</th><th style={{ minWidth: 215 }}>Reason</th><th style={{ minWidth: 150 }}>Back To Stock / Wastage</th></tr></thead>

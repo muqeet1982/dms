@@ -18,6 +18,7 @@ import { EditLine, LinesEditor, newLine } from "@/components/documents/LinesEdit
 import { DiscountPctSelect } from "@/components/documents/DiscountPick";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
+import { Crew, crewMissing, deliveryNeedsTrip, NO_CREW, TripCrewFields } from "@/features/delivery/DeliveryPages";
 
 const STATUS_OPTIONS = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
 
@@ -95,10 +96,12 @@ export function OrderDetailPage() {
   const { run, busy } = useAction("/api/v1/sales-orders", id, [["orders-stats"], ["orders-stats-badge"], ["dashboard"]]);
   const [dlg, setDlg] = useState<null | "reject" | "cancel" | "hold" | "deliver" | "confirm" | "delete" | "rejected" | "again">(null);
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
+  const [crew, setCrew] = useState<Crew>(NO_CREW);
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
   if (q.isLoading) return <Spinner />;
   const o = q.data;
   if (!o) return null;
+  const needsCrew = !o.trip && deliveryNeedsTrip();   // a delivery on no trip makes one (owner, 11 Nov 2026)
   // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
   // past confirmation an order is the owner's to change — editing issued/dispatched work pulls the goods
   // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
@@ -210,8 +213,8 @@ export function OrderDetailPage() {
       <ConfirmDialog open={dlg === "cancel"} title="Cancel order" message={["issued", "dispatched"].includes(o.status) ? "The goods the warehouse issued come back into stock, and the load form and delivery note are cancelled with the order." : undefined} withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "hold"} title="Put on hold" withReason confirmText="Hold" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("hold", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "confirm"} title="Override credit hold?" message={<>{o.hold_reason}<br />Confirming will override the credit check.</>} confirmText="Override & confirm" onClose={() => setDlg(null)} onConfirm={async () => { await run("confirm", { override_credit: true }); setDlg(null); }} />
-      <Modal open={dlg === "deliver"} title={`Mark ${o.number} delivered`} onClose={() => setDlg(null)} size="sm" footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!!busy} onClick={async () => { await run("mark-delivered", { receiver_name: deliver.receiver_name, cash_collected: deliver.cash_collected || 0 }, { success: "Delivered — review the draft invoice, then post it" }); setDlg(null); }}>Mark delivered</button></>}>
-        <p className="fs-13 text-muted">All remaining quantities will be delivered now without a trip: stock leaves the warehouse (if not already dispatched) and a delivery note is created. An invoice not raised yet is saved as a draft for you to review and post.</p>
+      <Modal open={dlg === "deliver"} title={`Mark ${o.number} delivered`} onClose={() => setDlg(null)} size={needsCrew ? undefined : "sm"} footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!!busy} onClick={async () => { const missing = needsCrew ? crewMissing(crew) : null; if (missing) return toast.error(missing); await run("mark-delivered", { receiver_name: deliver.receiver_name, cash_collected: deliver.cash_collected || 0, ...(needsCrew ? crew : {}) }, { success: "Delivered — review the draft invoice, then post it" }); setDlg(null); }}>Mark delivered</button></>}>
+        {needsCrew && <TripCrewFields crew={crew} setCrew={setCrew} />}
         <Field label="Receiver name"><input className="form-control" value={deliver.receiver_name} onChange={(e) => setDeliver({ ...deliver, receiver_name: e.target.value })} /></Field>
         <Field label="Cash collected now" hint="Receipted on the customer — applied to the invoice once it is posted"><input type="number" step="0.01" className="form-control" value={deliver.cash_collected} onChange={(e) => setDeliver({ ...deliver, cash_collected: e.target.value })} /></Field>
       </Modal>

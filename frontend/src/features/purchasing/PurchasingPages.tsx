@@ -7,7 +7,7 @@ import { boxes, date, datetime, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
-import { Alert, Field, InfoItem, LINES_SCROLL_FROM, PageHeader, SaveError, Spinner, StatCard, StatusBadge } from "@/components/ui/Bits";
+import { Alert, Field, InfoItem, LINES_SCROLL_FROM, PageHeader, SaveError, ShortText, Spinner, StatCard, StatusBadge } from "@/components/ui/Bits";
 import { Column } from "@/components/ui/DataTable";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ListPage } from "@/components/ui/ListPage";
@@ -1115,7 +1115,7 @@ export function BillDetailPage() {
 
 export function PurchaseReturnsPage() {
   const { can } = usePerms();
-  const cols: Column<any>[] = [{ key: "number", header: "Return #", render: (r) => <span className="fw-semibold text-dark">{r.number}</span> }, { key: "date", header: "Date", render: (r) => date(r.date) }, { key: "supplier_name", header: "Supplier" }, { key: "warehouse_name", header: "Warehouse" }, { key: "reason", header: "Reason" }, { key: "is_debit_note_only", header: "Kind", render: (r) => (r.is_debit_note_only ? "Debit note (claim)" : "Stock return") }, { key: "total", header: "Total", num: true, render: (r) => money(r.total) }, { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} /> }];
+  const cols: Column<any>[] = [{ key: "number", header: "Return #", render: (r) => <span className="fw-semibold text-dark">{r.number}</span> }, { key: "date", header: "Date", render: (r) => date(r.date) }, { key: "supplier_name", header: "Supplier" }, { key: "warehouse_name", header: "Warehouse" }, { key: "reason", header: "Reason", render: (r) => <ShortText text={r.reason} /> }, { key: "is_debit_note_only", header: "Kind", render: (r) => (r.is_debit_note_only ? "Debit note (claim)" : "Stock return") }, { key: "total", header: "Total", num: true, render: (r) => money(r.total) }, { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} /> }];
   return <ListPage page="purchase_returns" title="Purchase returns & claims" endpoint="/api/v1/purchase-returns" columns={cols} rowLink={(r) => `/app/purchasing/returns/${r.id}`} createTo="/app/purchasing/returns/new" createLabel="New return" defaultOrdering="-date" filters={[supFilter, { name: "status", label: "Status", type: "select", options: ["draft", "posted"].map((s) => ({ value: s, label: s })) }]} />;
 }
 

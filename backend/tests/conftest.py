@@ -36,7 +36,13 @@ def admin_user(db):
 def make_tenant(slug, admin):
     from apps.platform.services import TenantService
 
-    return TenantService.create_tenant(legal_name=f"{slug} Ltd", display_name=slug.title(), slug=slug, owner_name=f"{slug} owner", owner_email=f"owner@{slug}.pk", owner_password="owner123", created_by=admin, send_invite=False)
+    t = TenantService.create_tenant(legal_name=f"{slug} Ltd", display_name=slug.title(), slug=slug, owner_name=f"{slug} owner", owner_email=f"owner@{slug}.pk", owner_password="owner123", created_by=admin, send_invite=False)
+    # the strict order (owner, 11 Nov 2026: no trip before the invoice is posted, no delivery without a trip) is on for
+    # every company; the tests written before it deliver straight from the note, so it is off here and its own tests
+    # (test_strict_dispatch_order.py) turn it on
+    t.settings = {**(t.settings or {}), "trip_needs_posted_invoice": False, "delivery_needs_trip": False}
+    t.save(update_fields=["settings"])
+    return t
 
 
 @pytest.fixture

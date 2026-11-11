@@ -213,7 +213,8 @@ def test_delivered_on_a_trip_never_started_reads_out_for_delivery_done(api, tena
     with tenant_context(tenant, tenant.owner):
         note = DeliveryNote.objects.get(order=order)
     assert api.post(f"/api/v1/delivery-notes/{note.pk}/deliver", {"receiver_name": "Shop"}, format="json").status_code == 200
-    assert api.get(f"/api/v1/trips/{trip.data['id']}").data["status"] == "planned", "the trip was never started"
+    # Start Trip was never pressed: the delivery started the trip and, its only stop, completed it (owner, 11 Nov 2026)
+    assert api.get(f"/api/v1/trips/{trip.data['id']}").data["status"] == "completed"
     steps = _steps(api, order.pk)
     assert steps["out_for_delivery"]["state"] == "done" and steps["out_for_delivery"]["action"] is None, "no Start trip after the delivery"
     assert steps["out_for_delivery"]["at"] and steps["delivered"]["state"] == "done"

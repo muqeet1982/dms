@@ -102,18 +102,25 @@ def order_workflow(order):
     # 5 · Dispatch — vehicle, driver, helper. A delivery confirmed with no trip (TDN-SO-00308, owner 11 Nov 2026:
     # "Delivery Completed but Dispatch in progress") went out all the same: done, saying no vehicle was recorded
     reached = bool(delivered) or order.status in ("delivered", "partially_delivered", "invoiced")
+    # with the strict order a trip waits for the posted invoice (owner, 11 Nov 2026)
+    from apps.core.tenancy import get_current_tenant
+
+    tenant = get_current_tenant()
+    billed = any(i.status not in ("draft", "cancelled") for i in invoices)
+    ready = issue_done and (billed or not (tenant and tenant.setting("trip_needs_posted_invoice")))
     crew = []
     if trip is not None:
         crew = [x for x in [trip.vehicle.reg_no if trip.vehicle_id else "", trip.driver.name if trip.driver_id else "", _person(trip.helper)] if x]
     steps.append(_step(
-        "dispatch", "Dispatch", "done" if trip is not None or reached else ("current" if issue_done else "todo"),
+        "dispatch", "Dispatch", "done" if trip is not None or reached else ("current" if ready else "todo"),
         at=trip.created_at if trip is not None else None,
         detail=" · ".join(crew) or ("Delivered without a trip: no vehicle or driver recorded" if trip is None and reached
-                                    else "Assign the vehicle, driver and helper." if issue_done else "After the stock is issued."),
+                                    else "Assign the vehicle, driver and helper." if ready
+                                    else "After the invoice is posted." if issue_done else "After the stock is issued."),
         docs=[{"label": trip.number, "to": f"/app/delivery/trips/{trip.pk}"}] if trip is not None else [],
         action=(
             {"label": "Create dispatch", "to": f"/app/delivery/trips/new?order={order.pk}&warehouse={order.warehouse_id or ''}", "perm": "delivery.create_trip"}
-            if trip is None and issue_done and not reached else None
+            if trip is None and ready and not reached else None
         ),
     ))
 
