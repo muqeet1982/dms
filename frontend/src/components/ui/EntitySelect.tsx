@@ -56,6 +56,7 @@ export function EntitySelect({ endpoint, value, onChange, mapOption, placeholder
           className={`form-control ${size === "sm" ? "form-control-sm" : ""}`}
           placeholder={current ? current.label : placeholder}
           value={open ? text : current?.label || ""}
+          title={!open && current ? current.label : undefined}
           onFocus={() => { setOpen(true); setText(""); }}
           onChange={(e) => { setText(e.target.value); setActive(0); if (!open) setOpen(true); }}
           onKeyDown={(e) => {

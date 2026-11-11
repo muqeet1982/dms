@@ -1,7 +1,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { api } from "@/api/client";
-import { fbrLineTax, gstPctOfLabels, LineTax, lineWithinTp, money, otherTaxLabel } from "@/lib/format";
+import { fbrLineTax, gstPctOfLabels, LineTax, lineWithinTp, money, otherTaxLabel, qty as fmtQty } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "./TaxFooter";
 import { useScanListener } from "@/lib/scan";
 import { toast } from "@/lib/toast";
@@ -29,6 +29,14 @@ export const newLine = (): EditLine => ({ key: crypto.randomUUID(), variant: nul
  * Reusable document lines grid: product search (or barcode scan), packaging, qty, price, discount.
  * `showPrice`/`showDiscount`/`showBatch` toggle columns. Scans (HID or camera) resolve via /barcodes/resolve.
  */
+/** The product's name with its size (owner, 11 Nov 2026: "show unit with search… if name same i can see the size") — GET A GRIP
+ *  comes in 75ml and 200ml. Left off when the name already says it ("… - 60 ML"). */
+function withSize(v: any) {
+  const size = String(v.unit_size || (v.base_uom && v.base_uom !== "PC" ? v.base_uom : "") || "").trim();
+  const flat = (x: string) => x.toLowerCase().replace(/[\s.]/g, "");
+  return size && !flat(v.name || "").includes(flat(size)) ? `${v.name} · ${size}` : v.name;
+}
+
 export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = true, showBatch = false, onToggleDiscount, discountShown, priceFor, readOnly, customerId, variantQuery, priceLabel, reasons, blockOutOfStock, chargeTax, defaultDiscountPct, lineTax, payableLabel = "Total Payable", discountless = false, advanceRate, taxInsideTp = false }: {
   /** A sales document's customer advance income tax % (236G/236H) — the footer adds it on the Grand Total. */
   advanceRate?: number | string | null;
@@ -94,7 +102,10 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
 
   // the owner's rule (22 Oct 2026): an out-of-stock item stays visible in the search, but picking it is
   // refused here with a message — and the server refuses it again at save, whatever client asked
-  const outOfStock = (v: any) => blockOutOfStock && v?.stock_on_hand !== undefined && v?.stock_on_hand !== null && Number(v.stock_on_hand) <= 0;
+  // the search asks for stock (with_stock) on orders and purchase orders; an item with no stock row at all has none
+  const wantsStock = Boolean((variantQuery as any)?.with_stock);
+  const stockOf = (v: any) => Number(v?.stock_on_hand || 0);
+  const outOfStock = (v: any) => blockOutOfStock && wantsStock && stockOf(v) <= 0;
   const applyVariant = async (key: string, v: any, packaging?: any) => {
     if (outOfStock(v)) { toast.error(`${v.name} is not in stock — it cannot be added to the order`); return; }
     const row = lines.find((l) => l.key === key);
@@ -181,7 +192,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
           <tbody>
             {lines.map((l) => (
               <tr key={l.key}>
-                <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: v.name, sub: outOfStock(v) ? `${v.sku} · NOT IN STOCK` : `${v.sku}${v.stock_on_hand !== undefined && v.stock_on_hand !== null ? " · stock " + v.stock_on_hand : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
+                <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: withSize(v), sub: outOfStock(v) ? `${v.sku} · NOT IN STOCK` : `${v.sku}${wantsStock ? " · stock " + fmtQty(stockOf(v)) : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
                 <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else reprice(l, pk); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
                 <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} readOnly={readOnly} /></td>
                 {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value })} readOnly={readOnly} /></td>}

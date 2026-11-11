@@ -147,7 +147,7 @@ class ProductViewSet(TenantModelViewSet):
         return ProductCreateSerializer if self.action == "create" else ProductSerializer
 
     def perform_update(self, serializer):
-        before = {f: getattr(serializer.instance, f) for f in (*ProductService.PRICE_FIELDS, "packing", "upc", "box_upc")}
+        before = {f: getattr(serializer.instance, f) for f in (*ProductService.PRICE_FIELDS, "packing", "upc", "box_upc", "name")}
         product = serializer.save()
         ProductService.after_update(product, before)
 

@@ -393,7 +393,7 @@ class ProductImporter:
         if product is not None:
             if not self.update_existing:
                 raise ValueError(f"Product {sku} already exists")
-            before = {f: getattr(product, f) for f in (*ProductService.PRICE_FIELDS, "packing", "upc", "box_upc")}
+            before = {f: getattr(product, f) for f in (*ProductService.PRICE_FIELDS, "packing", "upc", "box_upc", "name")}
             product.name = name
             for k, v in fields.items():
                 setattr(product, k, v)

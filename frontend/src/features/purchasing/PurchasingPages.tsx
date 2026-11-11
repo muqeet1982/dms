@@ -138,7 +138,7 @@ export function PurchaseOrderFormPage() {
         {/* Scoped to this supplier, but `for_supplier` also lets through anything nobody has assigned a supplier
             to: the strict filter hid every such product, and a catalogue imported from a price list has no
             supplier column — a whole company's search came back empty and looked broken. */}
-        <LinesEditor lines={lines} onChange={setLines} priceFor="cost" variantQuery={form.supplier ? { for_supplier: form.supplier } : undefined} />
+        <LinesEditor lines={lines} onChange={setLines} priceFor="cost" variantQuery={form.supplier ? { for_supplier: form.supplier, with_stock: 1 } : { with_stock: 1 }} />
       </div></div>
       <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" onClick={submit}>Save</button></div>
     </>

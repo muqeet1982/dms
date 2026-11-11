@@ -157,6 +157,14 @@ class ProductService:
             ProductService.sync_carton_packaging(product)
         if any(before.get(f) != getattr(product, f) for f in ("upc", "box_upc")) or before.get("packing") != product.packing:
             ProductService.sync_codes(product, before=before)
+        # a product renamed renames its item: the searches on orders and purchase orders, and the documents, show the
+        # item's name (TDN, 11 Nov 2026: VELVET CLOUD became VELVET CLOUD 200ML / 500ML / 75ML and every search still read
+        # VELVET CLOUD). Only a product with one item — the names of a product's shades are their own.
+        if "name" in before and before["name"] != product.name:
+            items = list(product.variants.all()[:2])
+            if len(items) == 1 and items[0].name != product.name:
+                items[0].name = product.name
+                items[0].save(update_fields=["name"])
 
     @staticmethod
     @transaction.atomic
