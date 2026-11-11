@@ -199,7 +199,7 @@ export function ProductDetailPage() {
   if (q.isLoading) return <Spinner />;
   const p = q.data;
   if (!p) return null;
-  const totalStock = p.variants.reduce((s: number, v: any) => s + Number(v.stock_on_hand || 0), 0);
+  const totalStock = Number(p.stock_on_hand || 0);   // every warehouse, every batch, from the product itself
   const refreshAll = () => { for (const k of [["doc", "/api/v1/products", id], ["list", "/api/v1/products"], ["product-stats"]]) qc.invalidateQueries({ queryKey: k }); };
   return (
     <>

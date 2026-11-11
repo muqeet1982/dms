@@ -153,8 +153,9 @@ class ProductViewSet(TenantModelViewSet):
 
     def get_queryset(self):
         qs = Product.objects.select_related("brand", "category", "supplier", "base_uom", "tax_class", "location", "location__warehouse").prefetch_related("variants__packagings", "variants__barcodes").annotate(variants_count=Count("variants", distinct=True))
-        # stock_on_hand is annotated for the list display and also whenever someone sorts by it directly
-        if self.request.query_params.get("with_stock") == "1" or "stock_on_hand" in self.request.query_params.get("ordering", ""):
+        # stock_on_hand is annotated for the list display, whenever someone sorts by it directly, and for one product's
+        # page: its Stock on hand card read 0 for every product while the list said 4 (owner, 12 Nov 2026)
+        if self.request.query_params.get("with_stock") == "1" or "stock_on_hand" in self.request.query_params.get("ordering", "") or self.action == "retrieve":
             qs = qs.annotate(stock_on_hand=Sum("variants__stock_levels__qty_on_hand"))
         if self.request.query_params.get("low_stock") == "1":
             qs = _below_reorder_point(qs, self.request.tenant)
