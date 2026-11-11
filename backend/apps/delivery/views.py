@@ -142,6 +142,7 @@ class PickListViewSet(DocumentViewSet):
         "cancel": "delivery.change_load_form",
         "lines": "delivery.change_load_form",
         "issue": extra_perm("load_forms", "issue"),
+        "in_stock": extra_perm("load_forms", "issue"),
         "complete": "delivery.change_load_form",
         "create_dispatch": "delivery.add_trip",
         "pdf": "delivery.view_load_form",
@@ -186,6 +187,12 @@ class PickListViewSet(DocumentViewSet):
         """Warehouse issue: record the quantities handed over, drop the stock and open the delivery note."""
         pl = PickListService.issue(self.get_object(), request.data.get("issues") or request.data.get("picks"), allow_short=request.data.get("allow_short", True))
         return Response(PickListSerializer(pl, context={"request": request}).data)
+
+    @action(detail=True, methods=["get"], url_path="in-stock")
+    def in_stock(self, request, pk=None):
+        """What each line can take out of the warehouse now, for the issue window. {"lines": {id: qty}} or {"lines": null}."""
+        got = PickListService.in_stock(self.get_object())
+        return Response({"lines": None if got is None else {str(k): format(v.normalize(), "f") for k, v in got.items()}})
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):

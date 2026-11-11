@@ -33,7 +33,7 @@ export function DashboardPage() {
         {d.trips && <div className={cc}><StatCard label="Trips out for delivery" value={d.trips.out} icon="ti-truck-delivery" color="primary" sub={`${d.trips.planned} planned · ${d.trips.to_close} to close`} to="/app/delivery/trips?active=1" /></div>}
         {d.inventory && <div className={cc}><StatCard label="Stock alerts" value={d.inventory.low_stock + d.inventory.expiring + d.inventory.expired + d.inventory.negative} icon="ti-alert-triangle" color="danger" sub={`${d.inventory.low_stock} low · ${d.inventory.expiring} expiring · ${d.inventory.expired} expired`} to="/app/inventory/alerts" /></div>}
         </div></div>
-        {d.stock && <div className="col-xl-4"><StockPanel s={d.stock} cur={cur} /></div>}
+        {d.stock && <div className="col-xl-4"><StockPanel s={d.stock} /></div>}
       </div>
       <div className="row g-3 mb-3">
         {d.sales && (
@@ -86,23 +86,24 @@ export function DashboardPage() {
 
 /** Where the stock is, at cost (owner, 11 Nov 2026): what we hold — ready to sell, booked for orders, out for delivery —
  *  and, apart from it, what customers received this month. */
-function StockPanel({ s, cur }: { s: any; cur: string }) {
-  const held = Number(s.held.value) || 0;
-  const share = (v: string) => (held > 0 ? Math.min(100, Math.round((Number(v) / held) * 100)) : 0);
-  const pcs = (u: string) => `${Number(u).toLocaleString()} pcs`;
+function StockPanel({ s }: { s: any }) {
+  // quantities, not amounts (owner, 11 Nov 2026: "dashboard stock NOT amount. need quantity")
+  const held = Number(s.held.units) || 0;
+  const share = (u: string) => (held > 0 ? Math.min(100, Math.round((Number(u) / held) * 100)) : 0);
+  const pcs = (u: string) => Number(u).toLocaleString();
   const row = (label: string, a: any, color: string, note: string, partOfHeld = true) => (
     <div className="mb-3" key={label}>
-      <div className="d-flex justify-content-between align-items-baseline"><span className="fw-semibold">{labelCase(label)}</span><span className={`fw-bold fs-16 text-${color}`}>{money(a.value, 0)}</span></div>
-      <div className="progress my-1" style={{ height: 8 }}><div className={`progress-bar bg-${color}`} style={{ width: `${share(a.value)}%` }} /></div>
-      <div className="text-muted fs-12">{note} · {partOfHeld ? `${share(a.value)}% of stock held · ` : ""}{pcs(a.units)}</div>
+      <div className="d-flex justify-content-between align-items-baseline"><span className="fw-semibold">{labelCase(label)}</span><span className={`fw-bold fs-16 text-${color}`}>{pcs(a.units)} <span className="fs-12 fw-normal text-muted">pcs</span></span></div>
+      {partOfHeld && <div className="progress my-1" style={{ height: 8 }}><div className={`progress-bar bg-${color}`} style={{ width: `${share(a.units)}%` }} /></div>}
+      <div className="text-muted fs-12">{note}{partOfHeld ? ` · ${share(a.units)}% of stock held` : ""}</div>
     </div>
   );
   return (
     <div className="card h-100">
-      <div className="card-header d-flex justify-content-between align-items-center"><h5 className="card-title mb-0">{labelCase("stock position")}</h5><span className="text-muted fs-12">at cost</span></div>
+      <div className="card-header"><h5 className="card-title mb-0">{labelCase("stock position")}</h5></div>
       <div className="card-body">
-        <div className="fs-24 fw-bold">{cur} {money(s.held.value, 0)}</div>
-        <div className="text-muted fs-12 mb-3 pb-3 border-bottom">Stock we hold, in the warehouse and on the way to customers · {pcs(s.held.units)}</div>
+        <div className="fs-24 fw-bold">{pcs(s.held.units)} <span className="fs-14 fw-normal text-muted">pcs</span></div>
+        <div className="text-muted fs-12 mb-3 pb-3 border-bottom">Stock we hold, in the warehouse and on the way to customers</div>
         {row("ready to sell", s.free, "success", "In the warehouse, free for new orders")}
         {row("booked for orders", s.booked, "warning", "In the warehouse, held for confirmed orders")}
         {row("out for delivery", s.out, "info", "Issued from the warehouse, not yet delivered")}

@@ -145,3 +145,45 @@ def test_an_order_on_a_load_form_keeps_its_hold(api, tenant, world):
         live = {r.order_line.order_id for r in StockReservation.objects.filter(released=False)}
     assert str(held["id"]) in {str(x) for x in live}, "on a load form: still held"
     assert str(loose["id"]) not in {str(x) for x in live}, "no load form: the hold ran out as before"
+
+
+def test_the_issue_window_starts_at_what_is_in_stock(api, tenant, world):
+    """TDN-PL-00214 (11 Nov 2026): the window offered the full 2 of an item with 0 left, so every Confirm Issue was
+    refused. It now reads what each item can take out (every batch together) and starts Issued there."""
+    from apps.catalog.models import UnitOfMeasure
+    from apps.catalog.services import ProductService
+    from apps.inventory.services import StockService
+
+    wh, v, cust, a, b = world
+    with tenant_context(tenant, tenant.owner):
+        other = ProductService.create_product(tenant, {"sku": "OTHER-1", "name": "9.31 Golden Ash", "base_uom": UnitOfMeasure.objects.get(code="PC"), "cost_price": D("100"), "sale_price": D("150")}).variants.first()
+        StockService.move(warehouse=wh, variant=other, qty=D("10"), movement_type="grn", unit_cost=D("100"))
+    r = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "confirm": True,
+                                          "lines": [{"variant": str(v.id), "qty": "8"}, {"variant": str(other.id), "qty": "3"}]}, format="json")
+    assert r.status_code == 201, r.content
+    form = _form(api, r.data)
+    def by_sku(got):          # an item one batch cannot cover is on two lines, one per batch: added up
+        out = {}
+        for l in form["lines"]:
+            out[l["variant_sku"]] = format((D(out.get(l["variant_sku"], "0")) + D(got[l["id"]])).normalize(), "f")
+        return out
+    assert by_sku(api.get(f"/api/v1/pick-lists/{form['id']}/in-stock").data["lines"]) == {"ASH-613": "8", "OTHER-1": "3"}, "both batches together cover the 8"
+
+    with tenant_context(tenant, tenant.owner):                 # another order empties batch A and takes 4 of B: 2 left
+        StockService.move(warehouse=wh, variant=v, qty=D("-5"), movement_type="adjustment", batch=a)
+        StockService.move(warehouse=wh, variant=v, qty=D("-4"), movement_type="adjustment", batch=b)
+    got = by_sku(api.get(f"/api/v1/pick-lists/{form['id']}/in-stock").data["lines"])
+    assert got == {"ASH-613": "2", "OTHER-1": "3"}, got
+    issues = [{"line_id": l["id"], "qty_issued": api.get(f"/api/v1/pick-lists/{form['id']}/in-stock").data["lines"][l["id"]]} for l in form["lines"]]
+    done = api.post(f"/api/v1/pick-lists/{form['id']}/issue", {"issues": issues}, format="json")
+    assert done.status_code == 200 and done.data["status"] == "partially_issued", done.content
+    assert _on_hand(tenant, wh, b) == 0, "the 2 left went out"
+    assert len(form["lines"]) == 3, "the 8 was split over batches A and B when the form was made"
+
+
+def test_with_negative_stock_allowed_nothing_is_capped(api, tenant, world):
+    wh, v, cust, a, b = world
+    wh.allow_negative_stock = True
+    wh.save(update_fields=["allow_negative_stock"])
+    form = _form(api, _order(api, wh, v, cust, "2"))
+    assert api.get(f"/api/v1/pick-lists/{form['id']}/in-stock").data["lines"] is None

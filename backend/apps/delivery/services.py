@@ -277,6 +277,40 @@ class PickListService:
         return pl
 
     @staticmethod
+    def in_stock(pl):
+        """{line pk: what the warehouse can hand over now}, nothing written (TDN-PL-00214, 11 Nov 2026: the issue window
+        offered the full 2 of an item with 0 left, so every Confirm Issue was refused). The batches the issue would draw
+        on (StockService.fit_batches): the lines' own, then any other not expired nor too short-dated for the customer.
+        One item's stock is shared out across its lines in order, so a line split over two batches is not counted twice.
+        None when negative stock is allowed."""
+        if StockService._negative_allowed(pl.warehouse):
+            return None
+        from apps.inventory.models import StockLevel
+
+        tenant = get_current_tenant()
+        today = timezone.localdate()
+        lines = list(pl.lines.filter(qty_to_pick__gt=0).select_related("variant__product", "batch", "order_line__order__customer").order_by("pk"))
+        out, pools = {}, {}
+        for l in lines:
+            tracked = l.variant.product.is_batch_tracked      # keeps the batch the warehouse chose
+            k = (l.variant_id, l.batch_id) if tracked else l.variant_id
+            if k not in pools:
+                levels = StockLevel.objects.filter(warehouse=pl.warehouse, variant=l.variant)
+                if tracked:
+                    levels = levels.filter(batch=l.batch)
+                else:
+                    cust = l.order_line.order.customer if l.order_line_id else None
+                    shelf = (cust.min_shelf_life_days if cust else None) or tenant.setting("min_shelf_life_days")
+                    own = {x.batch_id for x in lines if x.variant_id == l.variant_id}
+                    keep = lambda lv: lv.batch_id in own or lv.batch is None or not lv.batch.expiry_date or not (
+                        lv.batch.expiry_date < today or (shelf and (lv.batch.expiry_date - today).days < shelf))
+                    levels = [lv for lv in levels.select_related("batch") if keep(lv)]
+                pools[k] = sum((max(lv.qty_on_hand, Decimal("0")) for lv in levels), Decimal("0"))
+            out[l.pk] = min(l.qty_to_pick, pools[k])
+            pools[k] -= out[l.pk]
+        return out
+
+    @staticmethod
     def _fit_batches(pl):
         """What goes out comes from the batches holding it now (StockService.fit_batches): a line's batch emptied since the
         form was made takes the rest from the others, and the form says which batches went."""

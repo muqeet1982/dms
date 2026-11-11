@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, money, qty } from "@/lib/format";
+import { date, datetime, labelCase, money, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
@@ -369,9 +369,19 @@ function IssueModal({ open, onClose, picklist, onIssued }: { open: boolean; onCl
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // what each item can take out of the warehouse now (TDN-PL-00214, 11 Nov 2026: the window offered 2 of an item with 0
+  // left, and every Confirm Issue was refused): shown beside the request, and Issued starts at no more than that
+  const stock = useQuery<{ lines: Record<string, string> | null }>({ queryKey: ["load-form-in-stock", picklist?.id], queryFn: () => api.get(`/api/v1/pick-lists/${picklist.id}/in-stock`), enabled: open && !!picklist?.id, staleTime: 0 });
+  const have = stock.data?.lines;
   useEffect(() => {
-    if (open) setRows((picklist?.lines || []).map((l: any) => ({ line_id: l.id, name: l.variant_name, sku: l.variant_sku, order: l.order_number, requested: l.qty_to_pick, qty_issued: Number(l.qty_picked) > 0 ? l.qty_picked : l.qty_to_pick })));
-  }, [open, picklist]);
+    if (!open || stock.isFetching) return;
+    setRows((picklist?.lines || []).map((l: any) => {
+      const want = Number(l.qty_picked) > 0 ? l.qty_picked : l.qty_to_pick;
+      const there = have ? have[l.id] : undefined;
+      return { line_id: l.id, name: l.variant_name, sku: l.variant_sku, order: l.order_number, requested: l.qty_to_pick, in_stock: there,
+               qty_issued: String(Number(there !== undefined && Number(there) < Number(want) ? there : want)) };
+    }));
+  }, [open, picklist, have, stock.isFetching]);
   const short = rows.filter((r) => Number(r.qty_issued || 0) < Number(r.requested));
   const nothing = rows.every((r) => Number(r.qty_issued || 0) <= 0);
   const submit = async () => {
@@ -380,20 +390,21 @@ function IssueModal({ open, onClose, picklist, onIssued }: { open: boolean; onCl
       await api.post(`/api/v1/pick-lists/${picklist.id}/issue`, { issues: rows.map((r) => ({ line_id: r.line_id, qty_issued: String(r.qty_issued || 0) })) }, true);
       toast.success(short.length ? "Issued (short on some items) — stock updated" : "Issued — stock updated");
       onIssued();
-    } catch (e: any) { setErr(e.message); toast.error(e.message); } finally { setBusy(false); }
+    } catch (e: any) { setErr(e.message); toast.error(e.message); stock.refetch(); } finally { setBusy(false); }
   };
   return (
     <Modal open={open} onClose={onClose} size="lg" title={<><i className="ti ti-package-export me-2 text-primary" />Warehouse issue — {picklist?.number}</>}
-      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-success" disabled={busy || nothing} onClick={submit}>{busy ? "Issuing…" : "Confirm issue"}</button></>}>
+      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-success" disabled={busy || nothing || stock.isFetching} onClick={submit}>{busy ? "Issuing…" : "Confirm issue"}</button></>}>
       {err && <div className="alert alert-danger py-2 fs-13">{err}</div>}
       <div className="fs-13 text-muted mb-2">Enter what the warehouse is handing over. On confirm the stock leaves {picklist?.warehouse_name}, a delivery note is created per order and the order moves to <strong>Issued</strong> — ready to invoice and dispatch.</div>
       <table className="table table-sm fs-12 align-middle">
-        <thead className="table-light"><tr><th>Item</th><th>Order</th><th className="num">Requested</th><th style={{ width: 130 }}>Issued</th><th style={{ width: 90 }} /></tr></thead>
+        <thead className="table-light"><tr><th>Item</th><th>Order</th><th className="num">Requested</th>{have && <th className="num">{labelCase("in stock")}</th>}<th style={{ width: 130 }}>Issued</th><th style={{ width: 90 }} /></tr></thead>
         <tbody>{rows.map((r, i) => (
           <tr key={r.line_id} className={Number(r.qty_issued || 0) < Number(r.requested) ? "table-warning" : ""}>
             <td>{r.name}<div className="text-muted fs-11">{r.sku}</div></td>
             <td>{r.order}</td>
             <td className="num">{qty(r.requested)}</td>
+            {have && <td className={`num ${r.in_stock !== undefined && Number(r.in_stock) < Number(r.requested) ? "text-danger fw-semibold" : "text-muted"}`}>{r.in_stock !== undefined ? qty(r.in_stock) : ""}</td>}
             <td><input type="number" step="any" min="0" className="form-control form-control-sm" value={r.qty_issued} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, qty_issued: e.target.value } : x)))} /></td>
             <td className="text-end"><button className="btn btn-sm btn-outline-secondary" onClick={() => setRows(rows.map((x, j) => (j === i ? { ...x, qty_issued: x.requested } : x)))}>All</button></td>
           </tr>
