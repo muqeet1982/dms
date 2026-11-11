@@ -1,7 +1,6 @@
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -507,7 +506,8 @@ class OrderService:
 
     @staticmethod
     def reserve(order):
-        ttl = settings.DMS["RESERVATION_TTL_HOURS"]
+        # a confirmed order holds its stock until it is cancelled or the warehouse issues it, with no clock (owner,
+        # 11 Nov 2026: "if order confirm then do not unhold it until sale order cancelled")
         for line in order.lines.select_related("variant"):
             need = line.qty_ordered + line.free_qty - line.qty_allocated
             if need <= 0:
@@ -517,7 +517,7 @@ class OrderService:
             if take <= 0:
                 continue
             StockService.reserve(line.variant, order.warehouse, take)
-            StockReservation.objects.create(order_line=line, warehouse=order.warehouse, qty=take, expires_at=timezone.now() + timedelta(hours=ttl))
+            StockReservation.objects.create(order_line=line, warehouse=order.warehouse, qty=take, expires_at=None)
             line.qty_allocated += take
             line.save(update_fields=["qty_allocated"])
 
@@ -776,7 +776,7 @@ class OrderService:
             qty = Decimal(a["qty"])
             batch = Batch.objects.filter(pk=a.get("batch")).first() if a.get("batch") else None
             StockService.reserve(line.variant, order.warehouse, qty, batch)
-            StockReservation.objects.create(order_line=line, warehouse=order.warehouse, batch=batch, qty=qty, expires_at=timezone.now() + timedelta(hours=settings.DMS["RESERVATION_TTL_HOURS"]))
+            StockReservation.objects.create(order_line=line, warehouse=order.warehouse, batch=batch, qty=qty, expires_at=None)
             line.qty_allocated += qty
             line.save(update_fields=["qty_allocated"])
         if order.status == "on_hold_stock":
@@ -827,25 +827,21 @@ class OrderService:
 
     @staticmethod
     def expire_reservations():
-        """TTL expiry for live holds — and a janitor: a reservation whose order has moved past confirmation
-        (issued, delivered, cancelled…) is a leak, released on sight whatever its expiry says."""
+        """A janitor for holds: one whose order has moved past confirmation (issued, delivered, cancelled…) is a leak,
+        released on sight. A confirmed order's hold has no clock (owner, 11 Nov 2026: "if order confirm then do not
+        unhold it until sale order cancelled"): it ended after 48 hours before, and TDN-SO-00214's stock went to the
+        next order while its load form waited. Cancelling, rejecting or editing the order lets go of it."""
         n = 0
-        live = ("confirmed", "on_hold_stock", "on_hold_credit")
-        # an order on a load form the warehouse has not issued yet keeps its hold whatever the clock says: TDN-SO-00214's
-        # ran out after 48 hours on its form, and the next order took its stock (11 Nov 2026)
-        from apps.delivery.models import PickListLine
-
-        on_form = set(PickListLine.objects.filter(picklist__status__in=("open", "sent", "picking", "picked")).values_list("order_line__order_id", flat=True))
+        live = ("confirmed", "on_hold_stock", "on_hold_credit", "draft", "submitted", "under_review")
         for r in StockReservation.objects.filter(released=False).select_related("order_line__variant", "order_line__order"):
-            status = r.order_line.order.status
-            stale = status not in live and status not in ("draft", "submitted", "under_review")
-            if stale or (status in ("confirmed", "on_hold_stock") and r.expires_at < timezone.now() and r.order_line.order_id not in on_form):
-                StockService.unreserve(r.order_line.variant, r.warehouse, r.qty, r.batch)
-                r.released = True
-                r.save(update_fields=["released"])
-                r.order_line.qty_allocated = max(Decimal("0"), r.order_line.qty_allocated - r.qty)
-                r.order_line.save(update_fields=["qty_allocated"])
-                n += 1
+            if r.order_line.order.status in live:
+                continue
+            StockService.unreserve(r.order_line.variant, r.warehouse, r.qty, r.batch)
+            r.released = True
+            r.save(update_fields=["released"])
+            r.order_line.qty_allocated = max(Decimal("0"), r.order_line.qty_allocated - r.qty)
+            r.order_line.save(update_fields=["qty_allocated"])
+            n += 1
         return n
 
     @staticmethod
