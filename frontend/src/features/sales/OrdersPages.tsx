@@ -20,7 +20,7 @@ import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 import { Crew, crewMissing, deliveryNeedsTrip, NO_CREW, TripCrewFields } from "@/features/delivery/DeliveryPages";
 
-const STATUS_OPTIONS = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
+const STATUS_OPTIONS = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
 
 // the picker lives with the other document parts; re-exported for the pages that import it from here
 export { DiscountPctSelect };
@@ -76,7 +76,7 @@ export function OrdersPage() {
 export function OrdersInboxPage() {
   return (
     <ListPage title="Orders inbox" crumbs={[{ label: "Sales orders", to: "/app/sales/orders" }, { label: "Inbox" }]} endpoint="/api/v1/sales-orders/inbox" columns={orderColumns} rowLink={(o) => `/app/sales/orders/${o.id}`} defaultOrdering="created_at" searchPlaceholder="Search…"
-      filters={[{ name: "status", label: "Status", type: "select", options: ["submitted", "under_review", "on_hold_credit", "on_hold_stock"].map((s) => ({ value: s, label: s.replace(/_/g, " ") })) }, { name: "rep", label: "Rep", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r) => ({ id: r.id, label: r.name }) }]}>
+      filters={[{ name: "status", label: "Status", type: "select", options: ["submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"].map((s) => ({ value: s, label: s.replace(/_/g, " ") })) }, { name: "rep", label: "Rep", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r) => ({ id: r.id, label: r.name }) }]}>
       <Alert kind="info">Orders submitted by manufacturer reps, the external API or staff land here. Review, adjust prices/quantities if allowed, then confirm, hold or cancel. The rep is notified on every change.</Alert>
     </ListPage>
   );
@@ -97,7 +97,7 @@ export function OrderDetailPage() {
   const [dlg, setDlg] = useState<null | "cancel" | "hold" | "deliver" | "confirm" | "rejected" | "again">(null);
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
   const [crew, setCrew] = useState<Crew>(NO_CREW);
-  const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
+  const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
   if (q.isLoading) return <Spinner />;
   const o = q.data;
   if (!o) return null;
@@ -105,7 +105,7 @@ export function OrderDetailPage() {
   // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
   // past confirmation an order is the owner's to change — editing issued/dispatched work pulls the goods
   // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
-  const editable = ["draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"].includes(o.status)
+  const editable = ["draft", "submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"].includes(o.status)
     || (["confirmed", "issued", "dispatched"].includes(o.status) && (Boolean(isOwner) || can("sales.edit_confirmed_order")) && !(o.invoices || []).length);
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   // a stop that did not reach the customer waits for the office: Deliver again (same goods, same invoice) or
@@ -129,12 +129,13 @@ export function OrderDetailPage() {
           {confirmable && page.can("confirm") && <button className="btn btn-success" disabled={!!busy} onClick={() => (o.status === "on_hold_credit" ? setDlg("confirm") : run("confirm", {}, { success: "Order confirmed" }))}><i className="ti ti-circle-check me-1" />Confirm</button>}
           {o.status === "on_hold_stock" && page.can("confirm") && <button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("confirm", { allow_partial: true }, { success: "Confirmed with the stock there is — the rest stays on the order as a backorder" })}><i className="ti ti-package me-1" />Confirm with available stock</button>}
           {confirmable && page.can("confirm") && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setDlg("hold")}>Hold</button>}
+          {o.status === "on_hold" && page.can("confirm") && <button className="btn btn-warning" disabled={!!busy} onClick={() => run("resume", {}, { success: `${o.number} resumed` })}><i className="ti ti-player-play me-1" />Resume</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}
           {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
           {/* Cancel is the one way to drop an order: no Reject, no Delete (owner, 12 Nov 2026, Scenario 1); Customer rejected only for goods refused at the door */}
-          {(["draft", "submitted", "under_review"].includes(o.status) ? page.delete
+          {(["draft", "submitted", "under_review", "on_hold"].includes(o.status) ? page.delete
    : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
    : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{failedDn && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("rejected")}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>

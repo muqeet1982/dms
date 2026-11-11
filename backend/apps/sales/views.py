@@ -56,7 +56,7 @@ class SalesOrderViewSet(DocumentViewSet):
             "submit": "sales.add_sales_order",
             "review": extra_perm("sales_inbox", "confirm"),
             "confirm": extra_perm("sales_orders", "confirm"),
-            "hold": extra_perm("sales_orders", "confirm"),
+            "hold": extra_perm("sales_orders", "confirm"), "resume": extra_perm("sales_orders", "confirm"),
             "reject": extra_perm("sales_orders", "hold"),
             "cancel": "sales.delete_sales_order",
             "allocate": extra_perm("sales_orders", "confirm"),
@@ -168,7 +168,7 @@ class SalesOrderViewSet(DocumentViewSet):
     # -------------------------------------------------------------- inbox
     @action(detail=False, methods=["get"])
     def inbox(self, request):
-        qs = self.filter_queryset(self.get_queryset().filter(status__in=["submitted", "under_review", "on_hold_credit", "on_hold_stock"]).order_by("created_at"))
+        qs = self.filter_queryset(self.get_queryset().filter(status__in=["submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"]).order_by("created_at"))
         page = self.paginate_queryset(qs)
         return self.get_paginated_response(SalesOrderListSerializer(page, many=True).data)
 
@@ -197,6 +197,10 @@ class SalesOrderViewSet(DocumentViewSet):
     @action(detail=True, methods=["post"])
     def hold(self, request, pk=None):
         return Response(SalesOrderSerializer(OrderService.hold(self.get_object(), request.data.get("reason", ""))).data)
+
+    @action(detail=True, methods=["post"])
+    def resume(self, request, pk=None):
+        return Response(SalesOrderSerializer(OrderService.resume(self.get_object())).data)
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):

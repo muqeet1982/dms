@@ -179,7 +179,7 @@ export function RepOrdersPage() {
   const q = useQuery({ queryKey: ["rep-orders", status], queryFn: () => api.get("/ext/v1/orders", { status: status || undefined, limit: 100 }) });
   return (
     <>
-      <PageHeader title="My orders" crumbs={[]} actions={<select className="form-select w-auto" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All</option>{["submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "delivered", "invoiced", "rejected", "cancelled"].map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}</select>} />
+      <PageHeader title="My orders" crumbs={[]} actions={<select className="form-select w-auto" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All</option>{["submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "delivered", "invoiced", "rejected", "cancelled"].map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}</select>} />
       {q.isLoading ? <Spinner /> : <div className="card"><div className="list-group list-group-flush">{q.data?.results.map((o: any) => <Link key={o.id} to={`/rep/orders/${o.id}`} className="list-group-item list-group-item-action"><div className="d-flex justify-content-between"><span className="fw-medium">{o.customer_name}</span><StatusBadge status={o.status} /></div><div className="fs-12 text-muted">{o.number} · {date(o.order_date)} · {money(o.total)}{o.trip_number ? ` · trip ${o.trip_number}` : ""}</div>{o.hold_reason && <div className="fs-12 text-warning">{o.hold_reason}</div>}</Link>)}{q.data && !q.data.results.length && <div className="p-4"><EmptyState text="No orders" /></div>}</div></div>}
     </>
   );

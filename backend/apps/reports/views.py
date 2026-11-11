@@ -148,7 +148,7 @@ class TenantDashboardView(APIView):
         data = {"date": today}
         if can("sales.view_sales_order"):
             orders = SalesOrder.objects.all()
-            data["orders"] = {"today": orders.filter(order_date=today).count(), "inbox": orders.filter(status__in=["submitted", "under_review", "on_hold_credit", "on_hold_stock"]).count(), "confirmed": orders.filter(status="confirmed").count(), "dispatched": orders.filter(status__in=["dispatched", "partially_delivered"]).count(), "by_status": dict(orders.filter(order_date__gte=month_start).values_list("status").annotate(c=Count("id")).values_list("status", "c"))}
+            data["orders"] = {"today": orders.filter(order_date=today).count(), "inbox": orders.filter(status__in=["submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"]).count(), "confirmed": orders.filter(status="confirmed").count(), "dispatched": orders.filter(status__in=["dispatched", "partially_delivered"]).count(), "by_status": dict(orders.filter(order_date__gte=month_start).values_list("status").annotate(c=Count("id")).values_list("status", "c"))}
             inv = SalesInvoice.objects.exclude(status="cancelled")
             this_m = inv.filter(date__gte=month_start).aggregate(s=Sum("total"))["s"] or Decimal("0")
             last_m = inv.filter(date__gte=last_month_start, date__lt=month_start).aggregate(s=Sum("total"))["s"] or Decimal("0")

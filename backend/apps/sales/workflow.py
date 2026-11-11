@@ -33,13 +33,14 @@ def order_workflow(order):
     steps = []
 
     # 1 · Sales order
-    confirmed = bool(order.confirmed_at) or order.status not in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock")
+    confirmed = bool(order.confirmed_at) or order.status not in ("draft", "submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock")
     steps.append(_step(
         "order", "Sales order", "done" if confirmed else ("blocked" if cancelled else "current"),
         at=order.confirmed_at or order.created_at, by=_person(order.confirmed_by) or order.created_by_name if hasattr(order, "created_by_name") else _person(order.confirmed_by),
         detail=f"{order.lines.count()} item(s) · {order.get_status_display()}",
         docs=[{"label": order.number, "to": f"/app/sales/orders/{order.pk}"}],
-        action=None if confirmed or cancelled else {"label": "Confirm order", "post": f"/api/v1/sales-orders/{order.pk}/confirm", "perm": "sales.confirm_sales_order"},
+        action=None if confirmed or cancelled else {"label": "Resume", "post": f"/api/v1/sales-orders/{order.pk}/resume", "perm": "sales.confirm_sales_order"} if order.status == "on_hold"
+        else {"label": "Confirm order", "post": f"/api/v1/sales-orders/{order.pk}/confirm", "perm": "sales.confirm_sales_order"},
     ))
 
     # 2 · Load form → the warehouse

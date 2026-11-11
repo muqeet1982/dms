@@ -191,7 +191,7 @@ class OrderService:
         old_s, new_s = (format(x.normalize(), "f") for x in (old_pct, new_pct))   # 15.000 → "15"
         reason = f"customer's standing discount changed {old_s}% → {new_s}%"
         action = "apply" if new_pct > 0 else "remove"
-        in_flight = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
+        in_flight = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
 
         def settled(inv):
             filing = getattr(inv, "fbr_filing", None)
@@ -430,6 +430,7 @@ class OrderService:
         # the sale person hears every turn their own order takes (owner, 22 Oct 2026) — the louder ones
         # (confirmed, rejected, cancelled, dispatched, delivered) already ring through their event handlers
         quiet = {"under_review": ("order.under_review", f"Order {order.number} is under review", ""),
+                 "on_hold": ("order.on_hold", f"Order {order.number} on hold", (extra or {}).get("reason", "")),
                  "on_hold_credit": ("order.on_hold", f"Order {order.number} on hold — credit", (extra or {}).get("reason", "")),
                  "on_hold_stock": ("order.on_hold", f"Order {order.number} on hold — stock short", "The office will decide how to fill it")}
         if status != before and status in quiet and order.rep_id and order.rep.user_id:
@@ -473,6 +474,8 @@ class OrderService:
     @staticmethod
     @transaction.atomic
     def confirm(order, override_credit=False, allow_partial=False):
+        if order.status == "on_hold":
+            raise DomainError(f"{order.number} is on hold — resume it first.", code="on_hold")
         if order.status not in ("submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"):
             raise DomainError(f"Order in status {order.status} cannot be confirmed.")
         tenant = get_current_tenant()
@@ -532,15 +535,33 @@ class OrderService:
     @staticmethod
     @transaction.atomic
     def hold(order, reason):
-        OrderService._set(order, "on_hold_credit", "hold", {"reason": reason})
+        """The office's own Hold (owner, 12 Nov 2026: DD-SO-00052 read "On hold (credit)" after Hold was pressed): its own
+        status, not the credit check's, and it remembers where the order was so Resume puts it back."""
+        if order.status not in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock"):
+            raise DomainError(f"{order.number} is {order.get_status_display().lower()} — only an order not yet confirmed can be put on hold.", code="not_holdable")
+        order.held_from = order.status
         order.hold_reason = reason
-        order.save(update_fields=["hold_reason"])
+        order.save(update_fields=["held_from", "hold_reason"])
+        OrderService._set(order, "on_hold", "hold", {"reason": reason})
+        return order
+
+    @staticmethod
+    @transaction.atomic
+    def resume(order):
+        """Off hold, back to where Hold found it."""
+        if order.status != "on_hold":
+            raise DomainError(f"{order.number} is not on hold.", code="not_on_hold")
+        back = order.held_from or "submitted"
+        order.held_from = ""
+        order.hold_reason = ""
+        order.save(update_fields=["held_from", "hold_reason"])
+        OrderService._set(order, back, "resumed")
         return order
 
     @staticmethod
     @transaction.atomic
     def reject(order, reason):
-        if order.status not in ("submitted", "under_review", "on_hold_credit", "on_hold_stock"):
+        if order.status not in ("submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"):
             raise DomainError("Only open (unconfirmed) orders can be rejected.")
         OrderService.release_reservations(order)
         order.rejection_reason = reason
@@ -696,7 +717,7 @@ class OrderService:
         was charged at — reopened and posted again, it is charged the new one.
         """
         rate, moved = customer.advance_income_tax_rate, []
-        in_flight = ["draft", "submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
+        in_flight = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"]
         for o in SalesOrder.objects.filter(customer=customer, status__in=in_flight):
             if o.invoices.exclude(status__in=["draft", "cancelled"]).exists():
                 continue   # billed: the posted invoice is what the customer owes
@@ -832,7 +853,7 @@ class OrderService:
         unhold it until sale order cancelled"): it ended after 48 hours before, and TDN-SO-00214's stock went to the
         next order while its load form waited. Cancelling, rejecting or editing the order lets go of it."""
         n = 0
-        live = ("confirmed", "on_hold_stock", "on_hold_credit", "draft", "submitted", "under_review")
+        live = ("confirmed", "on_hold_stock", "on_hold_credit", "draft", "submitted", "under_review", "on_hold")
         for r in StockReservation.objects.filter(released=False).select_related("order_line__variant", "order_line__order"):
             if r.order_line.order.status in live:
                 continue

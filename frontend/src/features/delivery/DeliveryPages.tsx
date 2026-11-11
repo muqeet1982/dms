@@ -317,13 +317,10 @@ export function PickListFormPage() {
 
 export function PickListDetailPage() {
   const { id } = useParams();
-  const nav = useNavigate();
   const q = useDoc("/api/v1/pick-lists", id);
   const { run, busy } = useAction("/api/v1/pick-lists", id);
   const [scan, setScan] = useState("");
-  const [dispatch, setDispatch] = useState(false);
   const [issuing, setIssuing] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   // a saved, unsent load form is the office's to correct (owner, 27 Oct 2026): quantities and notes are edited
   // here and saved; only Send hands it to the warehouse
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -348,16 +345,13 @@ export function PickListDetailPage() {
   const doScan = async () => { if (!scan.trim()) return; try { await run("scans", { scans: [{ code: scan.trim(), qty: 1 }] }, { silent: true }); } catch { /* shown */ } setScan(""); };
   return (
     <>
-      <DispatchModal open={dispatch} onClose={() => setDispatch(false)} picklist={p} onCreated={(t) => nav(`/app/delivery/trips/${t.id}`)} />
       <IssueModal open={issuing} onClose={() => setIssuing(false)} picklist={p} onIssued={() => { setIssuing(false); q.refetch(); }} />
-      <ConfirmDialog open={cancelling} title={`Cancel ${p.number}`} withReason danger confirmText="Cancel load form" onClose={() => setCancelling(false)} onConfirm={async (r) => { await run("cancel", { reason: r }); setCancelling(false); }} />
       <PageHeader title={p.number} badge={<StatusBadge status={p.status} label={p.status_label} />} crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: p.number }]}
         actions={<>
           {draft && <button className="btn btn-outline-primary" disabled={saving || !dirty} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save"}</button>}
           {draft && <button className="btn btn-primary" disabled={!!busy || saving || dirty} title={dirty ? "Save your changes first" : ""} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
           {!draft && !issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
-          {!closed && !p.trips?.length && pageRights("load_forms").edit && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setCancelling(true)}><i className="ti ti-x me-1" />Cancel</button>}
-          {issued && !p.trips?.length && <button className="btn btn-primary" onClick={() => setDispatch(true)}><i className="ti ti-truck-delivery me-1" />Create dispatch</button>}
+          {/* no Cancel: a load form goes with its order's Cancel (owner, 12 Nov 2026, Scenario 1); no Create dispatch: trips start from the Dispatch page */}
           <button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/pick-lists/${p.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/pick-lists/${p.id}/pdf`, `${p.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
       <div className="card mb-3"><div className="card-body py-2">
@@ -444,34 +438,3 @@ function IssueModal({ open, onClose, picklist, onIssued }: { open: boolean; onCl
 }
 
 
-/** Hand a packed loader form to the road: driver + vehicle + sales rep + delivery rep → a dispatch (trip). */
-function DispatchModal({ open, onClose, picklist, onCreated }: { open: boolean; onClose: () => void; picklist: any; onCreated: (trip: any) => void }) {
-  const [form, setForm] = useState<any>({ date: new Date().toISOString().slice(0, 10), driver: null, vehicle: null, rep: null, delivery_rep: null, loader: null, helper: null, route: null, notes: "" });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const create = async () => {
-    if (!form.driver) { const m = "Please choose the driver who takes this dispatch."; setErr(m); return toast.error(m); }
-    if (!form.delivery_rep) { const m = "Please choose the delivery person for this dispatch."; setErr(m); return toast.error(m); }
-    setBusy(true); setErr(null);
-    try { const t = await api.post(`/api/v1/pick-lists/${picklist.id}/create-dispatch`, form, true); toast.success(`Dispatch ${t.number} created`); onClose(); onCreated(t); }
-    catch (e: any) { setErr(e.message); toast.error(e.message); } finally { setBusy(false); }
-  };
-  return (
-    <Modal open={open} onClose={onClose} title={<><i className="ti ti-truck-delivery me-2 text-primary" />Create dispatch from {picklist?.number}</>}
-      footer={<><button className="btn btn-light" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create dispatch"}</button></>}>
-      {err && <div className="alert alert-danger py-2 fs-13">{err}</div>}
-      <div className="fs-13 text-muted mb-3">The orders packed on this loader form ({picklist?.orders?.length || picklist?.orders_count || 0}) move onto one delivery trip. Stock leaves the warehouse when the trip starts.</div>
-      <div className="row">
-        <Field label="Date" col="col-md-4"><DateInput className="form-control" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label="Driver *" col="col-md-4"><EntitySelect endpoint="/api/v1/drivers" query={{ is_active: true }} value={form.driver} onChange={(v, raw) => setForm({ ...form, driver: v, vehicle: raw?.default_vehicle || form.vehicle })} mapOption={(d) => ({ id: d.id, label: d.name, sub: d.default_vehicle_reg, raw: d })} /></Field>
-        <Field label="Vehicle" col="col-md-4"><EntitySelect endpoint="/api/v1/vehicles" query={{ is_active: true }} value={form.vehicle} onChange={(v) => setForm({ ...form, vehicle: v })} mapOption={(v) => ({ id: v.id, label: v.reg_no, sub: v.make_model })} /></Field>
-        <Field label="Sales rep" col="col-md-4"><EntitySelect endpoint="/api/v1/supplier-reps" query={{ is_active: true }} value={form.rep} onChange={(v) => setForm({ ...form, rep: v })} mapOption={(r) => ({ id: r.id, label: r.name, sub: r.territory })} placeholder="optional" /></Field>
-        <Field label="Delivery person *" col="col-md-4"><EntitySelect endpoint="/api/v1/people" value={form.delivery_rep} onChange={(v) => setForm({ ...form, delivery_rep: v })} mapOption={(u) => ({ id: u.user_id || u.id, label: u.full_name || u.email, sub: (u.role_names || []).join(", ") || u.email })} placeholder="optional" /></Field>
-        <Field label="Loader (packed by)" col="col-md-4"><EntitySelect endpoint="/api/v1/people" value={form.loader} onChange={(v) => setForm({ ...form, loader: v })} mapOption={(u) => ({ id: u.user_id || u.id, label: u.full_name || u.email, sub: (u.role_names || []).join(", ") || u.email })} placeholder={picklist?.picker_name || "optional"} /></Field>
-        <Field label="Helper / delivery person" col="col-md-4"><EntitySelect endpoint="/api/v1/people" value={form.helper} onChange={(v) => setForm({ ...form, helper: v })} mapOption={(u) => ({ id: u.user_id || u.id, label: u.full_name || u.email, sub: (u.role_names || []).join(", ") || u.email })} placeholder="rides with the driver" /></Field>
-        <Field label="Route" col="col-md-4"><EntitySelect endpoint="/api/v1/routes" value={form.route} onChange={(v) => setForm({ ...form, route: v })} mapOption={(r) => ({ id: r.id, label: r.name })} placeholder="optional" /></Field>
-        <Field label="Notes" col="col-md-8"><input className="form-control" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-      </div>
-    </Modal>
-  );
-}

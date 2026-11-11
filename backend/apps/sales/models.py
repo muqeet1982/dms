@@ -41,10 +41,10 @@ class OtherTaxTotalsMixin(models.Model):
 class SalesOrder(OtherTaxTotalsMixin, DocumentModel):
     SOURCES = [("rep_app", "Rep app"), ("api", "API"), ("staff", "Staff"), ("portal", "Portal")]
     STATUS = [
-        ("draft", "Draft"), ("submitted", "Submitted"), ("under_review", "Under review"), ("confirmed", "Confirmed"), ("on_hold_credit", "On hold (credit)"), ("on_hold_stock", "On hold (stock)"),
+        ("draft", "Draft"), ("submitted", "Submitted"), ("under_review", "Under review"), ("on_hold", "On hold"), ("confirmed", "Confirmed"), ("on_hold_credit", "On hold (credit)"), ("on_hold_stock", "On hold (stock)"),
         ("issued", "Issued from warehouse"), ("dispatched", "Dispatched"), ("partially_delivered", "Partially delivered"), ("delivered", "Delivered"), ("invoiced", "Invoiced"), ("cancelled", "Cancelled"), ("rejected", "Rejected"),
     ]
-    OPEN_STATUSES = ["submitted", "under_review", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered"]
+    OPEN_STATUSES = ["submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered"]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="orders")
     # which of the customer's shops this order was taken at (multi-shop accounts); null = the customer's own pin
     location = models.ForeignKey("partners.CustomerLocation", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
@@ -82,6 +82,8 @@ class SalesOrder(OtherTaxTotalsMixin, DocumentModel):
     gps_accuracy_m = models.FloatField(null=True, blank=True)
     rejection_reason = models.CharField(max_length=300, blank=True)
     hold_reason = models.CharField(max_length=300, blank=True)
+    # where a manual Hold took the order from, so Resume puts it back (owner, 12 Nov 2026)
+    held_from = models.CharField(max_length=20, blank=True)
     confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     confirmed_at = models.DateTimeField(null=True, blank=True)
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -101,7 +103,7 @@ class SalesOrder(OtherTaxTotalsMixin, DocumentModel):
         # anything before delivery is editable (owner's rule: mistakes get fixed, not cancelled). Past
         # confirmation it is the owner's call, and editing issued/dispatched work pulls the goods back first
         # so every downstream document is reborn from the edited lines.
-        return self.status in ("draft", "submitted", "under_review", "on_hold_credit", "on_hold_stock", "confirmed", "issued", "dispatched")
+        return self.status in ("draft", "submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock", "confirmed", "issued", "dispatched")
 
 
 class SalesOrderLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
