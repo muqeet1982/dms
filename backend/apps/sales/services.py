@@ -782,7 +782,45 @@ class OrderService:
         if order.status in ("partially_delivered", "delivered", "invoiced"):
             raise DomainError(f"{order.number} was delivered — goods the customer kept and sent back later are a return: "
                               "use Credit note / return on the invoice.", code="delivered")
+        # a stop that could not be delivered, its goods still out with the trip: refused now, it is settled like a refusal
+        # at the door — a posted invoice gets its credit note (owner, 13 Nov 2026), never a quiet cancel
+        failed = next((d for d in order.delivery_notes.filter(status="failed", stock_out_done=True).select_related("trip")
+                       if d.trip_id is None or d.trip.status != "closed"), None)
+        if (failed is not None and not get_current_tenant().setting("two_step_dispatch")
+                and not order.delivery_notes.exclude(pk=failed.pk).exclude(status__in=("cancelled", "returned")).exists()):
+            from apps.delivery.services import DeliveryService
+
+            DeliveryService.refuse_failed(failed, reason)
+            order.refresh_from_db()
+            if order.status == "rejected":
+                return order
         return OrderService.cancel(order, f"Rejected by the customer{': ' + reason if reason else ''}", final_status="rejected")
+
+    @staticmethod
+    def rejected_at_door(order, dn, reason=""):
+        """
+        The customer refused the whole delivery (owner, 13 Nov 2026): with nothing of the order delivered and nothing else
+        of it on the way, the order closes as Rejected (Customer rejected) and lets go of any hold. Its stop has already put
+        the goods back and credited the invoice. An order something was delivered on is finished by refresh_delivery_status.
+        """
+        order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced"):
+            return None
+        if order.lines.filter(qty_delivered__gt=0).exists():
+            return None
+        if order.delivery_notes.exclude(pk=dn.pk).exclude(status__in=("cancelled", "returned")).exists():
+            return None
+        OrderService.release_reservations(order)
+        for pl in order.pick_lists.exclude(status__in=("cancelled", "issued", "partially_issued")):
+            if not pl.orders.exclude(pk=order.pk).exclude(status__in=("cancelled", "rejected")).exists():
+                pl.status = "cancelled"
+                pl.save(update_fields=["status", "updated_at"])
+        why = reason or dn.failure_reason
+        order.rejection_reason = (f"Customer refused {dn.number}" + (f": {why}" if why and why != f"Customer refused {dn.number}" else ""))[:300]
+        order.save(update_fields=["rejection_reason"])
+        OrderService._set(order, "rejected", "customer_rejected", {"reason": order.rejection_reason, "delivery_note": dn.number})
+        emit("order.rejected", order=order)
+        return order
 
     @staticmethod
     def credited_by(cn):

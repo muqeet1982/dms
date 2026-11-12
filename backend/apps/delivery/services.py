@@ -479,10 +479,14 @@ class DeliveryService:
 
     @staticmethod
     @transaction.atomic
-    def deliver(dn, delivered=None, receiver_name="", signature_file=None, photo_file=None, gps=None, cash_collected=Decimal("0"), delivered_at=None, failure_reason="", failed=False, remarks=""):
+    def deliver(dn, delivered=None, receiver_name="", signature_file=None, photo_file=None, gps=None, cash_collected=Decimal("0"), delivered_at=None, failure_reason="", failed=False, remarks="", refused=False):
         """
         delivered: [{line_id, qty_delivered, qty_returned, return_reason, return_condition}] or None = all loaded qty delivered.
         Creates the invoice, and the stock movement if a stop made before 5 Nov 2026 was never issued.
+
+        `failed` is a stop that could not be delivered (shop closed, nobody there): the goods stay on the note for Deliver
+        again. `failed` with `refused` is the customer refusing the whole delivery (owner, 13 Nov 2026): every unit comes
+        back and is settled as the stop is saved, exactly like every unit entered as returned.
         """
         if dn.status in ("delivered", "partially_delivered", "returned"):
             raise DomainError("Delivery note already completed.")
@@ -495,6 +499,10 @@ class DeliveryService:
         if not dn.stock_out_done:
             van = dn.trip.vehicle.van_warehouse if (two_step and dn.trip and dn.trip.vehicle_id and hasattr(dn.trip.vehicle, "van_warehouse")) else None
             DeliveryService._stock_out(dn, van)
+        if failed and refused:
+            delivered = [{"line_id": str(l.pk), "qty_delivered": "0", "qty_returned": str(l.qty_loaded), "return_reason": "rejected", "return_condition": "good"} for l in dn.lines.all()]
+            failed = False
+            dn.failure_reason = failure_reason or "Customer refused the delivery"
         if failed:
             dn.status = "failed"
             dn.failure_reason = failure_reason
@@ -577,7 +585,16 @@ class DeliveryService:
                                   {"invoice_id": str(invoice.id)})
             if not two_step:   # with van stock the goods are on the van's own books until its trip closes
                 invoice = DeliveryService.settle_returns(dn, invoice)
+        elif total_loaded > 0:
+            # the customer kept none of it (owner, 13 Nov 2026: "complete cancel not working" — 35 TDN stops of 9-12 Nov
+            # sat Returned with the goods off the shelf and the invoices still owed). Settled now, like a part refusal:
+            # good units back on the shelf, a posted invoice credited in full by a credit note, a draft one cancelled
+            invoice = DeliveryService._invoice_of_refusal(dn)
+            if not two_step:
+                invoice = DeliveryService.settle_returns(dn, invoice)
         OrderService.refresh_delivery_status(dn.order)
+        if total_delivered <= 0 < total_loaded and not two_step:
+            OrderService.rejected_at_door(dn.order, dn)
         if dn.cash_collected > 0 and invoice is not None:
             from apps.accounting.services import PaymentService
 
@@ -591,6 +608,45 @@ class DeliveryService:
                 dn.trip.save(update_fields=["cash_collected"])
         AuditService.log("delivery.completed", dn, after={"status": dn.status, "delivered": str(total_delivered), "invoice": invoice.number if invoice else None})
         emit("delivery.completed", delivery_note=dn, invoice=invoice)
+        if dn.trip_id:
+            TripService.refresh_status(dn.trip)
+        return dn
+
+    @staticmethod
+    def _invoice_of_refusal(dn):
+        """The invoice a refused stop credits: a posted one. A draft was never on the books, so it is simply cancelled."""
+        from apps.sales.services import InvoiceService
+
+        invoice = getattr(dn, "invoice", None)
+        if invoice is not None and invoice.status == "draft":
+            InvoiceService.cancel(invoice, reason=f"Customer refused {dn.number}")
+            return None
+        return invoice if invoice is not None and invoice.status != "cancelled" else None
+
+    @staticmethod
+    @transaction.atomic
+    def refuse_failed(dn, reason=""):
+        """
+        A stop marked "could not deliver" whose customer has since refused the goods (Customer rejected on the order, owner
+        13 Nov 2026): settled as a refusal at the door — the goods back on the shelf, a posted invoice credited by a credit
+        note, a draft cancelled, the order Rejected.
+        """
+        from apps.sales.services import OrderService
+
+        dn = DeliveryNote.objects.select_for_update().get(pk=dn.pk)
+        if dn.status != "failed":
+            raise DomainError(f"{dn.number} is {dn.get_status_display().lower()} — only a failed stop is refused this way.", code="not_failed")
+        for l in dn.lines.all():
+            l.qty_delivered, l.qty_returned = Decimal("0"), l.qty_loaded
+            l.return_reason = l.return_reason or "rejected"
+            l.save(update_fields=["qty_delivered", "qty_returned", "return_reason"])
+        dn.status = "returned"
+        dn.failure_reason = ("Customer refused" + (f": {reason}" if reason else ""))[:200]
+        dn.save(update_fields=["status", "failure_reason", "updated_at"])
+        DeliveryService.settle_returns(dn, DeliveryService._invoice_of_refusal(dn))
+        OrderService.refresh_delivery_status(dn.order)
+        OrderService.rejected_at_door(dn.order, dn, reason)
+        AuditService.log("delivery.refused", dn, after={"reason": reason})
         if dn.trip_id:
             TripService.refresh_status(dn.trip)
         return dn

@@ -485,7 +485,7 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
             trip_for_delivery(request, dn)
             dn = DeliveryService.deliver(
                 dn, delivered=delivered, receiver_name=data.get("receiver_name", ""), signature_file=request.FILES.get("signature"), photo_file=request.FILES.get("photo"), gps=gps,
-                cash_collected=Decimal(str(data.get("cash_collected", 0) or 0)), delivered_at=data.get("delivered_at") or None, failure_reason=data.get("failure_reason", ""), failed=str(data.get("failed", "")).lower() in ("1", "true", "yes"), remarks=data.get("remarks", ""),
+                cash_collected=Decimal(str(data.get("cash_collected", 0) or 0)), delivered_at=data.get("delivered_at") or None, failure_reason=data.get("failure_reason", ""), failed=str(data.get("failed", "")).lower() in ("1", "true", "yes"), remarks=data.get("remarks", ""), refused=str(data.get("refused", "")).lower() in ("1", "true", "yes"),
             )
         dn = self.get_queryset().get(pk=dn.pk)   # its lines and its credit note as they now stand, not the copy read before
         return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)

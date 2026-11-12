@@ -382,7 +382,8 @@ issued on) and `remarks`.
 | `cash_collected` | decimal string | Cash taken at the door → creates a receipt allocated to this stop's invoice, counted on the trip |
 | `delivered_at` | ISO datetime | Optional (offline capture time) |
 | `remarks` | string | What the customer or driver said (shown on the note and the order chain) |
-| `failed` | `true` | Stop failed (shop closed etc.) → everything returns; also send `failure_reason` |
+| `failed` | `true` | Could not deliver (shop closed, nobody there) → the goods stay on the note for **Deliver again**; also send `failure_reason` |
+| `refused` | `true` (with `failed: true`) | The customer refused the **whole** delivery (13 Nov 2026) → settled as the stop is saved: every unit back on the shelf, a posted invoice credited by a credit note (`credit_note` on the response), a draft one cancelled, the order closes as `rejected`. Sending every line with `qty_delivered: 0` and `qty_returned` = loaded does the same |
 
 Response = the updated delivery note (`status`, `invoice_number`, `signature_url`, `photo_url`, `remarks`). A stop
 that is not invoiced yet creates its invoice on delivery (one invoice per delivery note); when the office already

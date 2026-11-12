@@ -509,41 +509,39 @@ def test_undoing_needs_the_right_to_complete_deliveries(api, w):
     assert c.post(f"/api/v1/delivery-notes/{dn['id']}/return-preview", {"delivered": []}, format="json").status_code == 403
 
 
-# ---------------------------------------------------------------- a stop refused outright: the 30 Oct rule stands
+# ---------------------------------------------------------------- a stop refused outright: settled at the stop (owner, 13 Nov 2026)
 
-def test_refused_outright_stays_the_offices_decision(api, w):
-    from apps.sales.models import CreditNote
-
+def test_refused_outright_is_settled_at_the_stop(api, w):
+    """It used to wait for the office's Customer rejected — 35 TDN stops of 9-12 Nov were never decided. Now the stop
+    settles it like a part refusal: a credit note, the goods back on the shelf, the order Rejected."""
     o, inv, t, dn = out(api, w)
     r = stop(api, dn, back="5")
     assert r.status_code == 200, r.content
-    assert r.data["status"] == "returned" and r.data["credit_note"] is None and r.data["can_undo_return"] is False
-    with tenant_context(w.tenant):
-        assert not CreditNote.objects.exists()
-    assert on_hand(w) == 95, "on the van until the office decides"
-    assert api.post(f"/api/v1/sales-orders/{o['id']}/customer-rejected", {"reason": "did not order it"}, format="json").status_code == 200
-    assert on_hand(w) == 100, "Customer rejected puts them back straight away, with no trip close"
+    assert r.data["status"] == "returned" and r.data["credit_note"] is not None and r.data["can_undo_return"] is False
+    assert on_hand(w) == 100, "back on the shelf now, with no trip close"
+    assert order_of(api, o)["status"] == "rejected"
     close(api, t)
     assert on_hand(w) == 100
     assert ledger_closes_at(w) == 0
 
 
-def test_refused_and_damaged_customer_rejected_writes_them_off_instead_of_restocking(api, w):
+def test_refused_and_damaged_writes_them_off_instead_of_restocking(api, w):
     o, inv, t, dn = out(api, w)
     r = stop(api, dn, back="5", reason="rejected", condition="damaged")
-    assert r.status_code == 200, r.content
-    assert api.post(f"/api/v1/sales-orders/{o['id']}/customer-rejected", {"reason": "broken"}, format="json").status_code == 200
+    assert r.status_code == 200 and r.data["credit_note"], r.content
     assert on_hand(w) == 95, "broken goods do not go back as sellable"
+    assert order_of(api, o)["status"] == "rejected"
     close(api, t)
     assert on_hand(w) == 95
-    assert books(w) == {"Stock in Hand": D(-500), "Damaged Goods": D(500)}, "the sale is off the books, the loss on them once"
+    assert books(w) == {"Stock in Hand": D(-500), "Damaged Goods": D(500), "Sales – Products": D(-750), "Sales Returns": D(750)}, \
+        "the sale credited back, the loss on the goods once"
 
 
 def test_damaged_goods_do_not_go_out_again_as_they_were(api, w):
     _o, _inv, _t, dn = out(api, w)
     stop(api, dn, back="5", reason="rejected", condition="damaged")
     r = api.post(f"/api/v1/delivery-notes/{dn['id']}/deliver-again", {}, format="json")
-    assert r.status_code == 422 and r.data["type"] == "damaged", r.content
+    assert r.status_code == 422 and r.data["type"] in ("closed", "damaged"), r.content
 
 
 @pytest.mark.parametrize("first", ["close", "credit note"])
@@ -551,11 +549,12 @@ def test_a_paid_refused_damaged_stop_is_expensed_once_whichever_comes_first(api,
     _o, inv, t, dn = out(api, w)
     api.post("/api/v1/accounting/payments", {"direction": "in", "partner_type": "customer", "partner_id": str(w.cust.id), "amount": "750", "method": "cash",
                                              "allocations": [{"document_type": "sales_invoice", "document_id": inv["id"], "amount": "750"}]}, format="json")
-    stop(api, dn, back="5", reason="rejected", condition="damaged")
+    r = stop(api, dn, back="5", reason="rejected", condition="damaged")
+    assert r.data["credit_note"], "the stop credits it: the 750 paid is the customer's credit now"
     credit = {"customer": str(w.cust.id), "invoice": inv["id"], "post": True, "reason": "broken", "lines": [{"variant": str(w.v.id), "qty": "5", "unit_price": "150", "restock": False, "condition": "damaged"}]}
     if first == "close":
         close(api, t)
-    assert api.post("/api/v1/credit-notes", credit, format="json").status_code == 201
+    assert api.post("/api/v1/credit-notes", credit, format="json").status_code == 422, "a second credit for the same 5 is refused"
     if first != "close":
         close(api, t)
     b = books(w)
@@ -594,8 +593,8 @@ def test_the_returns_report_says_where_everything_went(api, w):
     o2, inv2, _t2, dn2 = out(api, w)
     stop(api, dn2, reason="damaged", condition="damaged")
     o3, _inv3, _t3, dn3 = out(api, w)
-    stop(api, dn3, back="5")
-    assert api.post(f"/api/v1/sales-orders/{o3['id']}/customer-rejected", {"reason": "no"}, format="json").status_code == 200
+    stop(api, dn3, back="5")                                          # refused outright: credited at the stop (13 Nov 2026)
+    assert order_of(api, o3)["status"] == "rejected"
     later = api.post("/api/v1/credit-notes", {"customer": str(w.cust.id), "invoice": inv1["id"], "post": True, "reason": "next week",
                                               "lines": [{"variant": str(w.v.id), "qty": "1", "unit_price": "150", "restock": False, "condition": "damaged"}]}, format="json").data
     with tenant_context(w.tenant):
@@ -608,13 +607,14 @@ def test_the_returns_report_says_where_everything_went(api, w):
     assert good["delivery_note"] == dn1["number"] and good["invoice"] == inv1["number"] and good["customer"] == "Salon One"
     cn2 = api.get(f"/api/v1/delivery-notes/{dn2['id']}").data["credit_note"]["number"]
     assert by[(o2["number"], cn2)]["result"] == "Wastage" and by[(o2["number"], cn2)]["reason"] == "Damaged"
-    refused = by[(o3["number"], "")]
-    assert (refused["result"], D(refused["qty"]), refused["reason"], D(refused["credit_value"])) == ("Back To Stock", D(5), "Customer rejected", D(0))
+    cn3 = api.get(f"/api/v1/delivery-notes/{dn3['id']}").data["credit_note"]["number"]
+    refused = by[(o3["number"], cn3)]
+    assert (refused["result"], D(refused["qty"]), refused["reason"], D(refused["credit_value"])) == ("Back To Stock", D(5), "Rejected by customer", D(750))
     after = by[(o1["number"], later["number"])]
     assert after["result"] == "Wastage" and after["reason"] == "next week"
     assert len(rep["rows"]) == 4, "each return once, none counted twice"
     t = rep["totals"]
-    assert D(t["back_to_stock_qty"]) == 6 and D(t["wastage_qty"]) == 2 and D(t["back_to_stock_cost"]) == 600 and D(t["wastage_cost"]) == 200 and D(t["credit_value"]) == 450
+    assert D(t["back_to_stock_qty"]) == 6 and D(t["wastage_qty"]) == 2 and D(t["back_to_stock_cost"]) == 600 and D(t["wastage_cost"]) == 200 and D(t["credit_value"]) == 1200
     with tenant_context(w.tenant):
         assert {r["result"] for r in _rows("returns_report", result="Wastage")["rows"]} == {"Wastage"}
         assert _rows("returns_report", date_to="2000-01-01")["rows"] == []
