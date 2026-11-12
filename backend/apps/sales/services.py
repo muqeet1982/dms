@@ -785,6 +785,40 @@ class OrderService:
         return OrderService.cancel(order, f"Rejected by the customer{': ' + reason if reason else ''}", final_status="rejected")
 
     @staticmethod
+    def credited_by(cn):
+        return f"Credited by {cn.number}"
+
+    @staticmethod
+    def cancel_when_credited(cn):
+        """
+        Scenario 2 (owner, 13 Nov 2026): the customer cancelled after the stock issue and the invoice, before any trip. The
+        delivery note is cancelled (its goods back on the shelf), Accounts raises the credit note on the invoice, and with
+        it posted the order is Cancelled. Only when nothing of the order is out or delivered and every invoice of it is
+        returned in full; a part return leaves the order as it is.
+        """
+        inv = cn.invoice if cn.invoice_id else None
+        if inv is None or inv.order_id is None or inv.delivery_note_id is None or inv.delivery_note.status != "cancelled":
+            return None
+        order = SalesOrder.objects.select_for_update().get(pk=inv.order_id)
+        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced"):
+            return None
+        if order.delivery_notes.exclude(status="cancelled").exists() or order.lines.filter(qty_delivered__gt=0).exists():
+            return None
+        live = list(order.invoices.exclude(status="cancelled"))
+        if any(i.status == "draft" or not CreditNoteService.fully_returned(i) for i in live):
+            return None
+        OrderService.release_reservations(order)
+        for pl in order.pick_lists.exclude(status__in=("cancelled", "issued", "partially_issued")):
+            if not pl.orders.exclude(pk=order.pk).exclude(status__in=("cancelled", "rejected")).exists():
+                pl.status = "cancelled"
+                pl.save(update_fields=["status", "updated_at"])
+        order.rejection_reason = OrderService.credited_by(cn)
+        order.save(update_fields=["rejection_reason"])
+        OrderService._set(order, "cancelled", "cancelled", {"reason": order.rejection_reason, "credit_note": cn.number})
+        emit("order.cancelled", order=order)
+        return order
+
+    @staticmethod
     @transaction.atomic
     def allocate(order, allocations):
         """Manual allocation: [{line_id, qty, batch?}]"""
@@ -2172,6 +2206,15 @@ class CreditNoteService:
         return grand + advance - wht
 
     @staticmethod
+    def fully_returned(invoice):
+        """Every unit the invoice billed is on a POSTED credit note."""
+        back = {}
+        for l in CreditNoteLine.objects.filter(credit_note__invoice=invoice, credit_note__status="posted"):
+            back[l.variant_id] = back.get(l.variant_id, Decimal("0")) + l.qty
+        sold = CreditNoteService._sold(invoice)
+        return bool(sold) and all(back.get(vid, Decimal("0")) >= c["units"] for vid, c in sold.items())
+
+    @staticmethod
     def returned_units(invoice, exclude=None):
         """Units already returned against this invoice, per variant (posted returns; drafts count too, so two
         drafts cannot both claim the same goods)."""
@@ -2357,6 +2400,12 @@ class CreditNoteService:
         filed = filing is not None and filing.status == "submitted"
         if invoice.paid_amount > 0 or filed:
             return
+        o, dn = invoice.order, invoice.delivery_note
+        if dn is not None and dn.status == "cancelled" and not (o is not None and o.status in ("cancelled", "rejected")):
+            # its delivery note was cancelled before any trip (owner, 13 Nov 2026, Scenario 2): Accounts settles the
+            # invoice with a credit note. Its lines move no stock (the cancel already put the goods back), so nothing
+            # is counted twice, and the order closes as Cancelled when it is posted
+            return
         back = CreditNoteService.back_already(invoice)
         sold = CreditNoteService._sold(invoice)
         if back and all(back.get(vid, Decimal("0")) >= c["units"] for vid, c in sold.items()):
@@ -2409,6 +2458,7 @@ class CreditNoteService:
                 ol.qty_returned += line.qty
                 ol.save(update_fields=["qty_returned"])
         _claw_back_claims(cn)
+        OrderService.cancel_when_credited(cn)
         if cn.delivery_note_id is None and cn.invoice_id and cn.invoice.delivery_note_id and cn.lines.filter(stock_back=True).exists():
             from apps.delivery.services import DeliveryService
 
@@ -2498,6 +2548,12 @@ class CreditNoteService:
                 AuditService.log("journal.deleted", rev, after={"memo": rev.memo[:120], "credit_note": cn.number}, actor=actor)
                 rev.delete()
         StockMovement.objects.filter(reference_type="CreditNote", reference_id=str(cn.pk)).delete()
+        # the order this return cancelled (Scenario 2) stands again, waiting for its credit note as before
+        o = cn.invoice.order if cn.invoice_id and cn.invoice.order_id else None
+        if o is not None and o.status == "cancelled" and o.rejection_reason == OrderService.credited_by(cn):
+            o.rejection_reason = ""
+            o.save(update_fields=["rejection_reason"])
+            OrderService._set(o, "confirmed", "reopened", {"reason": f"{cn.number} deleted"})
         if cn.invoice_id:
             AuditService.log("credit_note.deleted", cn.invoice, after=snapshot, actor=actor)
         AuditService.log("credit_note.deleted", cn, before=snapshot, actor=actor)

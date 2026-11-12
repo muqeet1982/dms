@@ -113,18 +113,23 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     credit_note = serializers.SerializerMethodField()
     can_undo_return = serializers.SerializerMethodField()
+    can_cancel = serializers.SerializerMethodField()
 
     def get_credit_note(self, obj):
         """The credit note this stop posted for what came back."""
         cn = next((c for c in obj.return_credit_notes.all() if c.status == "posted"), None)
         return {"id": str(cn.id), "number": cn.number, "total": str(cn.total)} if cn is not None else None
 
+    def get_can_cancel(self, obj):
+        """Scenario 2 (owner, 13 Nov 2026): a note not yet on a trip, with nothing delivered."""
+        return obj.status in ("pending", "loaded") and (obj.trip_id is None or obj.trip.status == "cancelled")
+
     def get_can_undo_return(self, obj):
         return obj.status == "partially_delivered" and any(l.return_settled and l.qty_returned > 0 for l in obj.lines.all())
 
     class Meta:
         model = DeliveryNote
-        fields = ["credit_note", "can_undo_return", "id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
+        fields = ["credit_note", "can_undo_return", "can_cancel", "id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
         read_only_fields = fields
 
     def get_gps(self, obj):

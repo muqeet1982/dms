@@ -415,6 +415,7 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
         "deliver_again": extra_perm("delivery_notes", "complete"),
         "return_preview": extra_perm("delivery_notes", "complete"),
         "undo_return": extra_perm("delivery_notes", "complete"),
+        "cancel": extra_perm("delivery_notes", "cancel"),
         "pdf": "delivery.view_delivery_note",
     })
     filterset_fields = ["status", "trip", "order", "customer", "warehouse"]
@@ -443,6 +444,13 @@ class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
     def return_preview(self, request, pk=None):
         """{delivered:[{line_id, qty_returned}]}: what saving the stop would credit. Nothing is saved."""
         return Response(DeliveryService.return_preview(self.get_object(), request.data.get("delivered") or []))
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Cancel a delivery note not yet on a trip (owner, 13 Nov 2026, Scenario 2): its issued stock goes back on the shelf."""
+        dn = DeliveryService.cancel_note(self.get_object(), reason=(request.data.get("reason") or "").strip())
+        dn = self.get_queryset().get(pk=dn.pk)
+        return Response(DeliveryNoteSerializer(dn, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="undo-return")
     @require_perm("delivery.complete_delivery")

@@ -25,6 +25,14 @@ class PickListService:
         form ... i should create load form not when click"): per order line what is still to issue — or `quantities`
         {order_line_id: qty}, never more — spread over batches first-expiry-first, the rest on a line of no batch.
         """
+        from apps.sales.models import SalesInvoice
+        from apps.sales.services import CreditNoteService
+
+        # a cancelled delivery note's posted invoice still bills its goods: issued again, they would be billed twice
+        for inv in SalesInvoice.objects.filter(order=order, delivery_note__status="cancelled").exclude(status__in=("draft", "cancelled")).select_related("delivery_note"):
+            if not CreditNoteService.fully_returned(inv):
+                raise DomainError(f"{inv.delivery_note.number} was cancelled and {inv.number} still bills its goods — raise the credit note on {inv.number} first.",
+                                  code="awaiting_credit_note")
         tenant = get_current_tenant()
         out = []
         for line in order.lines.select_related("variant"):
@@ -679,6 +687,59 @@ class DeliveryService:
         billed = invoice is not None and invoice.status not in ("draft", "cancelled")
         return {"credit": str(credit), "invoice_number": invoice.number if invoice is not None else "", "invoice_status": invoice.status if invoice is not None else "",
                 "balance_after": str(max(invoice.balance - credit, Decimal("0"))) if billed else None}
+
+    @staticmethod
+    @transaction.atomic
+    def cancel_note(dn, reason=""):
+        """
+        Cancel a delivery note before any trip (owner, 13 Nov 2026, Scenario 2): the customer cancels after the warehouse
+        issued the goods and the invoice was raised, before a trip. What the warehouse issued goes back on the shelf as
+        its own movement ("Issue reversed") and is free to sell, the note reads Cancelled and its load form dies with it.
+        Its posted invoice stays: Accounts settles it with a credit note, which moves no stock (the goods are already
+        back) and then cancels the order. A draft invoice of it is simply cancelled. Refused once the note is on a trip
+        or anything was delivered.
+        """
+        from apps.sales.services import InvoiceService, OrderService
+
+        dn = DeliveryNote.objects.select_for_update().get(pk=dn.pk)
+        if dn.trip_id and dn.trip.status != "cancelled":
+            raise DomainError(f"{dn.number} is on trip {dn.trip.number}, so it cannot be cancelled.", code="on_trip")
+        if dn.status not in ("pending", "loaded"):
+            raise DomainError(f"{dn.number} is {dn.get_status_display().lower()} — only a delivery note not yet on a trip can be cancelled.", code="not_pending")
+        order = SalesOrder.objects.select_for_update().get(pk=dn.order_id)
+        if dn.stock_out_done:
+            for line in dn.lines.select_related("variant", "batch", "order_line"):
+                if line.qty_loaded <= 0:
+                    continue
+                StockService.move(warehouse=dn.warehouse, variant=line.variant, qty=line.qty_loaded, movement_type="issue_cancelled", batch=line.batch,
+                                  unit_cost=line.unit_cost, reference=dn, note=f"{dn.number} cancelled" + (f": {reason}" if reason else ""))
+                ol = line.order_line
+                ol.refresh_from_db(fields=["qty_dispatched"])
+                ol.qty_dispatched = max(ol.qty_dispatched - line.qty_loaded, Decimal("0"))
+                ol.save(update_fields=["qty_dispatched"])
+        before = dn.status
+        dn.status, dn.stock_out_done, dn.trip = "cancelled", False, None
+        dn.save(update_fields=["status", "stock_out_done", "trip", "updated_at"])
+        AuditService.log("delivery_note.cancelled", dn, before={"status": before}, after={"status": "cancelled", "reason": reason})
+        # its load form carried this order only: with no live note left on it, it is dead paper — a new one can be made
+        if dn.picklist_id and not dn.picklist.delivery_notes.exclude(status="cancelled").exists():
+            dn.picklist.status = "cancelled"
+            dn.picklist.save(update_fields=["status", "updated_at"])
+        inv = getattr(dn, "invoice", None)
+        if inv is not None and inv.status == "draft":
+            InvoiceService.cancel(inv, reason=f"{dn.number} cancelled" + (f": {reason}" if reason else ""))
+            inv = None
+        billed = inv is not None and inv.status != "cancelled"
+        if order.trip_id and not order.delivery_notes.exclude(status="cancelled").filter(trip=order.trip_id).exists():
+            order.trip = None
+            order.save(update_fields=["trip"])
+        if order.status in ("issued", "dispatched") and not order.delivery_notes.exclude(status="cancelled").exists():
+            OrderService._set(order, "confirmed", "unissued", {"reason": reason, "delivery_note": dn.number})
+            # nothing billed: the order is simply back at confirmed and holds its stock again, ready to issue or cancel.
+            # Billed, it waits for the invoice's credit note, which cancels it; the stock stays free (owner's step 3).
+            if not billed and get_current_tenant().setting("reserve_stock_on_confirm"):
+                OrderService.reserve(order)
+        return dn
 
     @staticmethod
     @transaction.atomic
