@@ -2420,6 +2420,94 @@ class CreditNoteService:
         return cn
 
     @staticmethod
+    @transaction.atomic
+    def delete_posted(cn, reason="", actor=None):
+        """
+        Delete a POSTED return and everything it did (owner, 12 Nov 2026: "when delete, all entries related to it should
+        be delete. in stock, in accounting etc."), behind its own switch in Roles & permissions. Its credit comes off every
+        invoice it settled, the goods it put on the shelf leave it again, the manufacturer's claim is what it was, the
+        order no longer counts them returned — and then its journals, its stock movements and the note itself are
+        deleted, so no balance and no stock card shows it. A return saved at a delivery stop means the customer kept
+        the goods after all: that stop's Undo return runs first, and the stop reads Delivered. Refused while a refund
+        stands (money really went out), in a closed period, or when the returned goods have been sold since.
+        """
+        from apps.accounting.models import JournalEntry
+        from apps.delivery.services import DeliveryService
+        from apps.inventory.models import StockMovement
+
+        cn = CreditNote.objects.select_for_update().get(pk=cn.pk)
+        if cn.status != "posted":
+            raise DomainError(f"{cn.number} is {cn.get_status_display().lower()} — only a posted return is deleted this way.", code="not_posted")
+        if cn.refunded_amount > 0:
+            pays = ", ".join(cn.refunds.values_list("number", flat=True)) or "a payment"
+            raise DomainError(f"{cn.number} was refunded ({cn.refunded_amount:,.2f} on {pays}) — that money went out: cancel the refund first.", code="refunded")
+        journals = list(JournalEntry.objects.filter(source_type="CreditNote", source_id=str(cn.pk)).select_related("period", "period__fiscal_year"))
+        for je in journals:
+            p = je.period
+            if p is not None and (p.status == "closed" or p.fiscal_year.status == "closed"):
+                raise DomainError(f"{cn.number}'s entry {je.number} is in {p}, which is closed — reopen the period to delete it.", code="period_closed")
+        snapshot = {"number": cn.number, "date": cn.date.isoformat(), "customer": cn.customer.name, "invoice": cn.invoice.number if cn.invoice_id else None,
+                    "total": str(cn.total), "reason": reason, "journals": [je.number for je in journals],
+                    "lines": [{"item": l.variant.name, "qty": str(l.qty), "condition": l.condition, "restock": l.restock} for l in cn.lines.select_related("variant")],
+                    "settled": [{"invoice": a.invoice.number, "amount": str(a.amount)} for a in cn.applications.select_related("invoice")]}
+
+        # 1 · its credit off every invoice it settled
+        for a in list(cn.applications.select_related("invoice")):
+            inv = SalesInvoice.objects.select_for_update(of=("self",)).get(pk=a.invoice_id)
+            inv.paid_amount = max(q4(inv.paid_amount - a.amount), Decimal("0"))
+            inv.credited_amount = max(q4(inv.credited_amount - a.amount), Decimal("0"))
+            inv.status = InvoiceService.settle_status(inv)
+            inv.save(update_fields=["paid_amount", "credited_amount", "status", "updated_at"])
+            AuditService.log("credit.unapplied", inv, after={"credit_note": cn.number, "amount": str(a.amount), "why": "return deleted"}, actor=actor)
+            a.delete()
+        cn.applied_amount = Decimal("0")
+        cn.save(update_fields=["applied_amount", "updated_at"])
+
+        stop = cn.delivery_note if cn.delivery_note_id else None
+        if stop is not None and stop.lines.filter(return_settled=True, qty_returned__gt=0).exists():
+            # 2a · a stop's return: the customer kept them — the stop's own undo puts the delivery, stock and claims back
+            DeliveryService.undo_return(stop, reason=f"{cn.number} deleted" + (f": {reason}" if reason else ""))
+        else:
+            # 2b · the manufacturer's claim back as it was (the part the return took off an open claim)
+            if cn.invoice_id:
+                from apps.accounting.models import JournalLine
+
+                for claim in cn.invoice.company_claims.exclude(status__in=("cancelled", "written_off")):
+                    cut = sum((l.credit for l in JournalLine.objects.filter(entry__in=journals, description__startswith=f"Claim {claim.number} reduced")), Decimal("0"))
+                    if cut > 0:
+                        claim.total = q4(claim.total + cut)
+                        if claim.status == "paid" and claim.total > claim.paid_amount:
+                            claim.status = "partially_paid" if claim.paid_amount > 0 else "posted"
+                        claim.save(update_fields=["total", "status"])
+                        AuditService.log("claim.clawback_undone", claim, after={"credit_note": cn.number, "share": str(cut)}, actor=actor)
+            # the goods it put on the shelf leave it again — the stock check stops this if they have been sold since
+            for mv in StockMovement.objects.filter(reference_type="CreditNote", reference_id=str(cn.pk)).select_related("warehouse", "variant", "batch", "bin"):
+                StockService.move(warehouse=mv.warehouse, variant=mv.variant, qty=-mv.qty, movement_type="return_cancelled", batch=mv.batch, bin=mv.bin,
+                                  unit_cost=mv.unit_cost, reference=cn, note=f"{cn.number} deleted")
+            # the order no longer counts them returned (post() counted them when no stop had)
+            if cn.invoice_id and cn.invoice.order_id and cn.delivery_note_id is None:
+                for line in cn.lines.all():
+                    ol = SalesOrderLine.objects.filter(order_id=cn.invoice.order_id, variant_id=line.variant_id).first()
+                    if ol is not None:
+                        ol.qty_returned = max(ol.qty_returned - line.qty, Decimal("0"))
+                        ol.save(update_fields=["qty_returned"])
+
+        # 3 · its trail goes: every journal it posted (and any reversal of one), every stock movement it made
+        for je in JournalEntry.objects.filter(source_type="CreditNote", source_id=str(cn.pk)):
+            rev = je.reversed_by_entry
+            AuditService.log("journal.deleted", je, after={"memo": je.memo[:120], "credit_note": cn.number}, actor=actor)
+            je.delete()
+            if rev is not None:
+                AuditService.log("journal.deleted", rev, after={"memo": rev.memo[:120], "credit_note": cn.number}, actor=actor)
+                rev.delete()
+        StockMovement.objects.filter(reference_type="CreditNote", reference_id=str(cn.pk)).delete()
+        if cn.invoice_id:
+            AuditService.log("credit_note.deleted", cn.invoice, after=snapshot, actor=actor)
+        AuditService.log("credit_note.deleted", cn, before=snapshot, actor=actor)
+        cn.delete()
+        return snapshot
+
+    @staticmethod
     def undo_stop_credit(cn, reason=""):
         """
         Cancel the credit note a stop posted: its entries reversed, what it settled back on its invoice, the manufacturer's

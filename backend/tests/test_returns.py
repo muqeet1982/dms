@@ -245,7 +245,14 @@ def test_a_draft_return_blocks_reversing_its_invoice_until_deleted_and_a_stale_d
     assert api.delete(f"/api/v1/credit-notes/{draft['id']}").status_code == 204
     assert _return(api, inv, 2).status_code == 201, "deleted, the draft's unit is free again"
     posted = api.get("/api/v1/credit-notes", {"invoice": inv["id"]}).data["results"][0]
-    assert api.delete(f"/api/v1/credit-notes/{posted['id']}").status_code in (400, 422), "a posted return stays"
+    # a posted return stays unless the role has "Delete a posted credit note" (owner, 12 Nov 2026: the owner always has it)
+    from unittest import mock
+
+    from apps.accounts.models import TenantMembership
+
+    with mock.patch.object(TenantMembership, "is_owner", new_callable=mock.PropertyMock, return_value=False), \
+            mock.patch.object(TenantMembership, "has_perm", lambda self, c: c != "sales.delete_posted_credit_note"):
+        assert api.delete(f"/api/v1/credit-notes/{posted['id']}").status_code == 403, "a posted return stays"
     other = api.post("/api/v1/customers", {"name": "Other Shop", "type": "retailer", "phone": "03001112222", "cnic": "3520212345671"}, format="json").data
     moved = api.patch(f"/api/v1/credit-notes/{posted['id']}", {"customer": other["id"]}, format="json")
     assert moved.status_code in (400, 422), "a posted return cannot move to another customer"

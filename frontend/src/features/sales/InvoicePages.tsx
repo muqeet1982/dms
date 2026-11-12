@@ -417,7 +417,8 @@ export function CreditNotesPage() {
 
 export function CreditNoteDetailPage() {
   const { id } = useParams();
-  const { can } = usePerms();
+  const { can, isOwner } = usePerms();
+  const [deleting, setDeleting] = useState(false);
   const q = useDoc("/api/v1/credit-notes", id);
   const { run, busy } = useAction("/api/v1/credit-notes", id);
   const nav = useNavigate();
@@ -432,7 +433,14 @@ export function CreditNoteDetailPage() {
           if (!window.confirm(`Delete the draft ${cn.number}? It moved no stock and booked nothing.`)) return;
           try { await api.delete(`/api/v1/credit-notes/${cn.id}`); toast.success("Draft deleted"); nav("/app/sales/credit-notes"); } catch (e: any) { toast.error(e.message); }
         }}><i className="ti ti-trash me-1" />Delete draft</button>}
-      </>} />
+      </> || cn.status === "posted" && (isOwner || can("sales.delete_posted_credit_note")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDeleting(true)}><i className="ti ti-trash me-1" />Delete</button>} />
+      {/* a posted return deleted with everything it did (owner, 12 Nov 2026) */}
+      <ConfirmDialog open={deleting} title={`Delete ${cn.number}?`} withReason danger confirmText="Delete credit note" onClose={() => setDeleting(false)}
+        message={`Its credit comes off ${cn.invoice_number || "the invoices it settled"}, the goods it took back leave stock again, and its accounting entries and stock movements are deleted.${cn.delivery_note_number ? ` It was made at the stop of ${cn.delivery_note_number}: that stop goes back to Delivered.` : ""}`}
+        onConfirm={async (r) => {
+          try { await api.delete(`/api/v1/credit-notes/${cn.id}?reason=${encodeURIComponent(r || "")}`); toast.success(`${cn.number} deleted`); nav("/app/sales/credit-notes"); }
+          catch (e: any) { toast.error(e.message); } finally { setDeleting(false); }
+        }} />
       <div className="card mb-3"><div className="card-body">
         <div className="row g-3 mb-3"><InfoItem label="Customer"><Link to={`/app/customers/${cn.customer}`}>{cn.customer_name}</Link></InfoItem><InfoItem label="Invoice">{cn.invoice_number ? <Link to={`/app/sales/invoices/${cn.invoice}`}>{cn.invoice_number}</Link> : "—"}</InfoItem>{cn.delivery_note && <InfoItem label="Delivery note"><Link to={`/app/delivery/notes/${cn.delivery_note}`}>{cn.delivery_note_number}</Link></InfoItem>}<InfoItem label="Date">{date(cn.date)}</InfoItem><InfoItem label="Reason">{cn.reason || "—"}</InfoItem></div>
         {(() => {

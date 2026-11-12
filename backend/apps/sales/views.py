@@ -641,7 +641,9 @@ class CreditNoteViewSet(DocumentViewSet):
     export_fields = ["number", "date", "customer_name", "invoice_number", "reason", "subtotal", "gst_pct", "tax1_total", "advance_tax_rate", "advance_tax_total", "total", "status"]
     export_labels = {"gst_pct": "GST %", "tax1_total": "GST", **ADVANCE_LABELS}   # owner, 27 Oct 2026: "GST (N%) … excel"
     serializer_class = CreditNoteSerializer
-    perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note", "apply": "sales.add_credit_note", "refund": "sales.add_credit_note"})
+    # destroy needs either switch here; perform_destroy then holds a draft to the page's Delete, a posted return to its own
+    perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note", "apply": "sales.add_credit_note", "refund": "sales.add_credit_note",
+                                           "destroy": ["sales.delete_credit_note", "sales.delete_posted_credit_note"]})
     filterset_fields = ["status", "customer", "invoice"]
     search_fields = ["number", "customer__name", "reason"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -659,11 +661,18 @@ class CreditNoteViewSet(DocumentViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
-        """A DRAFT return can be thrown away — it moved no stock and booked nothing. A posted one stays."""
-        if instance.status != "draft":
-            raise DomainError(f"{instance.number} is posted — it stays on the books; correct it with another document.", code="posted")
-        AuditService.log("credit_note.deleted", instance, before={"number": instance.number, "total": str(instance.total)})
-        instance.delete()
+        """A DRAFT return is thrown away (the page's Delete) — it moved no stock and booked nothing. A POSTED one is deleted
+        with everything it did, behind its own switch, the owner's unless granted (owner, 12 Nov 2026)."""
+        m = self.request.membership
+        if instance.status == "draft":
+            if not (m.is_owner or m.has_perm("sales.delete_credit_note")):
+                raise DomainError("You cannot delete credit notes.", status_code=403)
+            AuditService.log("credit_note.deleted", instance, before={"number": instance.number, "total": str(instance.total)})
+            instance.delete()
+            return
+        if not (m.is_owner or m.has_perm("sales.delete_posted_credit_note")):
+            raise DomainError("Deleting a posted credit note is the owner's, unless the role is given it.", status_code=403)
+        CreditNoteService.delete_posted(instance, reason=self.request.query_params.get("reason") or self.request.data.get("reason", ""), actor=self.request.user)
 
     def perform_create(self, serializer):
         d = serializer.validated_data
