@@ -828,7 +828,7 @@ class OrderService:
         from apps.delivery.models import units_came_back
 
         lines = list(SalesOrderLine.objects.filter(order=order))
-        total_ord = sum((l.qty_ordered + l.free_qty for l in lines), Decimal("0"))
+        total_ord = sum((l.qty_ordered + l.free_qty - l.qty_closed for l in lines), Decimal("0"))   # a closed balance is not waited for
         total_del = sum((l.qty_delivered for l in lines), Decimal("0"))
         # units that came back from a stop are finished: nothing is left to send of them (owner, 5 Nov 2026)
         total_ret = sum(units_came_back(order_line__order=order).values(), Decimal("0"))
@@ -845,6 +845,69 @@ class OrderService:
             AuditService.log("status.delivery", order, before={"status": before}, after={"status": order.status})
             if order.status == "delivered":
                 emit("order.delivered", order=order)
+
+    @staticmethod
+    @transaction.atomic
+    def close_balance(order, reason=""):
+        """
+        Close what is left of a partly delivered order (owner, 12 Nov 2026). TDN-SO-00034's 4 pcs of NO. 6.13 stayed open
+        for 18 days after a new order, TDN-SO-00037, had sent them, and went out a second time: an order's balance could
+        not be closed. What never left the warehouse comes off the order (qty_closed), an unissued balance load form is
+        cancelled, any hold is released, and the order reads Delivered. Goods already on their way are not a balance:
+        they are delivered or refused first.
+        """
+        from apps.delivery.models import DeliveryNote, PickList
+        from apps.delivery.services import PickListService
+
+        order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+        if order.status != "partially_delivered":
+            raise DomainError(f"{order.number} is {order.get_status_display().lower()} — only a partly delivered order has a balance to close.", code="no_balance")
+        on_road = list(DeliveryNote.objects.filter(order=order, stock_out_done=True, status__in=("pending", "loaded", "dispatched")).values_list("number", flat=True))
+        if on_road:
+            raise DomainError(f"The balance is already issued on {', '.join(on_road)} — record its delivery or refusal first.", code="balance_on_the_road")
+        for pl in PickList.objects.filter(orders=order).exclude(status__in=("cancelled", "issued", "partially_issued")):
+            PickListService.cancel(pl, reason=f"balance of {order.number} closed" + (f": {reason}" if reason else ""))
+        closed = []
+        for line in order.lines.select_related("variant"):
+            left = line.qty_ordered + line.free_qty - line.qty_dispatched - line.qty_closed
+            if left > 0:
+                line.qty_closed += left
+                line.save(update_fields=["qty_closed"])
+                closed.append({"item": line.variant.name, "qty": format(left.normalize(), "f")})
+        if not closed:
+            raise DomainError(f"{order.number} has nothing left to send.", code="no_balance")
+        OrderService.release_reservations(order)
+        order.delivered_at = order.delivered_at or timezone.now()
+        order.save(update_fields=["delivered_at"])
+        OrderService._set(order, "delivered", "balance_closed", {"reason": reason, "closed": closed})
+        return order
+
+    OVERLAP_OPEN = ("submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered")
+
+    @staticmethod
+    def overlaps(*, customer_id, variant_ids, exclude=None, since=None):
+        """
+        The customer's other orders carrying the same items (owner, 12 Nov 2026), for a warning, never a block: an order
+        still to deliver any of them, and with `since` (a balance about to go out) any order placed from that day on,
+        delivered or not. TDN-SO-00037 sent the 4 pcs TDN-SO-00034 still owed, and the balance went out again on 7 Nov.
+        """
+        from apps.delivery.models import units_came_back
+
+        lines = (SalesOrderLine.objects.filter(order__customer_id=customer_id, variant_id__in=list(variant_ids))
+                 .exclude(order__status__in=("cancelled", "rejected", "draft")).select_related("order", "variant").order_by("order__order_date", "order__number"))
+        if exclude:
+            lines = lines.exclude(order_id=exclude)
+        lines = list(lines)
+        back = units_came_back(order_line__in=[l.pk for l in lines]) if lines else {}
+        out = {}
+        for l in lines:
+            o = l.order
+            left = l.qty_ordered + l.free_qty - l.qty_delivered - l.qty_closed - back.get(l.pk, Decimal("0"))
+            if (o.status in OrderService.OVERLAP_OPEN and left > 0) or (since is not None and o.order_date >= since):
+                e = out.setdefault(o.pk, {"id": str(o.pk), "number": o.number, "status": o.status, "status_label": o.get_status_display(),
+                                          "date": o.order_date.isoformat(), "items": []})
+                e["items"].append({"name": l.variant.name, "qty": format((l.qty_ordered + l.free_qty).normalize(), "f"), "left": format(max(left, Decimal("0")).normalize(), "f")})
+        return list(out.values())
 
     @staticmethod
     def expire_reservations():

@@ -14,6 +14,7 @@ import { Column } from "@/components/ui/DataTable";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { ListPage } from "@/components/ui/ListPage";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
+import { useOverlapGuard } from "@/components/documents/OverlapGuard";
 import { DocTabs } from "@/components/documents/DocTabs";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 
@@ -296,6 +297,7 @@ export function PickListFormPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
+  const overlap = useOverlapGuard();
   const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status__in: "confirmed,partially_delivered", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
   // an order that has since got its load form leaves the list, and must leave the selection with it
   useEffect(() => { if (orders.data) setSelected((s) => (orders.data.results.some((o: any) => o.id === s) ? s : null)); }, [orders.data]);
@@ -310,7 +312,8 @@ export function PickListFormPage() {
       <PageHeader title="New load form" crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: "New" }]} />
       <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected(null); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{orders.data?.results.map((o: any) => <tr key={o.id}><td><input type="radio" name="load-form-order" className="form-check-input" checked={selected === o.id} onChange={() => setSelected(o.id)} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
-        <div className="text-end"><button className="btn btn-primary" disabled={!selected || creating} onClick={create}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
+        <div className="text-end"><button className="btn btn-primary" disabled={!selected || creating} onClick={() => (orders.data?.results.find((o: any) => o.id === selected)?.status === "partially_delivered" ? overlap.guard({ order: selected }, create) : create())}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
+      {overlap.dialog}
     </>
   );
 }

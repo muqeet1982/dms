@@ -51,7 +51,7 @@ class PickListService:
         tenant = get_current_tenant()
         for o in orders:
             for line in o.lines.select_related("variant"):
-                qty = line.qty_ordered + line.free_qty - line.qty_dispatched
+                qty = line.qty_ordered + line.free_qty - line.qty_dispatched - line.qty_closed
                 if qty <= 0:
                     continue
                 plan, short = StockService.fefo_batches(line.variant, warehouse, qty, o.customer.min_shelf_life_days or tenant.setting("min_shelf_life_days"))
@@ -121,7 +121,7 @@ class PickListService:
             ol = line.order_line
             if ol is None:
                 continue
-            pending = ol.qty_ordered + ol.free_qty - ol.qty_dispatched
+            pending = ol.qty_ordered + ol.free_qty - ol.qty_dispatched - ol.qty_closed
             asked = sum((x.qty_to_pick for x in by_id.values() if x.order_line_id == ol.pk), Decimal("0"))
             if asked > pending:
                 raise DomainError(f"{line.variant.name}: {asked:g} asked but the order has only {pending:g} pending.")
@@ -366,7 +366,7 @@ class DeliveryService:
                 DeliveryNoteLine.objects.create(delivery_note=dn, order_line=ol, variant=ol.variant, batch=l.get("batch"), qty_loaded=Decimal(l["qty"]), unit_cost=ol.variant.avg_cost or ol.variant.cost_price)
         else:
             for ol in order.lines.select_related("variant"):
-                pending = ol.qty_ordered + ol.free_qty - ol.qty_dispatched
+                pending = ol.qty_ordered + ol.free_qty - ol.qty_dispatched - ol.qty_closed
                 if pending <= 0:
                     continue
                 plan, short = StockService.fefo_batches(ol.variant, dn.warehouse, pending, order.customer.min_shelf_life_days or tenant.setting("min_shelf_life_days"))

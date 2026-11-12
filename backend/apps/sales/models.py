@@ -116,6 +116,8 @@ class SalesOrderLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     qty_delivered = models.DecimalField(**QTY)
     qty_returned = models.DecimalField(**QTY)
     free_qty = models.DecimalField(**QTY)
+    # a partly delivered order's balance the office closed: never sent, and nothing left to send (owner, 12 Nov 2026)
+    qty_closed = models.DecimalField(**QTY)
     unit_price = models.DecimalField(**MONEY)  # per base unit
     requested_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     discount_pct = models.DecimalField(max_digits=7, decimal_places=3, default=Decimal("0"))
@@ -131,7 +133,7 @@ class SalesOrderLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
 
     @property
     def qty_pending(self):
-        return self.qty_ordered - self.qty_delivered
+        return max(self.qty_ordered - self.qty_delivered - self.qty_closed, Decimal("0"))
 
 
 class StockReservation(TenantModel):

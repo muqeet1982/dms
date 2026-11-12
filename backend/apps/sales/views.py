@@ -58,7 +58,7 @@ class SalesOrderViewSet(DocumentViewSet):
             "confirm": extra_perm("sales_orders", "confirm"),
             "hold": extra_perm("sales_orders", "confirm"), "resume": extra_perm("sales_orders", "confirm"),
             "reject": extra_perm("sales_orders", "hold"),
-            "cancel": "sales.delete_sales_order",
+            "cancel": "sales.delete_sales_order", "close_balance": "sales.view_sales_order", "overlaps": "sales.view_sales_order",
             "allocate": extra_perm("sales_orders", "confirm"),
             "availability": "sales.view_sales_order",
             "mark_delivered": extra_perm("delivery_notes", "complete"),
@@ -221,6 +221,40 @@ class SalesOrderViewSet(DocumentViewSet):
                 and not (m.is_owner or m.has_perm("sales.cancel_confirmed_order")):
             raise DomainError("Only the owner can cancel an order after it is confirmed.", status_code=403)
         return Response(SalesOrderSerializer(OrderService.cancel(order, request.data.get("reason", ""), by_rep=by_rep)).data)
+
+    @action(detail=True, methods=["post"], url_path="close-balance")
+    def close_balance(self, request, pk=None):
+        """Close what is left of a partly delivered order — part of a confirmed order called off, so the same rights as
+        cancelling one after confirmation."""
+        m = request.membership
+        if not (m.is_owner or (m.has_perm("sales.cancel_sales_order") and m.has_perm("sales.cancel_confirmed_order"))):
+            raise DomainError("Only the owner can close an order's balance.", status_code=403)
+        return Response(SalesOrderSerializer(OrderService.close_balance(self.get_object(), request.data.get("reason", ""))).data)
+
+    @action(detail=False, methods=["get"])
+    def overlaps(self, request):
+        """The customer's other orders with the same items — a warning before Confirm, Save & confirm, or a balance's
+        load form. `order` reads customer and items from that order (its balance, when partly delivered); otherwise
+        `customer` and `variants` (comma separated)."""
+        from datetime import date
+
+        p = request.query_params
+        since = None
+        if p.get("order"):
+            o = self.get_queryset().get(pk=p["order"])
+            customer, exclude = o.customer_id, o.pk
+            if o.status == "partially_delivered":
+                since = o.order_date
+                variants = [l.variant_id for l in o.lines.all() if l.qty_ordered + l.free_qty - l.qty_dispatched - l.qty_closed > 0]
+            else:
+                variants = [l.variant_id for l in o.lines.all()]
+        else:
+            customer, exclude = p.get("customer"), p.get("exclude")
+            variants = [x for x in (p.get("variants") or "").split(",") if x]
+            since = date.fromisoformat(p["since"]) if p.get("since") else None
+        if not customer or not variants:
+            return Response([])
+        return Response(OrderService.overlaps(customer_id=customer, variant_ids=variants, exclude=exclude, since=since))
 
     @action(detail=True, methods=["post"], url_path="customer-rejected")
     def customer_rejected(self, request, pk=None):

@@ -185,7 +185,7 @@ def pending_orders(**_):
     came_back = units_came_back()
     rows = []
     for o in SalesOrder.objects.filter(status__in=["submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered"]).select_related("customer", "rep"):
-        pend = sum((l.qty_ordered + l.free_qty - l.qty_delivered - came_back.get(l.pk, Z) for l in o.lines.all()), Z)
+        pend = sum((l.qty_ordered + l.free_qty - l.qty_delivered - l.qty_closed - came_back.get(l.pk, Z) for l in o.lines.all()), Z)
         rows.append({"number": o.number, "date": o.order_date, "customer": o.customer.name, "rep": o.rep.name if o.rep_id else "", "status": o.status, "total": str(o.total), "qty_pending": str(pend), "age_days": (timezone.localdate() - o.order_date).days, "hold_reason": o.hold_reason})
     return {"columns": ["number", "date", "customer", "rep", "status", "total", "qty_pending", "age_days"], "rows": rows, "totals": {"count": len(rows)}}
 

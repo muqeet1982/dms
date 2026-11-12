@@ -18,6 +18,7 @@ import { EditLine, LinesEditor, newLine } from "@/components/documents/LinesEdit
 import { DiscountPctSelect } from "@/components/documents/DiscountPick";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
+import { useOverlapGuard } from "@/components/documents/OverlapGuard";
 import { Crew, crewMissing, deliveryNeedsTrip, NO_CREW, TripCrewFields } from "@/features/delivery/DeliveryPages";
 
 const STATUS_OPTIONS = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
@@ -94,7 +95,8 @@ export function OrderDetailPage() {
   const tripsPage = usePage("trips");
   const q = useDoc("/api/v1/sales-orders", id);
   const { run, busy } = useAction("/api/v1/sales-orders", id, [["orders-stats"], ["orders-stats-badge"], ["dashboard"]]);
-  const [dlg, setDlg] = useState<null | "cancel" | "hold" | "deliver" | "confirm" | "rejected" | "again">(null);
+  const [dlg, setDlg] = useState<null | "cancel" | "hold" | "deliver" | "confirm" | "rejected" | "again" | "close">(null);
+  const overlap = useOverlapGuard();
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
   const [crew, setCrew] = useState<Crew>(NO_CREW);
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
@@ -126,10 +128,11 @@ export function OrderDetailPage() {
           {editable && page.edit && <Link to={`/app/sales/orders/${o.id}/edit`} className="btn btn-outline-primary"><i className="ti ti-edit me-1" />Edit</Link>}
           {o.status === "draft" && page.add && <button className="btn btn-primary" disabled={!!busy} onClick={() => run("submit")}>Submit</button>}
           {o.status === "submitted" && page.can("confirm") && <button className="btn btn-outline-info" disabled={!!busy} onClick={() => run("review")}>Mark under review</button>}
-          {confirmable && page.can("confirm") && <button className="btn btn-success" disabled={!!busy} onClick={() => (o.status === "on_hold_credit" ? setDlg("confirm") : run("confirm", {}, { success: "Order confirmed" }))}><i className="ti ti-circle-check me-1" />Confirm</button>}
-          {o.status === "on_hold_stock" && page.can("confirm") && <button className="btn btn-outline-success" disabled={!!busy} onClick={() => run("confirm", { allow_partial: true }, { success: "Confirmed with the stock there is — the rest stays on the order as a backorder" })}><i className="ti ti-package me-1" />Confirm with available stock</button>}
+          {confirmable && page.can("confirm") && <button className="btn btn-success" disabled={!!busy} onClick={() => overlap.guard({ order: o.id }, () => (o.status === "on_hold_credit" ? setDlg("confirm") : run("confirm", {}, { success: "Order confirmed" })))}><i className="ti ti-circle-check me-1" />Confirm</button>}
+          {o.status === "on_hold_stock" && page.can("confirm") && <button className="btn btn-outline-success" disabled={!!busy} onClick={() => overlap.guard({ order: o.id }, () => run("confirm", { allow_partial: true }, { success: "Confirmed with the stock there is — the rest stays on the order as a backorder" }))}><i className="ti ti-package me-1" />Confirm with available stock</button>}
           {confirmable && page.can("confirm") && <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => setDlg("hold")}>Hold</button>}
           {o.status === "on_hold" && page.can("confirm") && <button className="btn btn-warning" disabled={!!busy} onClick={() => run("resume", {}, { success: `${o.number} resumed` })}><i className="ti ti-player-play me-1" />Resume</button>}
+          {o.status === "partially_delivered" && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("close")}><i className="ti ti-circle-off me-1" />Close Balance</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}
           {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
@@ -173,7 +176,7 @@ export function OrderDetailPage() {
                   const taxTotal = (Number(o.tax1_total) || 0) + (Number(o.tax2_total) || 0);
                   return <table className="table table-sm align-middle mb-0 fs-12" style={{ minWidth: taxed ? 900 : 760 }}>
                     <thead className="table-light"><tr><th>#</th><th>Item</th><th className="num">Qty</th><th className="num">Disp.</th><th className="num">Deliv.</th>{showReturned && <th className="num">Ret.</th>}<th className="num">Price</th>{taxed && <th className="num">Disc</th>}{taxed && <th className="num">Taxable</th>}{taxed && <th className="num">GST</th>}{showOther && <th className="num" title="FED + Extra Tax + Further Tax">Other Tax</th>}<th className="num">{taxed ? "Line Total" : "Amount"}</th></tr></thead>
-                    <tbody>{o.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}</td>{showReturned && <td className="num">{qty(l.qty_returned)}</td>}<td className="num">{taxed && l.price_ex_tax != null ? <>{money(l.price_ex_tax)}<div className="text-muted fs-11">TP {money(l.unit_price)}</div></> : money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td>{taxed && <td className="num">{money(l.discount_ex_tax != null ? l.discount_ex_tax : Number(l.discount_amount) + Number(l.scheme_discount))}</td>}{taxed && <td className="num">{money(Number(l.line_total) - taxAmt - otherOf(l))}</td>}{taxed && <td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.product_fbr_rate ? fbrRateLabel(l.product_fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>}{showOther && <td className="num">{otherOf(l) ? <>{money(otherOf(l))}<div className="text-muted fs-11">{otherTaxLabel({ fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate })}</div></> : "—"}</td>}<td className="num fw-medium">{money(taxed ? l.line_total : Number(l.qty_ordered) * Number(l.unit_price))}</td></tr>; })}</tbody>
+                    <tbody>{o.lines.map((l: any, i: number) => { const taxAmt = (Number(l.tax1_amount) || 0) + (Number(l.tax2_amount) || 0); return <tr key={l.id}><td>{i + 1}</td><td>{l.variant_name}<div className="text-muted fs-11">{l.variant_sku}{taxed && l.hs_code ? ` · HS ${l.hs_code}` : ""}{l.packaging_name ? ` · ${l.packaging_name}` : ""}{l.scheme_names?.length ? ` · ${l.scheme_names.join(", ")}` : ""}{Number(l.qty_allocated) > 0 ? ` · reserved ${qty(l.qty_allocated)}` : ""}</div></td><td className="num">{qty(l.qty_ordered)}</td><td className="num">{qty(l.qty_dispatched)}</td><td className="num">{qty(l.qty_delivered)}{Number(l.qty_closed) > 0 && <div className="text-muted fs-11">{qty(l.qty_closed)} closed</div>}</td>{showReturned && <td className="num">{qty(l.qty_returned)}</td>}<td className="num">{taxed && l.price_ex_tax != null ? <>{money(l.price_ex_tax)}<div className="text-muted fs-11">TP {money(l.unit_price)}</div></> : money(l.unit_price)}{l.requested_price && Number(l.requested_price) !== Number(l.unit_price) && <div className="text-warning fs-11">req {money(l.requested_price)}</div>}</td>{taxed && <td className="num">{money(l.discount_ex_tax != null ? l.discount_ex_tax : Number(l.discount_amount) + Number(l.scheme_discount))}</td>}{taxed && <td className="num">{money(Number(l.line_total) - taxAmt - otherOf(l))}</td>}{taxed && <td className="num">{taxAmt ? <>{money(taxAmt)}<div className="text-muted fs-11">{l.product_fbr_rate ? fbrRateLabel(l.product_fbr_rate) : `${Number(l.tax1_rate)}%`}</div></> : "—"}</td>}{showOther && <td className="num">{otherOf(l) ? <>{money(otherOf(l))}<div className="text-muted fs-11">{otherTaxLabel({ fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate })}</div></> : "—"}</td>}<td className="num fw-medium">{money(taxed ? l.line_total : Number(l.qty_ordered) * Number(l.unit_price))}</td></tr>; })}</tbody>
                     <tfoot>{taxed
                       ? <TaxFooterRows span={span} sub={Number(o.subtotal)} discount={Number(o.discount)} discountPct={o.discount_pct} scheme={Number(o.scheme_discount)}
                           net={Number(o.subtotal) - Number(o.discount) - Number(o.scheme_discount)} gst={taxTotal} gstPct={gstPct(o.lines.map((l: any) => l.tax1_rate))} fed={Number(o.fed_total)} extra={Number(o.extra_tax_total)}
@@ -203,6 +206,10 @@ export function OrderDetailPage() {
       {failedDn && <ConfirmDialog open={dlg === "again"} title={`Deliver ${failedDn.number} again`} withReason confirmText="Deliver again"
         message={`The same goods and the same invoice${failedDn.invoice_number ? ` (${failedDn.invoice_number})` : ""} go out again — on the next trip, or deliver it from its delivery note.`}
         onClose={() => setDlg(null)} onConfirm={deliverAgain} />}
+      {overlap.dialog}
+      <ConfirmDialog open={dlg === "close"} title={`Close the balance of ${o.number}`} withReason danger confirmText="Close balance"
+        message="What has not left the warehouse comes off the order, and the order closes as Delivered. No stock moves."
+        onClose={() => setDlg(null)} onConfirm={async (r) => { await run("close-balance", { reason: r }, { success: `${o.number} closed` }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "rejected"} title="Customer rejected the goods" withReason danger confirmText="Reverse the sale"
         message="The goods come back to stock once, the order's unpaid invoice is reversed (its entries come off the books) and the order closes as Rejected. No return and no payment are recorded."
         onClose={() => setDlg(null)} onConfirm={async (r) => { await run("customer-rejected", { reason: r }); setDlg(null); }} />
@@ -241,6 +248,7 @@ export function OrderFormPage() {
   const warehouses = useWarehouses();
   const [form, setForm] = useState<any>(null);
   const [lines, setLines] = useState<EditLine[]>([]);
+  const overlap = useOverlapGuard();
   // Most orders have no discount on the line, so the column is out of the way until somebody asks for it —
   // and it shows itself when an order being edited already carries one.
   const [showDiscount, setShowDiscount] = useState(false);
@@ -292,7 +300,8 @@ export function OrderFormPage() {
       <div className="d-flex gap-2 justify-content-end">
         <button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>
         <button className="btn btn-outline-primary" disabled={saving} onClick={() => submit(false)}>{id ? "Save changes" : "Save & submit"}</button>
-        {!id && page.can("confirm") && <button className="btn btn-primary" disabled={saving} onClick={() => submit(true)}>Save & confirm</button>}
+        {!id && page.can("confirm") && <button className="btn btn-primary" disabled={saving} onClick={() => overlap.guard({ customer: form.customer, variants: lines.filter((l) => l.variant).map((l) => l.variant).join(",") }, () => submit(true))}>Save & confirm</button>}
+        {overlap.dialog}
       </div>
     </>
   );
