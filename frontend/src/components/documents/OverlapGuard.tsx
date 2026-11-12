@@ -7,9 +7,9 @@ import { ConfirmDialog } from "@/components/ui/Modal";
 type Overlap = { id: string; number: string; status: string; status_label: string; date: string; items: { name: string; qty: string; left: string }[] };
 
 /**
- * Before Confirm, Save & confirm or a balance's load form: the customer's other orders with the same items (owner,
- * 12 Nov 2026 — TDN-SO-00037 sent the 4 pcs TDN-SO-00034 still owed, and the balance went out again). A warning, never
- * a block: `guard(params, go)` runs `go` straight away when there is nothing to say, else asks first.
+ * Before Confirm, Save & confirm or a balance's load form: the customer's other orders whose same items have not been
+ * issued from the warehouse yet (owner, 12 Nov 2026). A warning, never a block: `guard(params, go)` runs `go` straight
+ * away when there is nothing to say, else asks first.
  */
 export function useOverlapGuard() {
   const [state, setState] = useState<null | { list: Overlap[]; go: () => unknown }>(null);
@@ -27,7 +27,7 @@ export function useOverlapGuard() {
         {(state?.list || []).map((o) => (
           <div key={o.id} className="mb-2">
             <Link to={`/app/sales/orders/${o.id}`} target="_blank" className="fw-semibold">{o.number}</Link> <span className="text-muted">· {o.status_label} · {date(o.date)}</span>
-            {o.items.map((it) => <div key={it.name} className="ms-2">{it.name} × {qty(it.qty)}{Number(it.left) > 0 && Number(it.left) !== Number(it.qty) ? ` (${qty(it.left)} still to deliver)` : ""}</div>)}
+            {o.items.map((it) => <div key={it.name} className="ms-2">{it.name} × {qty(it.qty)}{Number(it.left) !== Number(it.qty) ? ` (${qty(it.left)} not issued yet)` : ""}</div>)}
           </div>
         ))}
       </div>} />

@@ -126,7 +126,9 @@ class StockLevelViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = StockLevelSerializer
     perm_map = page_perms("stock", {"summary": "inventory.view_stock", "lookup": "inventory.view_stock", "fefo": "inventory.view_stock"})
     filterset_fields = ["warehouse", "variant", "batch", "bin", "variant__product", "variant__product__brand", "variant__product__category", "variant__product__supplier"]
-    search_fields = ["variant__name", "variant__sku", "batch__batch_no", "variant__barcodes__code"]
+    # the product's name too: an item can be named shorter than its product (demo, 12 Nov 2026: "ColorMax Cream Colour 1.0
+    # Black 60ml" is the item "ColorMax 1.0 Black 60ml", and the product's name found nothing)
+    search_fields = ["variant__name", "variant__product__name", "variant__sku", "batch__batch_no", "variant__barcodes__code"]
     ordering_fields = ["qty_on_hand", "variant__name", "updated_at", "warehouse__name", "batch__batch_no", "qty_reserved", "avg_cost"]
 
     def get_queryset(self):
@@ -191,7 +193,7 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     perm_map = page_perms("movements")
     pagination_class = LedgerCursorPagination
     filterset_fields = ["warehouse", "variant", "batch", "movement_type", "reference_type", "reference_id", "performed_by"]
-    search_fields = ["variant__name", "variant__sku", "reference_number", "note"]
+    search_fields = ["variant__name", "variant__product__name", "variant__sku", "reference_number", "note"]
 
     def get_queryset(self):
         qs = warehouse_scope(self.request, StockMovement.objects.select_related("warehouse", "variant", "variant__product", "batch", "performed_by"))
@@ -221,7 +223,7 @@ class BatchViewSet(TenantModelViewSet):
     serializer_class = BatchSerializer
     perm_map = page_perms("batches", {"create": "inventory.change_batch", "destroy": "inventory.change_batch"})
     filterset_fields = ["variant", "supplier"]
-    search_fields = ["batch_no", "variant__name", "variant__sku"]
+    search_fields = ["batch_no", "variant__name", "variant__product__name", "variant__sku"]
     ordering_fields = ["expiry_date", "batch_no"]
 
     def perform_update(self, serializer):
@@ -325,7 +327,7 @@ class StockAdjustmentViewSet(DocumentViewSet):
         "stats": "inventory.view_adjustment",
     }, also={"create": [extra_perm("adjustments", "wastage")]})
     filterset_fields = ["status", "warehouse", "type", "reason", "reason__category"]
-    search_fields = ["number", "notes", "lines__variant__name"]
+    search_fields = ["number", "notes", "lines__variant__name", "lines__variant__product__name"]
     ordering_fields = ["date", "number", "total_value", "created_at"]
     http_method_names = ["get", "post", "patch", "head", "options"]
 

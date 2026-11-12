@@ -19,8 +19,35 @@ Q4 = Decimal("0.0001")
 
 class PickListService:
     @staticmethod
+    def plan(*, warehouse, order, quantities=None):
+        """
+        The lines a load form for this order would carry, nothing written (owner, 12 Nov 2026: "when click on create load
+        form ... i should create load form not when click"): per order line what is still to issue — or `quantities`
+        {order_line_id: qty}, never more — spread over batches first-expiry-first, the rest on a line of no batch.
+        """
+        tenant = get_current_tenant()
+        out = []
+        for line in order.lines.select_related("variant"):
+            pending = line.qty_ordered + line.free_qty - line.qty_dispatched - line.qty_closed
+            qty = pending
+            if quantities is not None and str(line.pk) in quantities:
+                qty = Decimal(str(quantities[str(line.pk)] or 0))
+                if qty < 0:
+                    raise DomainError(f"{line.variant.name}: the quantity cannot be negative.")
+                if qty > pending:
+                    raise DomainError(f"{line.variant.name}: {qty:g} asked but the order has only {pending:g} pending.")
+            if qty <= 0:
+                continue
+            plan, short = StockService.fefo_batches(line.variant, warehouse, qty, order.customer.min_shelf_life_days or tenant.setting("min_shelf_life_days"))
+            for batch, q, bin in plan:
+                out.append({"order_line": line, "variant": line.variant, "batch": batch, "bin": bin, "qty": q, "pending": pending})
+            if short > 0:
+                out.append({"order_line": line, "variant": line.variant, "batch": None, "bin": None, "qty": short, "pending": pending})
+        return out
+
+    @staticmethod
     @transaction.atomic
-    def create(*, warehouse, orders, notes=""):
+    def create(*, warehouse, orders, notes="", quantities=None):
         orders = list(orders)
         # one load form, one order, numbered after it (owner, 5 Nov 2026: "only limit one its own order that is it")
         if len(orders) > 1:
@@ -48,17 +75,9 @@ class PickListService:
             pl.picker = pl.sent_by = pl.issued_by = pl.sent_at = pl.issued_at = pl.picked_at = None
             pl.save()
         pl.orders.set(orders)
-        tenant = get_current_tenant()
         for o in orders:
-            for line in o.lines.select_related("variant"):
-                qty = line.qty_ordered + line.free_qty - line.qty_dispatched - line.qty_closed
-                if qty <= 0:
-                    continue
-                plan, short = StockService.fefo_batches(line.variant, warehouse, qty, o.customer.min_shelf_life_days or tenant.setting("min_shelf_life_days"))
-                for batch, q, bin in plan:
-                    PickListLine.objects.create(picklist=pl, order_line=line, variant=line.variant, batch=batch, bin=bin, qty_to_pick=q)
-                if short > 0:
-                    PickListLine.objects.create(picklist=pl, order_line=line, variant=line.variant, qty_to_pick=short)
+            for p in PickListService.plan(warehouse=warehouse, order=o, quantities=quantities):
+                PickListLine.objects.create(picklist=pl, order_line=p["order_line"], variant=p["variant"], batch=p["batch"], bin=p["bin"], qty_to_pick=p["qty"])
         if not pl.lines.exists():
             raise DomainError(f"{orders[0].number} has nothing left to issue.", code="nothing_to_issue")
         AuditService.log("created", pl, after={"orders": [o.number for o in orders]})

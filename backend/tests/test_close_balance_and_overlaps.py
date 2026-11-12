@@ -73,9 +73,8 @@ def test_the_tdn_so_00034_case_is_warned_twice_and_the_balance_closes(api, tenan
     issue_order(api, b["id"])
     _deliver(api, tenant, b["id"])
 
-    # A's balance is about to go out again: B, placed since and delivered, is named
-    w = api.get("/api/v1/sales-orders/overlaps", {"order": a["id"]}).data
-    assert [(x["number"], x["status"]) for x in w] == [(b["number"], "delivered")], w
+    # only orders whose item has not left the warehouse are named (owner, 12 Nov 2026): B, delivered, is not
+    assert api.get("/api/v1/sales-orders/overlaps", {"order": a["id"]}).data == []
 
     with tenant_context(tenant):
         stock_before = StockService.available(shade, wh)
@@ -135,3 +134,14 @@ def test_a_repeat_order_after_delivery_is_not_a_warning(api, tenant):
     issue_order(api, o["id"])
     _deliver(api, tenant, o["id"])
     assert api.get("/api/v1/sales-orders/overlaps", {"customer": str(cust.id), "variants": str(v.id)}).data == []
+
+
+def test_an_order_already_issued_is_not_named(api, tenant):
+    """Owner, 12 Nov 2026: "should only show submitted not issued from warehouse"."""
+    wh, _s, v, cust = seed_basic(tenant)
+    issued = _order(api, wh, cust, [(v, "2")])
+    issue_order(api, issued["id"])                                     # out of the warehouse, not yet delivered
+    waiting = api.post("/api/v1/sales-orders", {"customer": str(cust.id), "warehouse": str(wh.id), "lines": [{"variant": str(v.id), "qty": "3"}]}, format="json").data
+    w = api.get("/api/v1/sales-orders/overlaps", {"customer": str(cust.id), "variants": str(v.id)}).data
+    assert [x["number"] for x in w] == [waiting["number"]], "the submitted one only"
+    assert w[0]["items"][0]["left"] == "3"

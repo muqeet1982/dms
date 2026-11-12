@@ -885,25 +885,22 @@ class OrderService:
     OVERLAP_OPEN = ("submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered")
 
     @staticmethod
-    def overlaps(*, customer_id, variant_ids, exclude=None, since=None):
+    def overlaps(*, customer_id, variant_ids, exclude=None):
         """
-        The customer's other orders carrying the same items (owner, 12 Nov 2026), for a warning, never a block: an order
-        still to deliver any of them, and with `since` (a balance about to go out) any order placed from that day on,
-        delivered or not. TDN-SO-00037 sent the 4 pcs TDN-SO-00034 still owed, and the balance went out again on 7 Nov.
+        The customer's other orders carrying the same items (owner, 12 Nov 2026), for a warning, never a block: only an
+        order whose item has NOT been issued from the warehouse yet — submitted, confirmed, held, or a partly delivered
+        order's balance (owner, same day: "should only show submitted not issued from warehouse"). TDN-SO-00037 was
+        confirmed for the 4 pcs TDN-SO-00034 still had unissued, and they went out twice.
         """
-        from apps.delivery.models import units_came_back
-
-        lines = (SalesOrderLine.objects.filter(order__customer_id=customer_id, variant_id__in=list(variant_ids))
-                 .exclude(order__status__in=("cancelled", "rejected", "draft")).select_related("order", "variant").order_by("order__order_date", "order__number"))
+        lines = (SalesOrderLine.objects.filter(order__customer_id=customer_id, variant_id__in=list(variant_ids), order__status__in=OrderService.OVERLAP_OPEN)
+                 .select_related("order", "variant").order_by("order__order_date", "order__number"))
         if exclude:
             lines = lines.exclude(order_id=exclude)
-        lines = list(lines)
-        back = units_came_back(order_line__in=[l.pk for l in lines]) if lines else {}
         out = {}
         for l in lines:
             o = l.order
-            left = l.qty_ordered + l.free_qty - l.qty_delivered - l.qty_closed - back.get(l.pk, Decimal("0"))
-            if (o.status in OrderService.OVERLAP_OPEN and left > 0) or (since is not None and o.order_date >= since):
+            left = l.qty_ordered + l.free_qty - l.qty_dispatched - l.qty_closed      # not yet issued from the warehouse
+            if left > 0:
                 e = out.setdefault(o.pk, {"id": str(o.pk), "number": o.number, "status": o.status, "status_label": o.get_status_display(),
                                           "date": o.order_date.isoformat(), "items": []})
                 e["items"].append({"name": l.variant.name, "qty": format((l.qty_ordered + l.free_qty).normalize(), "f"), "left": format(max(left, Decimal("0")).normalize(), "f")})

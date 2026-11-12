@@ -295,24 +295,69 @@ export function PickListFormPage() {
   const warehouses = useWarehouses();
   const [warehouse, setWarehouse] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  // nothing is made until Save or Send (owner, 12 Nov 2026): Create load form only shows what the form will carry
+  const [preview, setPreview] = useState<any>(null);
+  const [qtys, setQtys] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState<"" | "preview" | "save" | "send">("");
   const qc = useQueryClient();
   const overlap = useOverlapGuard();
+  const canSend = pageRights("load_forms").edit;
   const orders = useQuery({ queryKey: ["confirmed-orders", warehouse], queryFn: () => api.list("/api/v1/sales-orders", { status__in: "confirmed,partially_delivered", warehouse: warehouse || undefined, no_load_form: 1, page_size: 200 }), enabled: Boolean(warehouse) });
   // an order that has since got its load form leaves the list, and must leave the selection with it
   useEffect(() => { if (orders.data) setSelected((s) => (orders.data.results.some((o: any) => o.id === s) ? s : null)); }, [orders.data]);
-  const create = async () => {
-    setCreating(true);
-    try { const r = await api.post("/api/v1/pick-lists", { warehouse, orders: [selected] }, true); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); nav(`/app/delivery/pick-lists/${r.id}`); }
-    catch (e: any) { toast.error(e.message); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); }
-    finally { setCreating(false); }
+  useEffect(() => { if (preview && preview.order !== selected) setPreview(null); }, [selected]);
+  const showPreview = async () => {
+    setBusy("preview");
+    try {
+      const p = await api.get("/api/v1/pick-lists/preview", { warehouse, order: selected });
+      setPreview(p);
+      setQtys(Object.fromEntries(p.lines.map((l: any) => [l.order_line, String(Number(l.qty))])));
+      setNotes("");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(""); }
   };
+  const make = async (send: boolean) => {
+    setBusy(send ? "send" : "save");
+    try {
+      const lines = preview.lines.map((l: any) => ({ order_line: l.order_line, qty: qtys[l.order_line] === "" ? "0" : qtys[l.order_line] }));
+      const r = await api.post("/api/v1/pick-lists", { warehouse, orders: [preview.order], notes, send, lines }, true);
+      toast.success(send ? "Sent to the warehouse" : "Load form saved");
+      qc.invalidateQueries({ queryKey: ["confirmed-orders"] });
+      nav(`/app/delivery/pick-lists/${r.id}`);
+    } catch (e: any) { toast.error(e.message); qc.invalidateQueries({ queryKey: ["confirmed-orders"] }); }
+    finally { setBusy(""); }
+  };
+  const balance = orders.data?.results.find((o: any) => o.id === preview?.order)?.status === "partially_delivered";
+  const go = (send: boolean) => (balance ? overlap.guard({ order: preview.order }, () => make(send)) : make(send));
+  const nothing = preview && preview.lines.every((l: any) => !Number(qtys[l.order_line] || 0));
   return (
     <>
       <PageHeader title="New load form" crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: "New" }]} />
-      <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected(null); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
+      <div className="card mb-3"><div className="card-body"><Field label="Warehouse" col="col-md-4"><select className="form-select" value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setSelected(null); setPreview(null); }}><option value="">Select…</option>{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
         <table className="table table-sm fs-12"><thead className="table-light"><tr><th /><th>Order</th><th>Customer</th><th>Deliver by</th><th className="num">Total</th></tr></thead><tbody>{orders.data?.results.map((o: any) => <tr key={o.id}><td><input type="radio" name="load-form-order" className="form-check-input" checked={selected === o.id} onChange={() => setSelected(o.id)} /></td><td>{o.number}</td><td>{o.customer_name}</td><td>{date(o.requested_delivery_date)}</td><td className="num">{money(o.total)}</td></tr>)}</tbody></table>
-        <div className="text-end"><button className="btn btn-primary" disabled={!selected || creating} onClick={() => (orders.data?.results.find((o: any) => o.id === selected)?.status === "partially_delivered" ? overlap.guard({ order: selected }, create) : create())}>{creating ? "Creating…" : "Create load form"}</button></div></div></div>
+        {!preview && <div className="text-end"><button className="btn btn-primary" disabled={!selected || !!busy} onClick={showPreview}>{busy === "preview" ? "Loading…" : "Create load form"}</button></div>}
+      </div></div>
+      {preview && <div className="card mb-3">
+        <div className="card-header"><strong>{preview.order_number}</strong> <span className="text-muted">· {preview.customer_name}</span></div>
+        <div className="card-body">
+          <table className="table table-sm fs-12">
+            <thead className="table-light"><tr><th>{labelCase("item")}</th><th>{labelCase("batch")}</th><th className="num">{labelCase("pending")}</th><th className="num">{labelCase("in stock")}</th><th className="num" style={{ width: 120 }}>{labelCase("to pick")}</th></tr></thead>
+            <tbody>{preview.lines.map((l: any) => <tr key={l.order_line}>
+              <td>{l.variant_name}<div className="text-muted fs-11">{l.sku}</div></td>
+              <td className="fs-11">{l.batches.map((b: any, i: number) => <div key={i}>{b.batch_no || "—"}{b.expiry ? ` · ${date(b.expiry)}` : ""} × {qty(b.qty)}</div>)}</td>
+              <td className="num">{qty(l.pending)}</td>
+              <td className={`num ${Number(l.available) < Number(qtys[l.order_line] || 0) ? "text-danger" : ""}`}>{qty(l.available)}</td>
+              <td className="num"><input type="number" min={0} max={Number(l.pending)} step="any" className="form-control form-control-sm text-end" value={qtys[l.order_line] ?? ""} onChange={(e) => setQtys({ ...qtys, [l.order_line]: e.target.value })} /></td>
+            </tr>)}</tbody>
+          </table>
+          <Field label="Notes" col="col-12"><textarea className="form-control" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+          <div className="d-flex justify-content-end gap-2 mt-2">
+            <button className="btn btn-light" disabled={!!busy} onClick={() => setPreview(null)}>Cancel</button>
+            <button className="btn btn-outline-primary" disabled={!!busy || nothing} onClick={() => go(false)}><i className="ti ti-device-floppy me-1" />{busy === "save" ? "Saving…" : "Save"}</button>
+            {canSend && <button className="btn btn-primary" disabled={!!busy || nothing} onClick={() => go(true)}><i className="ti ti-send me-1" />{busy === "send" ? "Sending…" : "Send to warehouse"}</button>}
+          </div>
+        </div>
+      </div>}
       {overlap.dialog}
     </>
   );

@@ -236,25 +236,18 @@ class SalesOrderViewSet(DocumentViewSet):
         """The customer's other orders with the same items — a warning before Confirm, Save & confirm, or a balance's
         load form. `order` reads customer and items from that order (its balance, when partly delivered); otherwise
         `customer` and `variants` (comma separated)."""
-        from datetime import date
-
         p = request.query_params
-        since = None
         if p.get("order"):
             o = self.get_queryset().get(pk=p["order"])
             customer, exclude = o.customer_id, o.pk
-            if o.status == "partially_delivered":
-                since = o.order_date
-                variants = [l.variant_id for l in o.lines.all() if l.qty_ordered + l.free_qty - l.qty_dispatched - l.qty_closed > 0]
-            else:
-                variants = [l.variant_id for l in o.lines.all()]
+            # a partly delivered order asks about its balance: the items it has still to issue
+            variants = [l.variant_id for l in o.lines.all() if o.status != "partially_delivered" or l.qty_ordered + l.free_qty - l.qty_dispatched - l.qty_closed > 0]
         else:
             customer, exclude = p.get("customer"), p.get("exclude")
             variants = [x for x in (p.get("variants") or "").split(",") if x]
-            since = date.fromisoformat(p["since"]) if p.get("since") else None
         if not customer or not variants:
             return Response([])
-        return Response(OrderService.overlaps(customer_id=customer, variant_ids=variants, exclude=exclude, since=since))
+        return Response(OrderService.overlaps(customer_id=customer, variant_ids=variants, exclude=exclude))
 
     @action(detail=True, methods=["post"], url_path="customer-rejected")
     def customer_rejected(self, request, pk=None):

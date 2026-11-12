@@ -164,6 +164,7 @@ class PickListViewSet(DocumentViewSet):
         "complete": "delivery.change_load_form",
         "create_dispatch": "delivery.add_trip",
         "pdf": "delivery.view_load_form",
+        "preview": "delivery.add_load_form",
     })
     filterset_fields = ["status", "warehouse", "picker"]
     search_fields = ["number"]
@@ -173,8 +174,43 @@ class PickListViewSet(DocumentViewSet):
         return warehouse_scope(self.request, PickList.objects.select_related("warehouse", "picker").prefetch_related("orders", "lines__variant", "lines__batch", "lines__bin", "lines__order_line__order"))
 
     def perform_create(self, serializer):
+        """Made only on Save or Send (owner, 12 Nov 2026): `lines` [{order_line, qty}] are the corrections made on the
+        preview, `send: true` hands it to the warehouse in the same step."""
         d = serializer.validated_data
-        serializer.instance = PickListService.create(warehouse=d["warehouse"], orders=list(d.get("orders", [])), notes=d.get("notes", ""))
+        rows = self.request.data.get("lines")
+        quantities = {str(r.get("order_line")): r.get("qty") for r in rows} if isinstance(rows, list) else None
+        pl = PickListService.create(warehouse=d["warehouse"], orders=list(d.get("orders", [])), notes=d.get("notes", ""), quantities=quantities)
+        if self.request.data.get("send") in (True, "true", "1", 1):
+            if not (self.request.membership.is_owner or self.request.membership.has_perm("delivery.change_load_form")):
+                raise DomainError("You can save the load form, not send it.", status_code=403)
+            pl = PickListService.send(pl)
+        serializer.instance = pl
+
+    @action(detail=False, methods=["get"])
+    def preview(self, request):
+        """What Create load form would put on the form for one order, nothing saved: per item the order's pending
+        quantity, what to pick and from which batches, and what the warehouse holds free now."""
+        from apps.inventory.models import Warehouse
+        from apps.inventory.services import StockService
+        from apps.sales.models import SalesOrder
+
+        wh = Warehouse.objects.filter(pk=request.query_params.get("warehouse")).first()
+        order = SalesOrder.objects.filter(pk=request.query_params.get("order")).select_related("customer").first()
+        if wh is None or order is None:
+            raise DomainError("Choose the warehouse and the order.", status_code=400)
+        if order.status not in ("confirmed", "partially_delivered") or order.warehouse_id != wh.pk:
+            raise DomainError("Select a confirmed order from this warehouse.")
+        rows = {}
+        for p in PickListService.plan(warehouse=wh, order=order):
+            ol = p["order_line"]
+            r = rows.setdefault(str(ol.pk), {"order_line": str(ol.pk), "variant": str(ol.variant_id), "variant_name": ol.variant.name, "sku": ol.variant.sku,
+                                             "pending": str(p["pending"]), "qty": Decimal("0"), "batches": [],
+                                             "available": str(StockService.available(ol.variant, wh))})
+            r["qty"] += p["qty"]
+            r["batches"].append({"batch_no": p["batch"].batch_no if p["batch"] else "", "expiry": p["batch"].expiry_date.isoformat() if p["batch"] and p["batch"].expiry_date else None, "qty": str(p["qty"])})
+        for r in rows.values():
+            r["qty"] = str(r["qty"])
+        return Response({"order": str(order.pk), "order_number": order.number, "customer_name": order.customer.name, "lines": list(rows.values())})
 
     @action(detail=True, methods=["post"])
     def picks(self, request, pk=None):
