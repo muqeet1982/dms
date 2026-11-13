@@ -125,6 +125,8 @@ def test_case_b_a_full_return_credits_what_was_charged_and_reads_returned_not_pa
     assert D(cn["total"]) == D("270") and D(cn["discount"]) == D("30"), "credited what was charged, not the list price"
     i = api.get(f"/api/v1/invoices/{inv['id']}").data
     assert i["status"] == "returned" and D(i["cash_paid"]) == 0 and D(i["credited_amount"]) == D("270") and D(i["balance"]) == 0
+    on_order = api.get(f"/api/v1/sales-orders/{_o['id']}").data["invoices"][0]
+    assert D(on_order["cash_paid"]) == 0 and D(on_order["credited_amount"]) == D("270") and D(on_order["balance"]) == 0, "the order page: credited, not paid (TDN-SO-00346)"
     assert _on_hand(tenant, wh, v) == before, "restocked"
     gl = _gl(tenant, cn["id"])
     assert gl["Sales Returns"] == D("300")

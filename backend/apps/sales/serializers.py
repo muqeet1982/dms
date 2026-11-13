@@ -239,7 +239,9 @@ class SalesOrderSerializer(SalesOrderListSerializer):
         return {"lat": float(obj.gps_lat), "lng": float(obj.gps_lng)} if obj.gps_lat is not None else None
 
     def get_invoices(self, obj):
-        return [{"id": str(i.id), "number": i.number, "status": i.status, "total": str(i.total), "paid_amount": str(i.paid_amount)} for i in obj.invoices.all()]
+        # paid_amount counts credit as settled (returns are credit, never payment): show cash and credit apart
+        return [{"id": str(i.id), "number": i.number, "status": i.status, "total": str(i.total), "paid_amount": str(i.paid_amount),
+                 "cash_paid": str(i.cash_paid), "credited_amount": str(i.credited_amount), "balance": str(i.balance)} for i in obj.invoices.all()]
 
     def get_delivery_notes(self, obj):
         return [{"id": str(d.id), "number": d.number, "status": d.status, "trip": d.trip.number if d.trip_id else None, "delivered_at": d.delivered_at, "invoiced": getattr(d, "invoice", None) is not None, "invoice_number": d.invoice.number if getattr(d, "invoice", None) is not None else ""} for d in obj.delivery_notes.all()]
