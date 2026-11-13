@@ -3,7 +3,7 @@
 Written for: the AI/developer building the React Native (Expo) mobile app for the Distribution Management SaaS.
 Everything the app needs — authentication, tenant selection, every endpoint with payloads, push notifications,
 offline sync rules and worked examples — is in this file. The backend is **live** and seeded with demo data.
-**Document version: 10 Oct 2026 (rev 10)** — this is the single source of truth; §14 lists what changed since rev 1.
+**Document version: 13 Nov 2026 (rev 12)** — this is the single source of truth; §14 lists what changed since rev 1.
 
 | Item | Value |
 | --- | --- |
@@ -463,6 +463,7 @@ out_for_delivery, delivered`.
 | `POST /api/v1/trips/{id}/start` `{ odometer_start }` | **Dispatch = stock out**; orders → `dispatched`; driver gets a push |
 | `POST /api/v1/trips/{id}/close` `{ odometer_end, fuel_amount, expense_amount, override:false, damage_reason? }` | Returns go back to stock, damaged → adjustment, cash reconciled. `422` with `errors.reconciliation` / `errors.pending` if it doesn't reconcile (retry with `override: true` if the user has `inventory.approve_adjustment`) |
 | `POST /api/v1/trips/{id}/cancel` `{ reason }` | Before start only |
+| `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` | **Cancel a delivery note not yet on a trip** (13 Nov 2026): only while `status` is `pending` or `loaded` and the note is on no trip (`422 on_trip` / `422 not_pending`). What the warehouse issued goes back to stock, the note reads `cancelled`, the order goes back to `confirmed`. A posted invoice stays: the office then raises a credit note on it, and once it is fully credited the order closes as `cancelled`; until then a new load form for that order is refused with `422 awaiting_credit_note`. Show the button only when the note's `can_cancel` is true **and** `me.pages.delivery_notes.extras.cancel` is on |
 
 ### 7.4 Warehouse scanning screens
 
@@ -696,5 +697,8 @@ the diff so an app built against the first version knows what to touch.
 | **Scanning (rev 11)** | The barcode **on a carton** now resolves: a 14-digit GTIN-14 answers with the unit's product and `unit: "box"` / `qty_per_scan: packing`. Nothing to register — it is read out of the number. Keep the existing rule for the rest: a unit UPC counts one piece, the **item code** printed on the carton counts one carton, and scanning the same thing again adds to the row already open for it | §7.4 |
 | **Scanning (rev 11)** | `POST /goods-receipts/{id}/scans` and `POST /pick-lists/{id}/scans` take the quantity from the label itself, so one carton scan counts `packing` units in the app exactly as it does on the web. Sending `qty` multiplies that — `{code, qty: 3}` on a carton code is three cartons | §7.4 |
 | **Dates (rev 11)** | Show and take dates as **DD/MM/YYYY**. The API is unchanged — every date in a request or a response is ISO `YYYY-MM-DD` (datetimes ISO-8601 with an offset) — this is a display and keypad matter only. The web app no longer uses a native date picker for this reason: an en-US device reads MM/DD/YYYY and silently swapped day and month. Format on the way out, parse on the way in, and never send what the user typed straight through | §3 |
+| **Delivery (rev 12)** | A **whole refusal at the door now settles when the stop is saved**: send `failed: true` **with `refused: true`** (or every line `qty_delivered: 0`, `qty_returned` = loaded). Good units go back on the shelf, a posted invoice is credited in full by a credit note (`credit_note` on the response), a draft is cancelled, the note reads `returned` and the order `rejected`; `deliver-again` then answers `422`. `failed: true` alone now means only **could not deliver** (shop closed): the goods stay on the note for Deliver again. When the driver marks a stop failed, ask which: Customer refused / Could not deliver | §6.1 |
+| **Delivery (rev 12)** | A sales order can now reach **`rejected`** from a stop (refused at the door), `rejection_reason` "Customer refused DN-…". Treat it as closed, like `cancelled` | order lists, §6 |
+| **Delivery (rev 12)** | New staff action `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` for a note not yet on a trip; notes carry **`can_cancel`**, and the page extra `delivery_notes.cancel` gates it. Optional for the app — the office does this on the web | §7.3 |
 
 Questions or a missing endpoint: check `https://dms.invoiceflow.pk/api/docs/` first — it is generated from the running code.
