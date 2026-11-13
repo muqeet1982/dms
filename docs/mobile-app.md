@@ -427,7 +427,7 @@ Offline: queue the multipart request with an `Idempotency-Key`; store the signat
 | `POST …/{id}/confirm` `{ "override_credit": false, "allow_partial": false }` | Credit + stock check, reserve stock. Returns the order; if it lands `on_hold_credit`/`on_hold_stock` read `hold_reason`. `override_credit` needs `sales.approve_credit_hold` |
 | `GET …/{id}/availability` | Per-line available/short |
 | `POST …/{id}/allocate` `{ allocations:[{ line_id, qty, batch? }] }` | Manual allocation |
-| `POST …/{id}/hold` `{ reason }` / `…/reject` `{ reason }` / `…/cancel` `{ reason }` | |
+| `POST …/{id}/hold` `{ reason }` / `…/reject` `{ reason }` / `…/cancel` `{ reason }` | **Cancel is refused once the order has a posted invoice** (13 Nov 2026): `422 invoiced`, `detail` says what to do instead — cancel the delivery note and credit the invoice (before a trip), or record the stop as Customer refused (on a trip). A draft invoice does not stop it. Hide Cancel when any of the order's `invoices[]` is neither `draft` nor `cancelled` |
 | `POST …/{id}/mark-delivered` `{ receiver_name?, cash_collected?, lines?:[{ order_line, qty, batch? }] }` | Deliver without a trip (counter sale): stock out + delivery note + invoice in one step. Needs `delivery.complete_delivery` |
 | `GET …/{id}/pdf` | Order PDF |
 
@@ -700,5 +700,6 @@ the diff so an app built against the first version knows what to touch.
 | **Delivery (rev 12)** | A **whole refusal at the door now settles when the stop is saved**: send `failed: true` **with `refused: true`** (or every line `qty_delivered: 0`, `qty_returned` = loaded). Good units go back on the shelf, a posted invoice is credited in full by a credit note (`credit_note` on the response), a draft is cancelled, the note reads `returned` and the order `rejected`; `deliver-again` then answers `422`. `failed: true` alone now means only **could not deliver** (shop closed): the goods stay on the note for Deliver again. When the driver marks a stop failed, ask which: Customer refused / Could not deliver | §6.1 |
 | **Delivery (rev 12)** | A sales order can now reach **`rejected`** from a stop (refused at the door), `rejection_reason` "Customer refused DN-…". Treat it as closed, like `cancelled` | order lists, §6 |
 | **Delivery (rev 12)** | New staff action `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` for a note not yet on a trip; notes carry **`can_cancel`**, and the page extra `delivery_notes.cancel` gates it. Optional for the app — the office does this on the web | §7.3 |
+| **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/cancel` answers **`422 invoiced`** for an order with a posted invoice (it used to cancel the invoice silently). Hide the button when any `invoices[]` entry is neither `draft` nor `cancelled`; show `detail` if the server refuses | §7.x orders |
 
 Questions or a missing endpoint: check `https://dms.invoiceflow.pk/api/docs/` first — it is generated from the running code.

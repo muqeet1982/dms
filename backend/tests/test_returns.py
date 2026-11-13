@@ -94,13 +94,16 @@ def test_case_a_customer_rejected_reverses_the_sale_with_no_return_and_no_paymen
     assert D(api.get(f"/api/v1/customers/{cust.id}").data["outstanding"]) == 0
 
 
-def test_cancelling_an_order_takes_its_unpaid_invoice_and_a_return_cannot_count_the_goods_twice(api, tenant, shop):
+def test_a_billed_order_is_not_cancelled_and_a_return_cannot_count_the_goods_twice(api, tenant, shop):
+    """A billed order is not cancelled (owner, 13 Nov 2026): cancelling it quietly cancelled its posted invoice. Its
+    delivery note is cancelled and the invoice credited instead (tests/test_scenario_2_credit_note.py)."""
     wh, _sup, v, cust = shop
     before = _on_hand(tenant, wh, v)
     o, inv = _issued_invoice(api, wh, cust, v)
-    assert api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer changed mind"}, format="json").status_code == 200
-    assert api.get(f"/api/v1/invoices/{inv['id']}").data["status"] == "cancelled", "the invoice goes with its order"
-    assert _on_hand(tenant, wh, v) == before
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer changed mind"}, format="json")
+    assert r.status_code == 422 and r.data["type"] == "invoiced", r.content
+    assert api.get(f"/api/v1/invoices/{inv['id']}").data["status"] == inv["status"], "the invoice is untouched"
+    assert _on_hand(tenant, wh, v) < before, "the goods stay issued"
 
     o2, inv2 = _issued_invoice(api, wh, cust, v)
     with tenant_context(tenant):

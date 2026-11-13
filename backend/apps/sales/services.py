@@ -739,6 +739,8 @@ class OrderService:
             raise DomainError("Delivered or invoiced orders cannot be cancelled; use a return.")
         if order.status in ("cancelled", "rejected"):
             raise DomainError("Order already closed.")
+        if final_status == "cancelled":
+            OrderService._refuse_cancel_when_billed(order)
         # The order's invoice goes with it: cancelling TDN-SO-00076 left its invoice on the books, and a return then
         # put the goods in stock a second time (29 Oct 2026). Money received or an FBR filing makes it a return.
         live = list(order.invoices.exclude(status="cancelled"))
@@ -769,6 +771,26 @@ class OrderService:
             OrderService._set(order, "cancelled", "cancelled", {"reason": reason})
             emit("order.cancelled", order=order)
         return order
+
+    @staticmethod
+    def _refuse_cancel_when_billed(order):
+        """
+        A billed order is not cancelled: its posted invoice is settled by a credit note (owner, 13 Nov 2026: "if not
+        needed remove it"). Before a trip the delivery note is cancelled and the invoice credited (Scenario 2); on the road
+        the stop is recorded as Customer refused, which credits it. Cancelling the order quietly cancelled the invoice.
+        """
+        billed = next((i for i in order.invoices.exclude(status__in=("draft", "cancelled")).select_related("delivery_note", "delivery_note__trip")), None)
+        if billed is None:
+            return
+        dn = billed.delivery_note
+        on_trip = dn is not None and dn.trip_id and dn.trip.status != "cancelled"
+        if dn is not None and dn.status in ("pending", "loaded") and not on_trip:
+            how = f"cancel its delivery note {dn.number}, then raise a credit note on {billed.number}"
+        elif dn is not None and dn.status in ("pending", "loaded", "dispatched") and on_trip:
+            how = f"record {dn.number} as Customer refused when the trip reports back — that credits {billed.number}"
+        else:
+            how = f"settle {billed.number} with a credit note"
+        raise DomainError(f"{order.number} is billed on {billed.number}: {how}.", code="invoiced")
 
     @staticmethod
     @transaction.atomic

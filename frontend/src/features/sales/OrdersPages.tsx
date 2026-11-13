@@ -109,6 +109,7 @@ export function OrderDetailPage() {
   // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
   const editable = ["draft", "submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"].includes(o.status)
     || (["confirmed", "issued", "dispatched"].includes(o.status) && (Boolean(isOwner) || can("sales.edit_confirmed_order")) && !(o.invoices || []).length);
+  const billed = (o.invoices || []).some((i: any) => !["draft", "cancelled"].includes(i.status));
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   // a stop that did not reach the customer waits for the office: Deliver again (same goods, same invoice) or
   // Customer rejected — a second delivery beside it would bill the order twice
@@ -137,8 +138,9 @@ export function OrderDetailPage() {
           {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
-          {/* Cancel is the one way to drop an order: no Reject, no Delete (owner, 12 Nov 2026, Scenario 1); Customer rejected only for goods refused at the door */}
-          {(["draft", "submitted", "under_review", "on_hold"].includes(o.status) ? page.delete
+          {/* Cancel is the one way to drop an order: no Reject, no Delete (owner, 12 Nov 2026, Scenario 1); Customer rejected only for goods refused at the door.
+              A billed order has no Cancel (owner, 13 Nov 2026): its delivery note is cancelled and the invoice credited, or the stop is recorded as Customer refused */}
+          {!billed && (["draft", "submitted", "under_review", "on_hold"].includes(o.status) ? page.delete
    : ["confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched"].includes(o.status) ? (isOwner || can("sales.cancel_confirmed_order"))
    : false) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("cancel")}>Cancel</button>}{failedDn && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("rejected")}><i className="ti ti-hand-stop me-1" />Customer rejected</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/sales-orders/${o.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>

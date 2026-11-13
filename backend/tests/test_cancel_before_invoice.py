@@ -81,12 +81,11 @@ def test_cancel_after_the_warehouse_issued_brings_the_goods_home(api, tenant):
     assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0 and p["credit_notes"] == 0, p
 
 
-def test_scenario_2_cancel_after_the_invoice_before_dispatch(api, tenant):
-    """Owner's Scenario 2: here an invoice is raised on what the warehouse issued, so the goods are issued first.
-    Cancelled before any trip: the invoice is cancelled and its entries come off the books, the goods come home, the
-    order closes as Cancelled. No credit note, no trip."""
-    from apps.accounting.models import JournalLine
-    from apps.sales.models import CreditNote, SalesInvoice
+def test_scenario_2_a_billed_order_has_no_cancel(api, tenant):
+    """Owner's Scenario 2, as restated 13 Nov 2026: once the invoice is posted the order is not cancelled — that quietly
+    cancelled the invoice. Its delivery note is cancelled and the invoice credited (tests/test_scenario_2_credit_note.py);
+    the refusal says so and changes nothing."""
+    from apps.sales.models import SalesInvoice
 
     wh, _s, v, cust = seed_basic(tenant)
     before = _stock(tenant, v, wh)
@@ -94,32 +93,16 @@ def test_scenario_2_cancel_after_the_invoice_before_dispatch(api, tenant):
     issue_order(api, o["id"])
     inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": True}, format="json").data[0]
     assert inv["status"] == "posted"
-
-    from apps.accounting.models import GL_LIVE
-    from apps.partners.services import CustomerService, PartnerLedgerService
-
-    with tenant_context(tenant):
-        assert PartnerLedgerService.balance("customer", cust.id) == D(inv["total"]), "the invoice was on the customer's account"
-
     r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
-    assert r.status_code == 200 and r.data["status"] == "cancelled", "Sale Order Status: Cancelled"
-    assert _stock(tenant, v, wh) == before, "Reserved Stock: Released · Available Stock: Restored"
+    assert r.status_code == 422 and r.data["type"] == "invoiced", r.content
+    assert "cancel its delivery note" in r.data["detail"] and inv["number"] in r.data["detail"], r.data["detail"]
     with tenant_context(tenant):
-        assert SalesInvoice.objects.get(pk=inv["id"]).status == "cancelled", "Invoice Status: Cancelled"
-        assert CreditNote.objects.count() == 0, "cancelled, not returned"
-        net = {}
-        for l in JournalLine.objects.filter(entry__source_id=inv["id"], entry__status__in=GL_LIVE).select_related("account"):
-            net[l.account.code] = net.get(l.account.code, D("0")) + l.debit - l.credit
-        assert all(x == 0 for x in net.values()), f"its entries are off the books: {net}"
-        assert PartnerLedgerService.balance("customer", cust.id) == 0 and CustomerService.outstanding(cust) == 0, "the customer owes nothing"
-        from apps.delivery.models import DeliveryNote
-
-        assert not DeliveryNote.objects.filter(order_id=o["id"], trip__isnull=False).exists(), "no dispatch"
-    p = _paperwork(tenant, o["id"])
-    assert p["live_forms"] == 0 and p["live_notes"] == 0 and p["invoices"] == 0 and p["live_holds"] == 0, p
+        assert SalesInvoice.objects.get(pk=inv["id"]).status == "posted", "the invoice is untouched"
+    assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 5, "the goods stay issued"
+    assert api.get(f"/api/v1/sales-orders/{o['id']}").data["status"] == "issued"
 
 
-def test_scenario_2_with_money_received_asks_for_a_return(api, tenant):
+def test_scenario_2_with_money_received_is_refused_the_same_way(api, tenant):
     wh, _s, v, cust = seed_basic(tenant)
     o = _confirmed(api, wh, v, cust, "5")
     issue_order(api, o["id"])
@@ -130,13 +113,31 @@ def test_scenario_2_with_money_received_asks_for_a_return(api, tenant):
         PaymentService.record(direction="in", partner_type="customer", partner_id=str(cust.id), partner_name=cust.name, amount=D("100"), method="cash",
                               allocations=[{"document_type": "sales_invoice", "document_id": inv["id"], "amount": D("100")}])
     r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
-    assert r.status_code == 422 and r.data["type"] == "invoice_settled", r.content
+    assert r.status_code == 422 and r.data["type"] == "invoiced", r.content
+
+
+def test_a_draft_invoice_does_not_stop_the_cancel(api, tenant):
+    """A draft was never on the books: the order is cancelled and the draft with it."""
+    from apps.sales.models import SalesInvoice
+
+    wh, _s, v, cust = seed_basic(tenant)
+    before = _stock(tenant, v, wh)
+    o = _confirmed(api, wh, v, cust, "5")
+    issue_order(api, o["id"])
+    inv = api.post(f"/api/v1/sales-orders/{o['id']}/invoice", {"post": False}, format="json").data[0]
+    assert inv["status"] == "draft"
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/cancel", {"reason": "customer asked"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "cancelled", r.content
+    with tenant_context(tenant):
+        assert SalesInvoice.objects.get(pk=inv["id"]).status == "cancelled"
+    assert _stock(tenant, v, wh) == before
 
 
 def test_scenario_3_cancel_on_the_road_the_trip_carries_on(api, tenant):
-    """Owner's Scenario 3: invoiced, on a started trip with another customer's order, not yet delivered. Cancelled: its
-    note and invoice are cancelled, its goods come back into the warehouse, the order closes, and the trip stays on the
-    road for the other stop, completing when that one is delivered."""
+    """Owner's Scenario 3: invoiced, on a started trip with another customer's order, not yet delivered. The order is not
+    cancelled (13 Nov 2026): the stop is recorded as Customer refused, which credits the invoice, puts its goods back in
+    the warehouse and closes the order as Rejected. The trip stays on the road for the other stop, completing when that
+    one is delivered."""
     from apps.delivery.models import DeliveryNote, Driver
     from apps.partners.models import Customer
     from apps.sales.models import CreditNote, SalesInvoice
@@ -159,12 +160,16 @@ def test_scenario_3_cancel_on_the_road_the_trip_carries_on(api, tenant):
     assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 8, "8 pcs on the vehicle"
 
     r = api.post(f"/api/v1/sales-orders/{a['id']}/cancel", {"reason": "customer cancelled while the van was out"}, format="json")
-    assert r.status_code == 200 and r.data["status"] == "cancelled", r.content
+    assert r.status_code == 422 and r.data["type"] == "invoiced" and "Customer refused" in r.data["detail"], r.content
     with tenant_context(tenant):
-        assert DeliveryNote.objects.get(order_id=a["id"]).status == "cancelled"
-        assert SalesInvoice.objects.get(pk=invs[a["id"]]).status == "cancelled"
-        assert CreditNote.objects.count() == 0
-    assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 3, "the cancelled 5 are back in the warehouse"
+        na = DeliveryNote.objects.get(order_id=a["id"])
+    r = api.post(f"/api/v1/delivery-notes/{na.pk}/deliver", {"failed": True, "refused": True, "failure_reason": "customer cancelled while the van was out"}, format="json")
+    assert r.status_code == 200 and r.data["status"] == "returned", r.content
+    with tenant_context(tenant):
+        assert SalesInvoice.objects.get(pk=invs[a["id"]]).balance == 0, "credited, not cancelled"
+        assert CreditNote.objects.filter(invoice_id=invs[a["id"]], status="posted").count() == 1
+    assert api.get(f"/api/v1/sales-orders/{a['id']}").data["status"] == "rejected"
+    assert _stock(tenant, v, wh)["on_hand"] == before["on_hand"] - 3, "the refused 5 are back in the warehouse"
     assert _stock(tenant, v, wh)["available"] == before["available"] - 3
     t = api.get(f"/api/v1/trips/{trip.data['id']}").data
     assert t["status"] == "out_for_delivery", "the trip carries on"
