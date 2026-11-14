@@ -1759,13 +1759,15 @@ class InvoiceService:
         Discounts Allowed can never drift from what is claimed or what the reports show.
 
         * A salon (owner, 8 Nov 2026) buys at the R.P, its discount off the R.P. Still at or above the T.P after the
-          discount, the line is the distributor's alone ("above_tp"). Below it, the salon bracket its discount %
-          falls in gives the company's % of the part below the T.P, or of the whole discount (setting
-          `salon_share_basis`); no bracket for that % = the distributor's alone ("no_bracket").
+          discount, the line is the distributor's alone ("above_tp"). Below it (owner, 14 Nov 2026), the distributor
+          bears a fixed `salon_distributor_pct` (3) % of the R.P — whatever the discount, 20%, 25% or 30% — and the
+          company (the product's manufacturer) the rest of the discount ("below_tp"; share_pct = the company's points
+          of the R.P). R.P 650, T.P 550, 20% off = 130: distributor 19.50, company 110.50 (17%). Lines posted before
+          keep the bracket rule they were split by ("bracket", "no_bracket").
         * Anyone else: the discount table row for the invoice's discount % (5% = 3 + 2), the company's points OF THE
           SALE ("table"), so a product's own discount (not co-funded) never inflates the claim.
         """
-        from .models import DiscountContribution, SalonDiscountBracket
+        from .models import DiscountContribution
 
         out = []
         lines = [l for l in inv.lines.select_related("variant", "variant__product__supplier", "variant__product__brand__supplier") if (l.discount_amount or 0) > 0]
@@ -1777,8 +1779,7 @@ class InvoiceService:
             return product.supplier or (product.brand.supplier if product.brand_id else None)
 
         if inv.customer.type == "salon":
-            brackets = list(SalonDiscountBracket.objects.filter(is_active=True).order_by("up_to_pct"))
-            whole = get_current_tenant().setting("salon_share_basis") == "whole"
+            ours_pct = Decimal(str(get_current_tenant().setting("salon_distributor_pct") or 0))
             for line in lines:
                 gross = q4(line.qty * line.unit_price)
                 if gross <= 0:
@@ -1787,17 +1788,15 @@ class InvoiceService:
                 listed = line.tp if line.tp else line.unit_price          # the R.P as sold, tax included on a tax invoice
                 tp = line.variant.sale_price or Decimal("0")
                 off = disc / gross                                          # the share of the R.P given away
-                pct = (off * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 if tp <= 0 or listed * (1 - off) >= tp - Decimal("0.005"):
                     out.append((line, supplier_of(line), Decimal("0"), "above_tp", Decimal("0")))
                     continue
-                bracket = next((b for b in brackets if b.up_to_pct >= pct), None)
-                if bracket is None or supplier_of(line) is None:
-                    out.append((line, supplier_of(line), Decimal("0"), "no_bracket", Decimal("0")))
-                    continue
-                # the part of the discount down to the T.P is the distributor's in every case; below it is shared
-                shared = disc if whole else min(disc, max(Decimal("0"), disc - gross * (1 - tp / listed)))
-                out.append((line, supplier_of(line), round2(shared * bracket.company_pct / 100), "bracket", bracket.company_pct))
+                supplier = supplier_of(line)
+                # the distributor's fixed points of the R.P, never more than the discount itself
+                ours = min(round2(gross * ours_pct / 100), disc)
+                company = round2(disc - ours) if supplier is not None else Decimal("0")
+                share = (company / gross * 100).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+                out.append((line, supplier, company, "below_tp", share))
             return out
 
         row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first() if inv.discount_pct and inv.discount_pct > 0 else None

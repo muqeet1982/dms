@@ -529,6 +529,7 @@ def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=
         company = l.company_discount
         if l.discount_rule:
             rule = {"table": f"Discount Table (Company {pct(l.share_pct)} Of Sale)", "above_tp": "Salon: At Or Above T.P",
+                    "below_tp": f"Salon: Below T.P (Company {pct(l.share_pct)} Of R.P)",
                     "bracket": f"Salon Bracket (Company Bears {pct(l.share_pct)})", "no_bracket": "Salon: No Bracket Set"}[l.discount_rule]
         else:
             amount, qty = claimed.get((l.invoice_id, l.variant_id), (Z, Z))

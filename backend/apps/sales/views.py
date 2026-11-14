@@ -824,18 +824,18 @@ class DiscountContributionViewSet(TenantModelViewSet):
 
 
 class SalonDiscountBracketViewSet(TenantModelViewSet):
-    """Salon discount sharing (Settings): who bears a salon's discount below the T.P, bracket by bracket."""
+    """Salon discount sharing (Settings): the distributor's fixed % below the T.P, and the discount %s offered for salons."""
     serializer_class = SalonDiscountBracketSerializer
-    perm_map = page_perms("settings_discount_contributions", {"basis": "settings.view_discount_contribution"})
+    perm_map = page_perms("settings_discount_contributions", {"share": "settings.view_discount_contribution"})
     pagination_class = None
     queryset = SalonDiscountBracket.objects.all()
-    BASES = ("below_tp", "whole")
 
     @action(detail=False, methods=["get", "post"])
-    def basis(self, request):
+    def share(self, request):
         """
-        `GET|POST /api/v1/settings/salon-discount-sharing/basis` — what a bracket's company % is a share of: "below_tp",
-        the part of the discount below the T.P, or "whole", the whole discount. Changing it needs the page's Edit.
+        `GET|POST /api/v1/settings/salon-discount-sharing/share {distributor_pct}` — what the distributor bears of a
+        salon line sold below the T.P, in % of the R.P (owner, 14 Nov 2026: 3); the company bears the rest. Changing it
+        needs the page's Edit, and reaches invoices posted from then on.
         """
         from apps.core.permissions import has_tenant_perm
         from apps.core.tenancy import get_current_tenant
@@ -844,12 +844,15 @@ class SalonDiscountBracketViewSet(TenantModelViewSet):
         if request.method == "POST":
             if not has_tenant_perm(request, "settings.change_discount_contribution"):
                 raise DomainError("You may not change who bears a salon's discount.", status_code=403, code="forbidden")
-            value = request.data.get("basis")
-            if value not in self.BASES:
-                raise DomainError("Choose the part below the T.P or the whole discount.", status_code=400, code="bad_basis")
-            tenant.settings = {**(tenant.settings or {}), "salon_share_basis": value}
+            try:
+                value = Decimal(str(request.data.get("distributor_pct")))
+            except Exception:
+                value = Decimal("-1")
+            if not Decimal("0") <= value <= Decimal("100"):
+                raise DomainError("The distributor's share must be from 0 to 100% of the R.P.", status_code=400, code="bad_share")
+            tenant.settings = {**(tenant.settings or {}), "salon_distributor_pct": float(value)}
             tenant.save(update_fields=["settings"])
-        return Response({"basis": tenant.setting("salon_share_basis")})
+        return Response({"distributor_pct": f"{Decimal(str(tenant.setting('salon_distributor_pct') or 0)).normalize():f}"})
 
 
 class CompanyClaimViewSet(DocumentViewSet):

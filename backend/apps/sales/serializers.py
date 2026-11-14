@@ -47,31 +47,29 @@ class DiscountContributionSerializer(serializers.ModelSerializer):
 
 
 class SalonDiscountBracketSerializer(serializers.ModelSerializer):
-    distributor_pct = serializers.SerializerMethodField()
+    """A discount % offered for salons (owner, 14 Nov 2026: the sharing is one fixed distributor % since, not per bracket)."""
 
     class Meta:
         model = SalonDiscountBracket
-        fields = ["id", "up_to_pct", "company_pct", "distributor_pct", "is_active"]
-
-    def get_distributor_pct(self, obj):
-        return str(Decimal("100") - obj.company_pct)
+        fields = ["id", "up_to_pct", "is_active"]
 
     def validate(self, attrs):
         inst = self.instance
         up_to = attrs.get("up_to_pct", getattr(inst, "up_to_pct", None))
-        comp = attrs.get("company_pct", getattr(inst, "company_pct", None))
-        if up_to is None or comp is None:
-            raise serializers.ValidationError("Discount up to % and company bears % are both required.")
+        if up_to is None:
+            raise serializers.ValidationError("Give the discount %.")
         if not Decimal("0") < Decimal(up_to) <= Decimal("100"):
-            raise serializers.ValidationError("Discount up to % must be above 0 and at most 100.")
-        if not Decimal("0") <= Decimal(comp) <= Decimal("100"):
-            raise serializers.ValidationError("Company bears % must be from 0 to 100.")
+            raise serializers.ValidationError("The discount % must be above 0 and at most 100.")
         clash = SalonDiscountBracket.objects.filter(up_to_pct=up_to)
         if inst is not None:
             clash = clash.exclude(pk=inst.pk)
         if clash.exists():
-            raise serializers.ValidationError(f"There is already a bracket for a discount up to {Decimal(up_to).normalize():f}%.")
+            raise serializers.ValidationError(f"{Decimal(up_to).normalize():f}% is already offered.")
         return attrs
+
+    def create(self, validated_data):
+        validated_data.setdefault("company_pct", Decimal("0"))   # no longer read (the fixed distributor % decides)
+        return super().create(validated_data)
 
 
 class OrderLineSerializer(serializers.ModelSerializer):

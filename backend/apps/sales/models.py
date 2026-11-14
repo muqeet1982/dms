@@ -222,7 +222,8 @@ class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     # who bears this line's discount, written when the invoice posts (owner, 8 Nov 2026: "store the discount breakdown
     # against the sale"): the company's (manufacturer's) share; the distributor bears discount_amount less it. The rule
     # says why: the discount table (non-salon), a salon sold at or above the T.P, a salon bracket, or no bracket set.
-    RULES = [("", "None"), ("table", "Discount table"), ("above_tp", "At or above T.P"), ("bracket", "Salon bracket"), ("no_bracket", "No bracket set")]
+    RULES = [("", "None"), ("table", "Discount table"), ("above_tp", "At or above T.P"), ("below_tp", "Salon below T.P"),
+             ("bracket", "Salon bracket"), ("no_bracket", "No bracket set")]   # bracket / no_bracket: lines posted before 14 Nov 2026
     company_discount = models.DecimalField(**MONEY)
     discount_rule = models.CharField(max_length=12, choices=RULES, blank=True, default="")
     share_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
@@ -364,11 +365,10 @@ class DiscountContribution(TenantModel):
 
 class SalonDiscountBracket(TenantModel):
     """
-    Salon discount sharing (owner, 8 Nov 2026). A salon buys at the R.P and its discount is off the R.P. A line still at
-    or above the T.P after the discount is the distributor's alone; below the T.P, the bracket its discount % falls in
-    says how much the company (the product's manufacturer) bears: a discount up to `up_to_pct` %, above the bracket
-    before it. What the company bears is a share of the part below the T.P, or of the whole discount (the tenant
-    setting `salon_share_basis`). A discount above every bracket is the distributor's alone.
+    A discount % offered for salons (`up_to_pct`), on top of the discount table's: the discount dropdown lists both.
+    Until 14 Nov 2026 each row was a sharing bracket ("discount up to X%: company bears Y%"); the owner's rule since is
+    one fixed distributor share below the T.P (tenant setting `salon_distributor_pct`, see InvoiceService.discount_split),
+    so `company_pct` is no longer read — kept for the rows and lines made before.
     """
     up_to_pct = models.DecimalField(max_digits=6, decimal_places=3)
     company_pct = models.DecimalField(max_digits=6, decimal_places=3)

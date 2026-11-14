@@ -424,18 +424,22 @@ export function DiscountContributionsPage() {
 }
 
 
-/** Salon discount sharing (owner, 8 Nov 2026): a salon's discount is off the R.P. At or above the T.P after it, the
- *  distributor bears it all; below the T.P, the bracket its discount % falls in says what the company bears. */
+/** Salon discount sharing (owner, 14 Nov 2026): a salon's discount is off the R.P. At or above the T.P after it, the
+ *  distributor bears it all; below the T.P, the distributor bears a fixed % of the R.P (3) and the company the rest.
+ *  The table lists the discount %s offered for salons (the discount dropdown shows them with the discount table's). */
 export function SalonDiscountSharingPage() {
   const qc = useQueryClient();
   const rights = usePage("settings_discount_contributions");
-  const basis = useQuery({ queryKey: ["salon-share-basis"], queryFn: () => api.get("/api/v1/settings/salon-discount-sharing/basis") });
+  const share = useQuery({ queryKey: ["salon-share"], queryFn: () => api.get("/api/v1/settings/salon-discount-sharing/share") });
+  const [value, setValue] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const save = async (value: string) => {
+  const shown = value ?? (share.data as any)?.distributor_pct ?? "";
+  const save = async () => {
     setSaving(true);
     try {
-      await api.post("/api/v1/settings/salon-discount-sharing/basis", { basis: value });
-      qc.invalidateQueries({ queryKey: ["salon-share-basis"] });
+      await api.post("/api/v1/settings/salon-discount-sharing/share", { distributor_pct: shown });
+      qc.invalidateQueries({ queryKey: ["salon-share"] });
+      setValue(null);
       toast.success("Saved");
     } catch (e: any) {
       toast.error(e.message);
@@ -443,7 +447,6 @@ export function SalonDiscountSharingPage() {
       setSaving(false);
     }
   };
-  const pct = (v: any) => `${Number(v)}%`;
   return (
     <CrudPage
       page="settings_discount_contributions"
@@ -451,22 +454,20 @@ export function SalonDiscountSharingPage() {
       crumbs={[{ label: "Settings" }, { label: "Salon discount sharing" }]}
       endpoint="/api/v1/settings/salon-discount-sharing"
       intro={<div className="card mb-3"><div className="card-body py-2"><div className="row g-2 align-items-end">
-        <Field label="Company Bears Its % Of" col="col-md-4">
-          <select className="form-select" value={(basis.data as any)?.basis || "below_tp"} disabled={saving || !rights.edit} onChange={(e) => save(e.target.value)}>
-            <option value="below_tp">The Part Of The Discount Below T.P</option>
-            <option value="whole">The Whole Discount</option>
-          </select>
+        <Field label="Distributor bears below T.P (% of R.P)" col="col-md-4">
+          <div className="input-group">
+            <input type="number" step="0.01" min="0" max="100" className="form-control text-end" value={shown} readOnly={!rights.edit} onChange={(e) => setValue(e.target.value)} />
+            <span className="input-group-text">%</span>
+          </div>
         </Field>
+        {rights.edit && <div className="col-auto"><button className="btn btn-primary" disabled={saving || value === null} onClick={save}>Save</button></div>}
       </div></div></div>}
       columns={[
-        { key: "up_to_pct", header: "Discount Up To", render: (r: any) => pct(r.up_to_pct) },
-        { key: "company_pct", header: "Company Bears", render: (r: any) => pct(r.company_pct) },
-        { key: "distributor_pct", header: "Distributor Bears", render: (r: any) => pct(r.distributor_pct) },
+        { key: "up_to_pct", header: "Salon discount", render: (r: any) => `${Number(r.up_to_pct)}%` },
         { key: "is_active", header: "Active", render: (r: any) => (r.is_active ? "Yes" : "No") },
       ]}
       fields={[
-        { name: "up_to_pct", label: "Discount Up To %", type: "number", required: true },
-        { name: "company_pct", label: "Company Bears %", type: "number", required: true },
+        { name: "up_to_pct", label: "Salon discount %", type: "number", required: true },
         { name: "is_active", label: "Active", type: "checkbox", default: true },
       ]}
       onSaved={() => qc.invalidateQueries({ queryKey: ["discount-rates"] })}
