@@ -362,9 +362,10 @@ export function PickListFormPage() {
           </table>
           <Field label="Notes" col="col-12"><textarea className="form-control" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
           <div className="d-flex justify-content-end gap-2 mt-2">
-            <button className="btn btn-light" disabled={!!busy} onClick={() => setPreview(null)}>Cancel</button>
-            <button className="btn btn-outline-primary" disabled={!!busy || nothing} onClick={() => go(false)}><i className="ti ti-device-floppy me-1" />{busy === "save" ? "Saving…" : "Save"}</button>
+            {/* owner, 14 Nov 2026: Send to warehouse, then Save, then Cancel */}
             {canSend && <button className="btn btn-primary" disabled={!!busy || nothing} onClick={() => go(true)}><i className="ti ti-send me-1" />{busy === "send" ? "Sending…" : "Send to warehouse"}</button>}
+            <button className="btn btn-outline-primary" disabled={!!busy || nothing} onClick={() => go(false)}><i className="ti ti-device-floppy me-1" />{busy === "save" ? "Saving…" : "Save"}</button>
+            <button className="btn btn-light" disabled={!!busy} onClick={() => setPreview(null)}>Cancel</button>
           </div>
         </div>
       </div>}
@@ -406,8 +407,8 @@ export function PickListDetailPage() {
       <IssueModal open={issuing} onClose={() => setIssuing(false)} picklist={p} onIssued={() => { setIssuing(false); q.refetch(); }} />
       <PageHeader title={p.number} badge={<StatusBadge status={p.status} label={p.status_label} />} crumbs={[{ label: "Load forms", to: "/app/delivery/pick-lists" }, { label: p.number }]}
         actions={<>
-          {draft && <button className="btn btn-outline-primary" disabled={saving || !dirty} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save"}</button>}
           {draft && <button className="btn btn-primary" disabled={!!busy || saving || dirty} title={dirty ? "Save your changes first" : ""} onClick={() => run("send", {}, { success: "Sent to the warehouse" })}><i className="ti ti-send me-1" />Send to warehouse</button>}
+          {draft && <button className="btn btn-outline-primary" disabled={saving || !dirty} onClick={save}><i className="ti ti-device-floppy me-1" />{saving ? "Saving…" : "Save"}</button>}
           {!draft && !issued && p.status !== "cancelled" && <button className="btn btn-success" disabled={!!busy} onClick={() => setIssuing(true)}><i className="ti ti-package-export me-1" />Issue stock</button>}
           {/* no Cancel: a load form goes with its order's Cancel (owner, 12 Nov 2026, Scenario 1); no Create dispatch: trips start from the Dispatch page */}
           <button className="btn btn-outline-secondary" onClick={() => printPdf(`/api/v1/pick-lists/${p.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => savePdf(`/api/v1/pick-lists/${p.id}/pdf`, `${p.number}.pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>

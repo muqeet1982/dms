@@ -275,13 +275,14 @@ class SalesOrderViewSet(DocumentViewSet):
         from django.db import transaction
 
         from apps.delivery.models import DeliveryNote
-        from apps.delivery.views import trip_for_delivery
 
         order = self.get_object()
-        with transaction.atomic():   # a note on no trip gets one with the delivery (owner, 11 Nov 2026), or neither happens
+        with transaction.atomic():
             dn = DeliveryNote.objects.filter(order=order, stock_out_done=True, status__in=("pending", "loaded", "dispatched")).order_by("created_at").first()
-            if dn is not None:
-                trip_for_delivery(request, dn)
+            # an order is delivered from a trip: it goes on one first (owner, 14 Nov 2026: "should not show marked delivered
+            # until sale order enter into trip") — no longer a trip made on the spot from the order
+            if request.tenant.setting("delivery_needs_trip") and (dn is None or not dn.trip_id):
+                raise DomainError(f"{order.number} is on no trip — add it to a trip first, then mark it delivered.", code="trip_required")
             order = OrderService.mark_delivered(order, receiver_name=request.data.get("receiver_name", ""), cash_collected=Decimal(str(request.data.get("cash_collected", 0) or 0)), delivered_at=request.data.get("delivered_at"))
         order.refresh_from_db()
         return Response(SalesOrderSerializer(order).data)

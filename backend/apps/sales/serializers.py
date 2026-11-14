@@ -241,7 +241,9 @@ class SalesOrderSerializer(SalesOrderListSerializer):
     def get_invoices(self, obj):
         # paid_amount counts credit as settled (returns are credit, never payment): show cash and credit apart
         return [{"id": str(i.id), "number": i.number, "status": i.status, "total": str(i.total), "paid_amount": str(i.paid_amount),
-                 "cash_paid": str(i.cash_paid), "credited_amount": str(i.credited_amount), "balance": str(i.balance)} for i in obj.invoices.all()]
+                 "cash_paid": str(i.cash_paid), "credited_amount": str(i.credited_amount), "balance": str(i.balance),
+                 "credit_notes": [{"id": str(c.id), "number": c.number, "total": str(c.total), "status": c.status} for c in i.credit_notes.all() if c.status != "cancelled"]}
+                for i in obj.invoices.prefetch_related("credit_notes")]
 
     def get_delivery_notes(self, obj):
         return [{"id": str(d.id), "number": d.number, "status": d.status, "trip": d.trip.number if d.trip_id else None, "delivered_at": d.delivered_at, "invoiced": getattr(d, "invoice", None) is not None, "invoice_number": d.invoice.number if getattr(d, "invoice", None) is not None else ""} for d in obj.delivery_notes.all()]

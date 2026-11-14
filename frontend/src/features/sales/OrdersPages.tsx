@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, datetime, fbrRateLabel, gstPct, money, otherTaxLabel, qty } from "@/lib/format";
+import { date, datetime, fbrRateLabel, gstPct, labelCase, money, otherTaxLabel, qty } from "@/lib/format";
 import { useAction, useDoc, useOptions, useWarehouses } from "@/lib/hooks";
 import { usePage, usePerms } from "@/lib/perms";
 import { useAuth } from "@/lib/auth";
@@ -19,7 +19,7 @@ import { DiscountPctSelect } from "@/components/documents/DiscountPick";
 import { PlainFooterRows, TaxFooterRows } from "@/components/documents/TaxFooter";
 import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 import { useOverlapGuard } from "@/components/documents/OverlapGuard";
-import { Crew, crewMissing, deliveryNeedsTrip, NO_CREW, TripCrewFields } from "@/features/delivery/DeliveryPages";
+import { deliveryNeedsTrip } from "@/features/delivery/DeliveryPages";
 
 const STATUS_OPTIONS = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
 
@@ -98,12 +98,10 @@ export function OrderDetailPage() {
   const [dlg, setDlg] = useState<null | "cancel" | "hold" | "deliver" | "confirm" | "rejected" | "again" | "close">(null);
   const overlap = useOverlapGuard();
   const [deliver, setDeliver] = useState({ receiver_name: "", cash_collected: "" });
-  const [crew, setCrew] = useState<Crew>(NO_CREW);
   const avail = useQuery({ queryKey: ["availability", id], queryFn: () => api.get(`/api/v1/sales-orders/${id}/availability`), enabled: Boolean(q.data && ["submitted", "under_review", "on_hold", "on_hold_stock", "on_hold_credit", "confirmed"].includes(q.data.status)) });
   if (q.isLoading) return <Spinner />;
   const o = q.data;
   if (!o) return null;
-  const needsCrew = !o.trip && deliveryNeedsTrip();   // a delivery on no trip makes one (owner, 11 Nov 2026)
   // confirmed is editable until the warehouse starts on it — the server refuses once a load form exists
   // past confirmation an order is the owner's to change — editing issued/dispatched work pulls the goods
   // back into stock and cancels the load form / delivery note, then the office re-issues the edited lines
@@ -113,7 +111,10 @@ export function OrderDetailPage() {
   const confirmable = ["submitted", "under_review", "on_hold_credit", "on_hold_stock", "draft"].includes(o.status);
   // a stop that did not reach the customer waits for the office: Deliver again (same goods, same invoice) or
   // Customer rejected — a second delivery beside it would bill the order twice
-  const failedDn = ["issued", "dispatched", "confirmed"].includes(o.status) ? (o.delivery_notes || []).find((d: any) => ["failed", "returned"].includes(d.status)) : null;
+  // only a stop that could not be delivered: once anything of the order was delivered, or the customer refused it at the
+  // door (Returned — settled at the stop), there is nothing to send again or reject (owner, 14 Nov 2026)
+  const anyDelivered = (o.delivery_notes || []).some((d: any) => ["delivered", "partially_delivered"].includes(d.status)) || (o.lines || []).some((l: any) => Number(l.qty_delivered) > 0);
+  const failedDn = !anyDelivered && ["issued", "dispatched", "confirmed"].includes(o.status) ? (o.delivery_notes || []).find((d: any) => d.status === "failed") : null;
   const deliverAgain = async (reason?: string) => {
     try {
       await api.post(`/api/v1/delivery-notes/${failedDn.id}/deliver-again`, { reason: reason || "" }, true);
@@ -135,7 +136,8 @@ export function OrderDetailPage() {
           {o.status === "on_hold" && page.can("confirm") && <button className="btn btn-warning" disabled={!!busy} onClick={() => run("resume", {}, { success: `${o.number} resumed` })}><i className="ti ti-player-play me-1" />Resume</button>}
           {o.status === "partially_delivered" && (isOwner || can("sales.cancel_confirmed_order")) && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => setDlg("close")}><i className="ti ti-circle-off me-1" />Close Balance</button>}
           {failedDn && notesPage.can("complete") && <button className="btn btn-primary" disabled={!!busy} onClick={() => setDlg("again")}><i className="ti ti-truck-return me-1" />Deliver again</button>}
-          {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
+          {/* delivered from a trip: no Mark delivered until the order is on one (owner, 14 Nov 2026) — Add to trip comes first */}
+          {["issued", "dispatched", "partially_delivered"].includes(o.status) && !failedDn && (o.trip || !deliveryNeedsTrip()) && notesPage.can("complete") && <button className="btn btn-primary" onClick={() => setDlg("deliver")}><i className="ti ti-package-export me-1" />Mark delivered</button>}
           {o.status === "issued" && !o.trip && !failedDn && tripsPage.add && <Link to={`/app/delivery/trips/new?order=${o.id}&warehouse=${o.warehouse}`} className="btn btn-outline-primary"><i className="ti ti-truck me-1" />Add to trip</Link>}
           {o.trip && <Link to={`/app/delivery/trips/${o.trip}`} className="btn btn-outline-secondary"><i className="ti ti-truck me-1" />View trip {o.trip_number}</Link>}
           {/* Cancel is the one way to drop an order: no Reject, no Delete (owner, 12 Nov 2026, Scenario 1); Customer rejected only for goods refused at the door.
@@ -190,8 +192,35 @@ export function OrderDetailPage() {
               {o.notes && <p className="text-muted fs-13 mt-2 mb-0"><i className="ti ti-note me-1" />{o.notes}</p>}
             </div></div>
           <DocTabs model="SalesOrder" id={o.id} showMovements extra={[{ key: "deliveries", label: "Deliveries & invoices", render: () => (
-            <div className="row g-3"><div className="col-md-6"><h6 className="fs-13">Delivery notes</h6>{!o.delivery_notes.length && <p className="text-muted fs-13">None yet</p>}<ul className="list-group">{o.delivery_notes.map((d: any) => <li key={d.id} className="list-group-item d-flex justify-content-between"><Link to={`/app/delivery/notes/${d.id}`}>{d.number}</Link><span className="fs-12 text-muted">{d.trip || "no trip"} · {datetime(d.delivered_at)}</span><StatusBadge status={d.status} /></li>)}</ul></div>
-              <div className="col-md-6"><h6 className="fs-13">Invoices</h6>{!o.invoices.length && <p className="text-muted fs-13">None yet</p>}<ul className="list-group">{o.invoices.map((i: any) => <li key={i.id} className="list-group-item d-flex justify-content-between"><Link to={`/app/sales/invoices/${i.id}`}>{i.number}</Link><span className="fs-12">{money(i.total)} · paid {money(i.cash_paid ?? i.paid_amount)}{Number(i.credited_amount) > 0 && <> · credited {money(i.credited_amount)}</>}{i.balance != null && i.status !== "draft" && i.status !== "cancelled" && <> · due {money(i.balance)}</>}</span><StatusBadge status={i.status} /></li>)}</ul></div></div>) }]} />
+            <div className="row g-3">
+              <div className="col-lg-6">
+                <h6 className="fs-13 mb-2">{labelCase("delivery notes")}</h6>
+                {!o.delivery_notes.length && <p className="text-muted fs-13">None yet</p>}
+                <div className="list-group">{o.delivery_notes.map((d: any) => <div key={d.id} className="list-group-item py-2">
+                  <div className="d-flex align-items-center gap-2"><Link to={`/app/delivery/notes/${d.id}`} className="fw-semibold text-nowrap">{d.number}</Link><span className="ms-auto"><StatusBadge status={d.status} /></span></div>
+                  <div className="fs-12 text-muted mt-1 d-flex flex-wrap gap-3">
+                    <span><i className="ti ti-truck me-1" />{d.trip || labelCase("no trip")}</span>
+                    <span><i className="ti ti-clock me-1" />{d.delivered_at ? datetime(d.delivered_at) : labelCase("not delivered yet")}</span>
+                    {d.invoice_number && <span><i className="ti ti-file-invoice me-1" />{d.invoice_number}</span>}
+                  </div>
+                </div>)}</div>
+              </div>
+              <div className="col-lg-6">
+                <h6 className="fs-13 mb-2">{labelCase("invoices")}</h6>
+                {!o.invoices.length && <p className="text-muted fs-13">None yet</p>}
+                <div className="list-group">{o.invoices.map((i: any) => {
+                  const live = !["draft", "cancelled"].includes(i.status);
+                  const figs: [string, any, string?][] = [["total", i.total], ["paid", i.cash_paid ?? i.paid_amount]];
+                  if (Number(i.credited_amount) > 0) figs.push(["credited", i.credited_amount]);
+                  if (live && i.balance != null) figs.push(["due", i.balance, Number(i.balance) > 0 ? "text-danger" : "text-success"]);
+                  return <div key={i.id} className="list-group-item py-2">
+                    <div className="d-flex align-items-center gap-2"><Link to={`/app/sales/invoices/${i.id}`} className="fw-semibold text-nowrap">{i.number}</Link><span className="ms-auto"><StatusBadge status={i.status} /></span></div>
+                    <div className="d-flex flex-wrap gap-3 mt-1 fs-12">{figs.map(([k, v, cls]) => <div key={k}><div className="text-muted">{labelCase(k)}</div><div className={`fw-semibold ${cls || ""}`}>{money(v)}</div></div>)}</div>
+                    {(i.credit_notes || []).length > 0 && <div className="fs-12 mt-1 text-muted"><i className="ti ti-receipt-refund me-1" />{(i.credit_notes || []).map((c: any, n: number) => <span key={c.id}>{n > 0 && ", "}<Link to={`/app/sales/credit-notes/${c.id}`}>{c.number}</Link> {money(c.total)}</span>)}</div>}
+                  </div>;
+                })}</div>
+              </div>
+            </div>) }]} />
         </div>
         <div className="col-xl-3">
           <div className="card mb-3"><div className="card-header"><strong>Timeline</strong></div><div className="card-body">
@@ -218,8 +247,7 @@ export function OrderDetailPage() {
       <ConfirmDialog open={dlg === "cancel"} title="Cancel order" message={["issued", "dispatched"].includes(o.status) ? "The goods the warehouse issued come back into stock, and the load form and delivery note are cancelled with the order." : undefined} withReason danger confirmText="Cancel order" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("cancel", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "hold"} title="Put on hold" withReason confirmText="Hold" onClose={() => setDlg(null)} onConfirm={async (r) => { await run("hold", { reason: r }); setDlg(null); }} />
       <ConfirmDialog open={dlg === "confirm"} title="Override credit hold?" message={<>{o.hold_reason}<br />Confirming will override the credit check.</>} confirmText="Override & confirm" onClose={() => setDlg(null)} onConfirm={async () => { await run("confirm", { override_credit: true }); setDlg(null); }} />
-      <Modal open={dlg === "deliver"} title={`Mark ${o.number} delivered`} onClose={() => setDlg(null)} size={needsCrew ? undefined : "sm"} footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!!busy} onClick={async () => { const missing = needsCrew ? crewMissing(crew) : null; if (missing) return toast.error(missing); await run("mark-delivered", { receiver_name: deliver.receiver_name, cash_collected: deliver.cash_collected || 0, ...(needsCrew ? crew : {}) }, { success: "Delivered — review the draft invoice, then post it" }); setDlg(null); }}>Mark delivered</button></>}>
-        {needsCrew && <TripCrewFields crew={crew} setCrew={setCrew} />}
+      <Modal open={dlg === "deliver"} title={`Mark ${o.number} delivered`} onClose={() => setDlg(null)} size="sm" footer={<><button className="btn btn-light" onClick={() => setDlg(null)}>Cancel</button><button className="btn btn-primary" disabled={!!busy} onClick={async () => { await run("mark-delivered", { receiver_name: deliver.receiver_name, cash_collected: deliver.cash_collected || 0 }, { success: "Delivered — review the draft invoice, then post it" }); setDlg(null); }}>Mark delivered</button></>}>
         <Field label="Receiver name"><input className="form-control" value={deliver.receiver_name} onChange={(e) => setDeliver({ ...deliver, receiver_name: e.target.value })} /></Field>
         <Field label="Cash collected now" hint="Receipted on the customer — applied to the invoice once it is posted"><input type="number" step="0.01" className="form-control" value={deliver.cash_collected} onChange={(e) => setDeliver({ ...deliver, cash_collected: e.target.value })} /></Field>
       </Modal>

@@ -428,7 +428,7 @@ Offline: queue the multipart request with an `Idempotency-Key`; store the signat
 | `GET …/{id}/availability` | Per-line available/short |
 | `POST …/{id}/allocate` `{ allocations:[{ line_id, qty, batch? }] }` | Manual allocation |
 | `POST …/{id}/hold` `{ reason }` / `…/reject` `{ reason }` / `…/cancel` `{ reason }` | **Cancel is refused once the order has a posted invoice** (13 Nov 2026): `422 invoiced`, `detail` says what to do instead — cancel the delivery note and credit the invoice (before a trip), or record the stop as Customer refused (on a trip). A draft invoice does not stop it. Hide Cancel when any of the order's `invoices[]` is neither `draft` nor `cancelled` |
-| `POST …/{id}/mark-delivered` `{ receiver_name?, cash_collected?, lines?:[{ order_line, qty, batch? }] }` | Deliver without a trip (counter sale): stock out + delivery note + invoice in one step. Needs `delivery.complete_delivery` |
+| `POST …/{id}/mark-delivered` `{ receiver_name?, cash_collected?, lines?:[{ order_line, qty, batch? }] }` | Deliver from the order: stock out + delivery note + invoice in one step. Needs `delivery.complete_delivery`. **While the company setting `delivery_needs_trip` is on (the default), the order must be on a trip first** (14 Nov 2026): otherwise `422 trip_required` — it no longer makes a trip from `driver`/`delivery_rep`. Hide the action until the order has a `trip` |
 | `GET …/{id}/pdf` | Order PDF |
 
 ### 7.3 Order → delivery chain (load forms, warehouse issue, dispatch)
@@ -701,5 +701,6 @@ the diff so an app built against the first version knows what to touch.
 | **Delivery (rev 12)** | A sales order can now reach **`rejected`** from a stop (refused at the door), `rejection_reason` "Customer refused DN-…". Treat it as closed, like `cancelled` | order lists, §6 |
 | **Delivery (rev 12)** | New staff action `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` for a note not yet on a trip; notes carry **`can_cancel`**, and the page extra `delivery_notes.cancel` gates it. Optional for the app — the office does this on the web | §7.3 |
 | **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/cancel` answers **`422 invoiced`** for an order with a posted invoice (it used to cancel the invoice silently). Hide the button when any `invoices[]` entry is neither `draft` nor `cancelled`; show `detail` if the server refuses | §7.x orders |
+| **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/mark-delivered` answers `422 trip_required` until the order is on a trip (setting `delivery_needs_trip`, default on); show it only when the order has a `trip`. `POST /api/v1/delivery-notes/{id}/deliver-again` answers `422 delivered` once anything of the order was delivered | §7.x orders |
 
 Questions or a missing endpoint: check `https://dms.invoiceflow.pk/api/docs/` first — it is generated from the running code.

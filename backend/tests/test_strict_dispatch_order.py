@@ -126,16 +126,22 @@ def test_a_refused_delivery_rolls_back_the_trip_made_for_it(api, tenant):
     assert _note(tenant, o).status in ("pending", "loaded")
 
 
-def test_mark_delivered_on_the_order_makes_the_trip_too(api, tenant):
+def test_mark_delivered_on_the_order_waits_for_its_trip(api, tenant):
+    """Owner, 14 Nov 2026: "sale order should not show marked delivered until sale order enter into trip" — the order is
+    put on a trip first; naming a driver no longer makes one from the order."""
     _strict(tenant)
     wh, _s, v, cust = seed_basic(tenant)
     o = _order(api, wh, v, cust)
     issue_order(api, o["id"])
     _invoice(api, o)
-    assert api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json").status_code == 422
-    r = api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop", "driver": str(_driver(tenant).pk), "delivery_rep": str(tenant.owner.id)}, format="json")
+    driver = _driver(tenant)
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop", "driver": str(driver.pk), "delivery_rep": str(tenant.owner.id)}, format="json")
+    assert r.status_code == 422 and r.data["type"] == "trip_required", r.content
+    assert _note(tenant, o).trip_id is None and _note(tenant, o).status != "delivered", "nothing made, nothing delivered"
+    trip = api.post("/api/v1/trips", {"delivery_rep": str(tenant.owner.id), "warehouse": str(wh.pk), "driver": str(driver.pk), "order_ids": [o["id"]]}, format="json")
+    assert trip.status_code == 201, trip.content
+    r = api.post(f"/api/v1/sales-orders/{o['id']}/mark-delivered", {"receiver_name": "Shop"}, format="json")
     assert r.status_code == 200 and r.data["status"] in ("delivered", "invoiced"), r.content
-    assert _note(tenant, o).trip_id is not None
 
 
 def test_a_clerk_without_trip_rights_is_told_to_ask(api, tenant):

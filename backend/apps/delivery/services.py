@@ -942,6 +942,8 @@ class DeliveryService:
             raise DomainError(f"{order.number} is {order.get_status_display().lower()} — it does not go out again.", code="closed")
         if order.delivery_notes.exclude(pk=dn.pk).exclude(status__in=("cancelled", "failed", "returned")).exists():
             raise DomainError(f"{order.number} already has another delivery on its way.", code="duplicate")
+        if order.lines.filter(qty_delivered__gt=0).exists():   # owner, 14 Nov 2026: delivered goods do not go out again
+            raise DomainError(f"Goods of {order.number} were delivered — nothing of it goes out again.", code="delivered")
         trip = dn.trip
         home = trip is not None and trip.status == "closed"
         if home and get_current_tenant().setting("two_step_dispatch"):
