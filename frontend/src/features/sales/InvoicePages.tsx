@@ -251,7 +251,7 @@ export function InvoiceEditPage() {
   const showOther = taxed && sum((x) => x.gst?.other || 0) > 0;
   const span = taxed ? 6 + (showOther ? 1 : 0) : 4;
   const set = (i: number, patch: any) => { const ls = [...edit.lines]; ls[i] = { ...ls[i], ...patch }; setEdit({ ...edit, lines: ls }); };
-  // a changed quantity carries its discount along, until a discount is typed by hand
+  // a changed quantity carries its discount along (the discount itself is not typed here, owner 14 Nov 2026)
   const setQty = (i: number, v: string) => { const l = edit.lines[i]; set(i, { qty: v, ...(!l.isNew && !l.disc_typed && l.qty_was ? { discount_amount: String(Math.round(l.disc_was * Number(v || 0) / l.qty_was * 100) / 100) } : {}) }); };
   const addItem = async (v: any) => {
     let price = v.sale_price;
@@ -276,7 +276,8 @@ export function InvoiceEditPage() {
               <td>{l.description}</td>
               <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} disabled={delivered && !l.isNew} onChange={(e) => setQty(i, e.target.value)} /></td>
               <td className="num">{money(l.unit_price)}</td>
-              <td><input type="number" step="0.01" min="0" className="form-control form-control-sm text-end" value={l.isNew ? String(Math.round(fig[i].disc * 100) / 100) : l.discount_amount} readOnly={l.isNew} onChange={(e) => set(i, { discount_amount: e.target.value, disc_typed: true })} /></td>
+              {/* the discount comes from the order and the customer, not typed here (owner, 14 Nov 2026); a changed qty carries its share */}
+              <td className="num">{money(fig[i].disc)}</td>
               {taxed && <td className="num">{money(fig[i].taxable)}</td>}
               {taxed && <td className="num">{fig[i].gst?.label ? <>{money(fig[i].gst.amount)}<div className="text-muted fs-11">{fig[i].gst.label}</div></> : <span className="text-warning">—</span>}</td>}
               {showOther && <td className="num">{fig[i].gst?.other ? <>{money(fig[i].gst.other)}<div className="text-muted fs-11">{otherTaxLabel(l.others || {})}</div></> : "—"}</td>}
