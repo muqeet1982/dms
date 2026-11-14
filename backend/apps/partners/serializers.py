@@ -135,8 +135,26 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
                 is_active=r.get("is_active", True) in (True, "true", 1, "1"),
             )
 
+    @staticmethod
+    def _advance_tax_with_tax_on(validated_data, was_on, rate_now):
+        """Owner, 14 Nov 2026: a customer whose Tax invoice goes on is charged advance income tax at the company's rate
+        (Settings → Rules, 0.5%) when it has none — on the switch going on only, so a 0 kept afterwards stays 0."""
+        from decimal import Decimal
+
+        from apps.core.tenancy import get_current_tenant
+
+        if not validated_data.get("charge_tax") or was_on:
+            return
+        rate = validated_data.get("advance_income_tax_rate", rate_now)
+        if rate is not None and Decimal(str(rate)) > 0:
+            return
+        pct = Decimal(str(get_current_tenant().setting("tax_customer_advance_tax_pct") or 0))
+        if pct > 0:
+            validated_data["advance_income_tax_rate"] = pct
+
     def create(self, validated_data):
         rows = validated_data.pop("locations_write", None)
+        self._advance_tax_with_tax_on(validated_data, False, None)
         obj = super().create(validated_data)
         if rows is not None:
             self._save_locations(obj, rows)
@@ -146,6 +164,7 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
         rows = validated_data.pop("locations_write", None)
         old_pct = getattr(instance, "default_discount_pct", None)
         old_adv = instance.advance_income_tax_rate
+        self._advance_tax_with_tax_on(validated_data, instance.charge_tax, instance.advance_income_tax_rate)
         obj = super().update(instance, validated_data)
         if rows is not None:
             self._save_locations(obj, rows)

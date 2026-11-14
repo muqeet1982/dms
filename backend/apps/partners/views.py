@@ -275,6 +275,7 @@ class CustomerViewSet(TenantModelViewSet):
             raise DomainError("You cannot set credit limits.")
         membership = getattr(self.request, "membership", None)
         rep = membership.supplier_rep if membership is not None and membership.supplier_rep_id else None
+        serializer._advance_tax_with_tax_on(d, False, None)   # Tax invoice on → the company's advance income tax %
         c = CustomerService.create(d, rep=rep) if rep is not None else CustomerService.create(d)
         if location_rows is not None:
             serializer._save_locations(c, location_rows)

@@ -1,5 +1,5 @@
 import { DateInput } from "@/components/ui/DateInput";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { fbrLineTax, gstPctOfLabels, LineTax, lineWithinTp, money, otherTaxLabel, qty as fmtQty } from "@/lib/format";
 import { PlainFooterRows, TaxFooterRows } from "./TaxFooter";
@@ -79,7 +79,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
     if (priceFor !== "cost" && customerId) {
       try { const p = await api.get(`/api/v1/variants/${v.id}/price`, { customer: customerId, packaging: packaging?.id }); price = p.unit_price; } catch { /* ignore */ }
     }
-    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), prod_rule: { pct: Number(v.product_discount_pct || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.tax_rate || "", fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
+    const basePiece = priceFor === "cost" ? v.cost_price : v.sale_price; return { variant: v.id, variant_name: v.name, sku: v.sku, packagings: v.packagings || [], packaging: packaging?.id || null, unit_price: String(price ?? ""), product_discount_pct: undefined, extra: { ...(prev?.extra || {}), typed_price: false, priced_for: customerId || "", prod_rule: { pct: Number(v.product_discount_pct || 0), offers: v.product_offers || [] }, is_batch_tracked: v.is_batch_tracked, is_expiry_tracked: v.is_expiry_tracked, base_price: String(basePiece ?? ""), fbr_rate: v.tax_rate || "", fbr_others: { fed: v.fbr_fed_rate, extra: v.fbr_extra_tax_rate, further: v.fbr_further_tax_rate, wht: v.fbr_wht_rate } } };
   };
   /**
    * Re-price a line when its packaging changes. A carton is the piece price times the box size; a customer's
@@ -97,8 +97,34 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
       const base = Number(line.extra?.base_price ?? line.unit_price ?? 0);
       price = base * size;
     }
-    update(line.key, { packaging: packagingId, unit_price: String(price) });
+    update(line.key, { packaging: packagingId, unit_price: String(price), extra: { ...(line.extra || {}), typed_price: false, priced_for: customerId || "" } });
   };
+  /** The server's price for an item at this customer (a salon's R.P, a price list's row), or the list price with no customer. */
+  const listPrice = async (line: EditLine): Promise<string> => {
+    const pk = (line.packagings || []).find((x) => x.id === line.packaging);
+    if (customerId && line.variant) {
+      try { return String((await api.get(`/api/v1/variants/${line.variant}/price`, { customer: customerId, packaging: line.packaging || undefined })).unit_price); } catch { /* fall through */ }
+    }
+    return String(Number(line.extra?.base_price ?? line.unit_price ?? 0) * (pk ? Number(pk.qty_in_base) || 1 : 1));
+  };
+  // a line priced for one customer follows the customer when it changes (owner, 14 Nov 2026: a salon order always takes
+  // the R.P — items picked before the salon was chosen kept the T.P). A price somebody typed stays; lines loaded from a
+  // saved document carry no priced_for and are left to the server.
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  useEffect(() => {
+    if (priceFor === "cost" || !showPrice) return;
+    const stale = lines.filter((l) => l.variant && l.extra?.priced_for !== undefined && l.extra.priced_for !== (customerId || "") && !l.extra?.typed_price);
+    if (!stale.length) return;
+    let gone = false;
+    Promise.all(stale.map(async (l) => [l.key, await listPrice(l)] as const)).then((prices) => {
+      if (gone) return;
+      const by = new Map(prices);
+      onChange(linesRef.current.map((l) => (by.has(l.key) && !l.extra?.typed_price ? { ...l, unit_price: by.get(l.key)!, extra: { ...(l.extra || {}), priced_for: customerId || "" } } : l)));
+    });
+    return () => { gone = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
 
   // the owner's rule (22 Oct 2026): an out-of-stock item stays visible in the search, but picking it is
   // refused here with a message — and the server refuses it again at save, whatever client asked
@@ -195,7 +221,7 @@ export function LinesEditor({ lines, onChange, showPrice = true, showDiscount = 
                 <td>{readOnly ? <>{l.variant_name} <span className="text-muted fs-11">{l.sku}</span></> : <EntitySelect endpoint="/api/v1/variants" query={{ is_active: true, ...(variantQuery || {}) }} value={l.variant} onChange={() => {}} onSelectRaw={(v) => applyVariant(l.key, v)} mapOption={(v) => ({ id: v.id, label: withSize(v), sub: outOfStock(v) ? `${v.sku} · NOT IN STOCK` : `${v.sku}${wantsStock ? " · stock " + fmtQty(stockOf(v)) : ""}`, raw: v })} size="sm" allowClear={false} placeholder="Search product…" />}</td>
                 <td>{l.packagings?.length ? <select className="form-select form-select-sm" value={l.packaging || ""} onChange={(e) => { const pk = e.target.value || null; const dup = l.variant ? duplicateOf(l.key, l.variant, pk, l.batch_no) : undefined; if (dup) mergeInto(dup, l.key, Number(l.qty || 1) || 1, l.variant_name); else reprice(l, pk); }} disabled={readOnly}><option value="">base unit</option>{l.packagings.map((p) => <option key={p.id} value={p.id}>{p.name} ×{Number(p.qty_in_base)}</option>)}</select> : <span className="text-muted fs-12">—</span>}</td>
                 <td><input type="number" step="any" min="0" className="form-control form-control-sm text-end" value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} readOnly={readOnly} /></td>
-                {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value })} readOnly={readOnly} /></td>}
+                {showPrice && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.unit_price ?? ""} onChange={(e) => update(l.key, { unit_price: e.target.value, extra: { ...(l.extra || {}), typed_price: true } })} readOnly={readOnly} /></td>}
                 {showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.discount_pct ?? "0"} onChange={(e) => update(l.key, { discount_pct: e.target.value })} readOnly={readOnly} /></td>}{showDiscount && <td><input type="number" step="0.01" className="form-control form-control-sm text-end" value={l.product_discount_pct ?? String(prodPctFor(l))} onChange={(e) => update(l.key, { product_discount_pct: e.target.value })} readOnly={readOnly} title="the product\u2019s own rule fills this from quantity and offers; typing overrides it" /></td>}
                 {reasons && <td><select className="form-select form-select-sm" value={l.extra?.reason_code || ""} onChange={(e) => update(l.key, { extra: { ...(l.extra || {}), reason_code: e.target.value || null } })} disabled={readOnly}><option value="">same as document</option>{reasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></td>}
                 {showBatch && <td><input className="form-control form-control-sm" placeholder={l.extra?.is_batch_tracked ? "required" : "optional"} value={l.batch_no || ""} onChange={(e) => update(l.key, { batch_no: e.target.value })} readOnly={readOnly} /></td>}

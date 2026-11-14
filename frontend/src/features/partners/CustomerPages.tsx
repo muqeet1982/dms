@@ -6,6 +6,7 @@ import { date, money, titleCase } from "@/lib/format";
 import { useDoc, useOptions } from "@/lib/hooks";
 import { pageRights, usePage, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
+import { useAuth } from "@/lib/auth";
 import { Alert, InfoItem, PageHeader, Spinner, StatCard, StatusBadge, Tabs } from "@/components/ui/Bits";
 import { CrudPage } from "@/components/ui/CrudPage";
 import { Column } from "@/components/ui/DataTable";
@@ -105,6 +106,9 @@ function RepPicker({ value, onChange }: { value: string[]; onChange: (ids: strin
   );
 }
 
+/** Settings → Rules: the advance income tax % a customer takes when its Tax invoice is switched on. */
+const taxCustomerAdvancePct = () => Number((useAuth.getState().me as any)?.tenant?.settings?.tax_customer_advance_tax_pct ?? 0.5);
+
 export function customerFields(can: (p: string) => boolean): FieldDef[] {
   const sec = (section: string, sectionIcon: string, sectionHint?: string, sectionCollapsed = false) => ({ section, sectionIcon, sectionHint, sectionCollapsed });
   return [
@@ -165,7 +169,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
     { ...sec("Tax & FBR", "ti-receipt"), name: "fbr_registration_type", label: "Registration Status", type: "select", col: "col-md-3",
       options: [{ value: "", label: "Not set" }, { value: "Registered", label: "Registered" }, { value: "Unregistered", label: "Unregistered" }] },
     { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-4", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
-    { ...sec("Tax & FBR", "ti-receipt"), name: "charge_tax", label: "Tax invoice — charge FBR sales tax on this customer's invoices (each item at the GST rate of its HS classification)", type: "checkbox", col: "col-md-8", default: false },
+    { ...sec("Tax & FBR", "ti-receipt"), name: "charge_tax", label: "Tax invoice — charge FBR sales tax on this customer's invoices (each item at the GST rate of its HS classification)", type: "checkbox", col: "col-md-8", default: false,
+      // a tax-invoice customer is charged advance income tax at the company's rate (owner, 14 Nov 2026: 0.5%) unless one is set
+      follow: (on, vals) => (on && !Number(vals.advance_income_tax_rate) ? { advance_income_tax_rate: String(taxCustomerAdvancePct()) } : undefined) },
 
     // the customer's total discount (owner, 27 Oct 2026); who funds each % is shown only in Settings → Discount
     // contributions, where the splits are set (owner, 29 Oct 2026: "do not want to show anywhere other then the form

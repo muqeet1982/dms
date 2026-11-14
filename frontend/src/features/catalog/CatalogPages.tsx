@@ -174,7 +174,7 @@ export function ProductFormPage() {
   if (id && q.isLoading) return <Spinner />;
   return (
     <>
-      <PageHeader title={id ? `Edit ${q.data?.name}` : "New product"} crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: id ? "Edit" : "New" }]} />
+      <PageHeader title={id ? (q.data?.name || "") : "New product"} crumbs={[{ label: "Products", to: "/app/catalog/products" }, { label: id ? "Edit" : "New" }]} />
       <div className="card"><div className="card-body">
         <ResourceForm fields={productFields(!id)} initial={q.data ? { ...q.data, offers_write: (q.data.offers || []).map((o: any) => ({ discount_pct: o.discount_pct, min_qty: o.min_qty, start_date: o.start_date, end_date: o.end_date })) } : q.data} onCancel={() => nav(-1)} onSubmit={async (v) => { const r = id ? await api.patch(`/api/v1/products/${id}`, v) : await api.post("/api/v1/products", v); toast.success("Saved"); nav(`/app/catalog/products/${r.id}`); }} />
         {!id && <div className="form-text mt-2">A default variant, base packaging and barcodes can be added on the product page after saving. For shade/size variants add them there too.</div>}

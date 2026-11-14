@@ -225,6 +225,9 @@ class Tenant(models.Model):
         # the sales-tax % inside a product's TP when the product names none (owner, 2 Nov 2026: "25% is default 25
         # and option to change"): its GST Rate beats it. 0 = no default
         "default_tax_pct": 25,
+        # the advance income tax % (236G/236H) a customer is given when its Tax invoice is switched on with no rate of its
+        # own (owner, 14 Nov 2026: "when tax invoice on then advance income tax should be 0.5"); a rate typed stays
+        "tax_customer_advance_tax_pct": 0.5,
     }
 
     def setting(self, key):

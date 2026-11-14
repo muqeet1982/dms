@@ -23,6 +23,8 @@ export type FieldDef = {
   errorLabel?: string;
   /** Run `validate` even when the field is empty — for cross-field rules like "NTN or CNIC". */
   alwaysValidate?: boolean;
+  /** Fields that follow this one: the values to set alongside when it changes (e.g. a switch that fills a default). */
+  follow?: (value: any, values: Record<string, any>) => Record<string, any> | void;
 };
 
 const digits = (v: string) => (v || "").replace(/\D/g, "");
@@ -59,7 +61,7 @@ export function ResourceForm({ fields, initial, onSubmit, submitLabel = "Save", 
     if (initial) setValues((v) => ({ ...v, ...Object.fromEntries(fields.filter((f) => initial[f.name] !== undefined).map((f) => [f.name, initial[f.name] ?? ""])) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
-  const set = (name: string, v: any) => setValues((s) => ({ ...s, [name]: v }));
+  const set = (name: string, v: any) => setValues((s) => ({ ...s, [name]: v, ...(fields.find((f) => f.name === name)?.follow?.(v, s) || {}) }));
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};

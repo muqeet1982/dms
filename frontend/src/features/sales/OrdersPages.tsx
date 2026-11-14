@@ -291,7 +291,9 @@ export function OrderFormPage() {
   if (!form) {
     const o = existing.data;
     setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
-    if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(l.packaging ? Number(l.qty_ordered) / 1 : Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct, extra: { fbr_rate: l.product_fbr_rate || "", fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } })));
+    // a carton line is stored in pieces at the piece price; the form shows (and sends) cartons at the carton price. A price
+    // somebody typed (requested_price) is kept as typed; every other line is re-priced by the server on save
+    if (o) setLines(o.lines.map((l: any) => { const per = l.packaging ? Number(l.packaging_qty_in_base) || 1 : 1; return { key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(Number(l.qty_ordered) / per), unit_price: String(Number(l.unit_price) * per), discount_pct: l.discount_pct, extra: { typed_price: l.requested_price != null, priced_for: o.customer, base_price: String(Number(l.unit_price)), fbr_rate: l.product_fbr_rate || "", fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } }; }));
     return <Spinner />;
   }
   const submit = async (confirm: boolean) => {
@@ -300,7 +302,8 @@ export function OrderFormPage() {
     if (!valid.length) return toast.error("Add at least one line");
     setSaving(true);
     try {
-      const body = { ...form, warehouse: form.warehouse || null, confirm, discount_pct: form.discount_pct === "" ? null : form.discount_pct, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || null, discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct === undefined || l.product_discount_pct === "" ? undefined : l.product_discount_pct, price_per_packaging: Boolean(l.packaging) })) };
+      // only a typed price is sent: the server prices every other line from the customer's list (a salon's R.P, owner 14 Nov 2026)
+      const body = { ...form, warehouse: form.warehouse || null, confirm, discount_pct: form.discount_pct === "" ? null : form.discount_pct, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, ...(l.extra?.typed_price && l.unit_price ? { unit_price: l.unit_price } : {}), discount_pct: l.discount_pct || 0, product_discount_pct: l.product_discount_pct === undefined || l.product_discount_pct === "" ? undefined : l.product_discount_pct, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/sales-orders/${id}`, body) : await api.post("/api/v1/sales-orders", body, true);
       toast.success(id ? "Order updated" : "Order created");
       nav(`/app/sales/orders/${r.id}`);
