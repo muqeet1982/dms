@@ -341,6 +341,18 @@ export function InvoiceCreatePage() {
   const uninvoiced = (detail.data?.delivery_notes || []).filter((d: any) => !d.invoiced);
   // the % the invoice will carry: the order's own (seeded from the customer) unless changed right here
   const effDisc = discOverride !== "" ? discOverride : detail.data?.discount_pct != null ? String(Number(detail.data.discount_pct)) : "";
+  const create = async (post: boolean) => {
+    setBusy(true);
+    try {
+      // apply_tax is sent BOTH ways: absent means "follow the order's own flag", so unticking the
+      // seeded switch must say false out loud or a flagged order gets taxed anyway (audit, 26 Oct 2026)
+      const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), apply_tax: applyTax, post }, true);
+      const made = Array.isArray(r) ? r : [r];
+      const what = made.length > 1 ? `${made.length} invoices` : made[0]?.number || "Invoice";
+      toast.success(post ? `${what} posted to the ledger` : `${what} saved as draft — review, then post`);
+      nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
   return (
     <>
       <PageHeader title="New invoice" crumbs={[{ label: "Invoices", to: "/app/sales/invoices" }, { label: "New" }]} />
@@ -385,21 +397,12 @@ export function InvoiceCreatePage() {
             : <div className="fs-13 text-warning">Every delivery on this order is already invoiced — it will not be offered again.</div>
         )}
       </div></div>
+      {/* owner, 14 Nov 2026: this page already shows every figure, so its main button posts the invoice to the ledger;
+          Save as draft stays for an invoice to be edited line by line first (the 27 Oct draft step) */}
       <div className="d-flex gap-2 justify-content-end">
+        <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={() => create(true)}><i className="ti ti-check me-1" />Create &amp; post</button>
+        <button className="btn btn-outline-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={() => create(false)}><i className="ti ti-device-floppy me-1" />Save as draft</button>
         <button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>
-        <button className="btn btn-primary" disabled={!order || busy || (detail.data && !uninvoiced.length)} onClick={async () => {
-          setBusy(true);
-          try {
-            // apply_tax is sent BOTH ways: absent means "follow the order's own flag", so unticking the
-            // seeded switch must say false out loud or a flagged order gets taxed anyway (audit, 26 Oct 2026)
-            // saved as a DRAFT (owner, 27 Oct 2026: "i want to see or edit before create invoice") — it opens for
-            // review and editing, and goes to the ledger only when Post to ledger is pressed there
-            const r = await api.post(`/api/v1/sales-orders/${order}/invoice`, { ...(effDisc === "" ? {} : { discount_pct: effDisc }), apply_tax: applyTax, post: false }, true);
-            const made = Array.isArray(r) ? r : [r];
-            toast.success(made.length > 1 ? `${made.length} draft invoices saved — review, then post` : `${made[0]?.number || "Invoice"} saved as draft — review, then post`);
-            nav(made[0] ? `/app/sales/invoices/${made[0].id}` : "/app/sales/invoices");
-          } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
-        }}><i className="ti ti-device-floppy me-1" />Save invoice</button>
       </div>
     </>
   );
