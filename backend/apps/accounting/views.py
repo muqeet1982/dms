@@ -227,7 +227,14 @@ class JournalEntryViewSet(DocumentViewSet):
     @action(detail=True, methods=["post"])
     @require_perm("accounting.reverse_journal")
     def reverse(self, request, pk=None):
-        rev = PostingService.reverse(self.get_object(), request.data.get("date"), request.data.get("memo"))
+        je = self.get_object()
+        # a journal a document posted is undone with that document (cancel, delete, reopen), never on its own: reversing
+        # only the journal left TDN-CN-00006 crediting its invoice and TDN-RCPT-00045 paying one, with nothing in the ledger
+        # behind either (14 Nov 2026)
+        if je.source_type and je.source_type != "JournalEntry":
+            raise DomainError(f"{je.number} belongs to {je.source_number or je.source_type}. Cancel or correct {je.source_number or 'that document'} on its own page "
+                              "— reversing only its journal leaves the document counting.", code="document_journal")
+        rev = PostingService.reverse(je, request.data.get("date"), request.data.get("memo"))
         return Response(JournalEntrySerializer(rev).data, status=201)
 
     @action(detail=True, methods=["get"])
