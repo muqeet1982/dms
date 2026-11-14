@@ -84,9 +84,18 @@ class PurchaseOrderViewSet(DocumentViewSet):
             qs = qs.filter(date__lte=p["date_to"])
         return warehouse_scope(self.request, qs)
 
+    def _check_prices(self, lines):
+        """A price far from the product's D.P is saved only when the person confirms it (`confirm_prices: true`)."""
+        if self.request.data.get("confirm_prices") in (True, "true", "1", 1):
+            return
+        far = PurchaseOrderService.price_check(lines)
+        if far:
+            raise DomainError("Check these prices: " + "; ".join(far) + ".", code="price_check")
+
     def perform_create(self, serializer):
         d = serializer.validated_data
         lines = [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l["unit_price"], "discount_pct": l.get("discount_pct", 0), "price_per_packaging": l.get("price_per_packaging", False)} for l in d["lines"]]
+        self._check_prices(lines)
         serializer.instance = PurchaseOrderService.create(supplier=d["supplier"], warehouse=d["warehouse"], lines=lines, date=d.get("date"), expected_date=d.get("expected_date"), notes=d.get("notes", ""), freight=d.get("freight", 0), supplier_ref=d.get("supplier_ref", ""), reference=d.get("reference", ""))
 
     def perform_update(self, serializer):
@@ -94,9 +103,12 @@ class PurchaseOrderViewSet(DocumentViewSet):
         if po.status not in ("draft", "sent"):
             raise DomainError("Only draft/sent POs can be edited.")
         lines = serializer.validated_data.pop("lines", None)
+        rows = None if lines is None else [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l["unit_price"], "discount_pct": l.get("discount_pct", 0), "price_per_packaging": l.get("price_per_packaging", False)} for l in lines]
+        if rows is not None:
+            self._check_prices(rows)
         super().perform_update(serializer)
-        if lines is not None:
-            PurchaseOrderService.write_lines(po, [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l["unit_price"], "discount_pct": l.get("discount_pct", 0), "price_per_packaging": l.get("price_per_packaging", False)} for l in lines])
+        if rows is not None:
+            PurchaseOrderService.write_lines(po, rows)
         else:
             PurchaseOrderService.recompute(po)
 

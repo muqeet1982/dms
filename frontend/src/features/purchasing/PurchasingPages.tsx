@@ -102,6 +102,7 @@ export function PurchaseOrderFormPage() {
   const [form, setForm] = useState<any>(null);
   const [lines, setLines] = useState<EditLine[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [priceCheck, setPriceCheck] = useState<string | null>(null);
   if ((id && existing.isLoading) || firstSupplier.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
@@ -111,7 +112,7 @@ export function PurchaseOrderFormPage() {
     if (o) setLines(o.lines.map((l: any) => ({ key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: null, packagings: [], qty: String(Number(l.qty_ordered)), unit_price: l.unit_price, discount_pct: l.discount_pct })));
     return <Spinner />;
   }
-  const submit = async () => {
+  const submit = async (confirmPrices = false) => {
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
     // the select shows warehouses.defaultId as a fallback; honour it so a PO with the default picked does not
     // fail validation just because the user never touched the field
@@ -120,11 +121,15 @@ export function PurchaseOrderFormPage() {
     if (missing.length) { const m = `Please fill in: ${missing.join(", ")}.`; setErr(m); return toast.error(m); }
     setErr(null);
     try {
-      const body = { ...form, warehouse, lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || 0, discount_pct: l.discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
+      const body = { ...form, warehouse, ...(confirmPrices ? { confirm_prices: true } : {}), lines: valid.map((l) => ({ variant: l.variant, packaging: l.packaging || null, qty: l.qty, unit_price: l.unit_price || 0, discount_pct: l.discount_pct || 0, price_per_packaging: Boolean(l.packaging) })) };
       const r = id ? await api.patch(`/api/v1/purchase-orders/${id}`, body) : await api.post("/api/v1/purchase-orders", body, true);
       toast.success("Saved");
       nav(`/app/purchasing/orders/${r.id}`);
-    } catch (e: any) { setErr(e.message); toast.error(e.message); }
+    } catch (e: any) {
+      // a price far from the product's D.P is saved only once somebody confirms it (TDN-PO-00003, 13 Oct 2026)
+      if (e?.problem?.type === "price_check") { setPriceCheck(e.problem.detail); return; }
+      setErr(e.message); toast.error(e.message);
+    }
   };
   return (
     <>
@@ -140,7 +145,8 @@ export function PurchaseOrderFormPage() {
             supplier column — a whole company's search came back empty and looked broken. */}
         <LinesEditor lines={lines} onChange={setLines} priceFor="cost" variantQuery={form.supplier ? { for_supplier: form.supplier, with_stock: 1 } : { with_stock: 1 }} />
       </div></div>
-      <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" onClick={submit}>Save</button></div>
+      <div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button><button className="btn btn-primary" onClick={() => submit()}>Save</button></div>
+      <ConfirmDialog open={!!priceCheck} title="Price far from D.P" message={priceCheck} confirmText="Save anyway" danger onClose={() => setPriceCheck(null)} onConfirm={() => { setPriceCheck(null); submit(true); }} />
     </>
   );
 }

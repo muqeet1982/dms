@@ -70,6 +70,28 @@ class PurchaseOrderService:
         return po
 
     @staticmethod
+    def price_check(lines):
+        """
+        Lines whose price a piece is far from the product's D.P — under half of it or over twice it. TDN-PO-00003
+        (13 Oct 2026) went out at 14.25 a piece for CREAM BLEACH 50 G, D.P 684: 684 typed against a carton line is
+        the carton's price, a 48th a piece, and every sale of that stock was costed at it. Returns readable rows; a
+        free line (price 0) and a product with no D.P are not checked.
+        """
+        out = []
+        for l in lines:
+            packaging = l.get("packaging")
+            try:
+                price = Decimal(str(l.get("unit_price") or 0))
+            except Exception:
+                continue
+            if l.get("price_per_packaging") and packaging:
+                price = price / packaging.qty_in_base
+            dp = Decimal(l["variant"].cost_price or 0)
+            if dp > 0 and price > 0 and (price < dp / 2 or price > dp * 2):
+                out.append(f"{l['variant'].name}: {price:,.2f} a piece, D.P {dp:,.2f}")
+        return out
+
+    @staticmethod
     def write_lines(po, lines):
         po.lines.all().delete()
         for i, l in enumerate(lines):
