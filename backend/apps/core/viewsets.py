@@ -1,4 +1,6 @@
 """Base viewsets shared by every tenant module."""
+import uuid
+
 from rest_framework import viewsets
 from rest_framework.decorators import action
 
@@ -29,8 +31,8 @@ def _printable(record):
     skip_exact = {"id", "version", "tenant", "created_by", "updated_by", "deleted_at", "lines", "attachments"}
     out = {}
     for key, value in record.items():
-        if key in skip_exact or key.endswith("_id") or isinstance(value, (dict, list)):
-            continue
+        if key in skip_exact or key.endswith("_id") or isinstance(value, (dict, list, uuid.UUID)):
+            continue   # a link's id (posted_by, period) — its readable name is its own column
         if isinstance(value, str) and len(value) == 36 and value.count("-") == 4:
             continue  # a UUID that happens to be spelled out as a field of its own
         out[key.replace("_", " ").strip().title()] = value

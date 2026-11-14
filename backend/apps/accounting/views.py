@@ -93,6 +93,11 @@ class JournalEntryViewSet(DocumentViewSet):
     })
     filterset_fields = ["status", "type", "voucher_type", "source_type", "period", "date"]
     search_fields = ["number", "memo", "source_number", "lines__description"]
+    # the Excel / PDF of this list: the columns the screen shows, no ids
+    export_fields = ["number", "date", "voucher_code", "type", "source_type", "source_number", "memo", "status", "total_debit", "total_credit",
+                     "posted_by_name", "posted_at", "reversed_by_number", "created_by_name"]
+    export_labels = {"voucher_code": "Voucher", "source_type": "Source", "source_number": "Source No.", "posted_by_name": "Posted By",
+                     "reversed_by_number": "Reversed By", "created_by_name": "Created By"}
     ordering_fields = ["date", "number", "created_at", "total_debit"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 

@@ -1,7 +1,7 @@
 """
 Owner, 14 Nov 2026: "in customer when on tax invoice on then advance income tax should be 0.5". A customer whose Tax
 invoice goes on with no advance income tax rate takes the company's rate (Settings → Rules, 0.5% by default); a rate typed
-with it stays, and a 0 set afterwards, with the switch already on, stays 0.
+with it stays, and a 0 set afterwards, with the switch already on, stays 0. Switched off, the rate goes back to 0.
 """
 from decimal import Decimal as D
 
@@ -33,6 +33,18 @@ def test_switching_tax_on_fills_the_rate_once(api, tenant):
     api.patch(f"/api/v1/customers/{c['id']}", {"charge_tax": False}, format="json")
     r = api.patch(f"/api/v1/customers/{c['id']}", {"charge_tax": True}, format="json")
     assert D(r.data["advance_income_tax_rate"]) == D("0.5")
+
+
+def test_switching_tax_off_takes_the_rate_back_to_0(api, tenant):
+    """Owner, 14 Nov 2026: "when off tax for customer then change to 0 again"."""
+    c = _new(api, "Filer Store", "35202-6666666-6", charge_tax=True, advance_income_tax_rate="1.00")
+    r = api.patch(f"/api/v1/customers/{c['id']}", {"charge_tax": False}, format="json")
+    assert r.status_code == 200 and D(r.data["advance_income_tax_rate"]) == D("0"), r.content
+    # an edit that leaves the switch off does not touch a rate
+    r = api.patch(f"/api/v1/customers/{c['id']}", {"name": "Filer Store 2"}, format="json")
+    assert D(r.data["advance_income_tax_rate"]) == D("0")
+    r = api.patch(f"/api/v1/customers/{c['id']}", {"charge_tax": True}, format="json")
+    assert D(r.data["advance_income_tax_rate"]) == D("0.5"), "on again: the company's rate"
 
 
 def test_the_company_sets_the_rate(api, tenant):

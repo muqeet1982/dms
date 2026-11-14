@@ -153,6 +153,10 @@ def to_xlsx(result, title=""):
         row = []
         for c in cols:
             v = cell(r.get(c, ""))
+            # a value a spreadsheet cell cannot hold (an id, a reference) goes in as text: one UUID used to fail the
+            # whole file with a 500 (Journal entries, 14 Nov 2026)
+            if v is not None and not isinstance(v, (str, bool, int, float, Decimal, datetime.date)):
+                v = str(v)
             if isinstance(v, str) and c not in text_cols:
                 try:
                     if v and (v.replace(".", "", 1).replace("-", "", 1).isdigit()):

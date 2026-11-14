@@ -81,3 +81,36 @@ def test_exporting_needs_the_same_right_as_reading(api, tenant):
     with tenant_context(tenant, tenant.owner):
         blind = _client(tenant, [])
     assert blind.get("/api/v1/sales-orders/export", {"format": "csv"}).status_code == 403
+
+
+def test_journal_entries_open_in_a_spreadsheet(api, tenant, excel_on):
+    """14 Nov 2026, "JV Excel download not working": a posted journal carries who posted it and its period as ids, and
+    one id in a cell failed the whole Excel file with a 500 (CSV and PDF wrote it as text)."""
+    import io
+
+    from openpyxl import load_workbook
+
+    from apps.accounting.services import account_for
+    from apps.core.tenancy import tenant_context
+
+    with tenant_context(tenant, tenant.owner):
+        cash, sales = str(account_for("cash").id), str(account_for("sales").id)
+    r = api.post("/api/v1/accounting/journals", {"date": "2026-11-14", "voucher_type": "jv", "memo": "Counter sale",
+                                                "lines": [{"account": cash, "debit": "500", "credit": 0, "description": ""},
+                                                          {"account": sales, "debit": 0, "credit": "500", "description": ""}]}, format="json")
+    assert r.status_code == 201, r.content
+    assert api.post(f"/api/v1/accounting/journals/{r.data['id']}/post", {}, format="json").status_code == 200
+    x = api.get("/api/v1/accounting/journals/export", {"format": "xlsx", "ordering": "-date"})
+    assert x.status_code == 200 and x.content[:2] == b"PK", x.content[:300]
+    ws = load_workbook(io.BytesIO(x.content)).active
+    head = [c.value for c in ws[1]]
+    assert head[:3] == ["Number", "Date", "Voucher"] and "Posted By" in head and "Period" not in head, head
+    assert ws.cell(row=2, column=3).value == "JV"
+
+
+def test_an_id_in_a_cell_is_written_as_text():
+    import uuid
+
+    from apps.reports.exporters import to_xlsx
+
+    assert to_xlsx({"columns": ["Ref"], "rows": [{"Ref": uuid.uuid4()}], "column_labels": {}}, "x")[:2] == b"PK"

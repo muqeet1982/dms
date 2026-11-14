@@ -138,11 +138,15 @@ class CustomerSerializer(_UniqueEmailMixin, serializers.ModelSerializer):
     @staticmethod
     def _advance_tax_with_tax_on(validated_data, was_on, rate_now):
         """Owner, 14 Nov 2026: a customer whose Tax invoice goes on is charged advance income tax at the company's rate
-        (Settings → Rules, 0.5%) when it has none — on the switch going on only, so a 0 kept afterwards stays 0."""
+        (Settings → Rules, 0.5%) when it has none — on the switch going on only, so a 0 kept afterwards stays 0. Switched
+        off, the rate goes back to 0 ("when off tax for customer then change to 0 again")."""
         from decimal import Decimal
 
         from apps.core.tenancy import get_current_tenant
 
+        if was_on and validated_data.get("charge_tax") is False:
+            validated_data["advance_income_tax_rate"] = Decimal("0")
+            return
         if not validated_data.get("charge_tax") or was_on:
             return
         rate = validated_data.get("advance_income_tax_rate", rate_now)

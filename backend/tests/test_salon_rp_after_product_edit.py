@@ -70,3 +70,25 @@ def test_editing_a_carton_line_keeps_its_cartons(api, tenant):
     r = api.patch(f"/api/v1/sales-orders/{o['id']}", {"lines": [line]}, format="json")
     assert r.status_code == 200, r.content
     assert D(r.data["lines"][0]["qty_ordered"]) == D("24") and D(r.data["total"]) == D("4800")
+
+
+def test_a_salon_on_a_price_list_still_buys_at_the_rp(api, tenant):
+    """14 Nov 2026, "customer is salon and RP not showing": demo's salons sit on the Retail price list, whose rows (the
+    T.P) used to win over the R.P. A salon takes the R.P ahead of any list; an item with no R.P keeps the list's price."""
+    from apps.catalog.models import PriceList, PriceListItem, ProductVariant
+
+    wh, _s, v, retailer = seed_basic(tenant)                    # T.P 150
+    salon = _salon(tenant)
+    with tenant_context(tenant, tenant.owner):
+        pl = PriceList.objects.create(name="Salon list")
+        PriceListItem.objects.create(price_list=pl, variant=v, price=D("140"))
+        for c in (salon, retailer):
+            c.price_list = pl
+            c.save(update_fields=["price_list"])
+        ProductVariant.objects.filter(pk=v.pk).update(retail_price=D("200"))
+    assert D(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(salon.id)}).data["unit_price"]) == D("200")
+    assert D(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(retailer.id)}).data["unit_price"]) == D("140"), "a retailer keeps the list"
+    assert D(_order(api, wh, salon, [{"variant": str(v.id), "qty": "1"}])["lines"][0]["unit_price"]) == D("200")
+    with tenant_context(tenant, tenant.owner):
+        ProductVariant.objects.filter(pk=v.pk).update(retail_price=D("0"))
+    assert D(api.get(f"/api/v1/variants/{v.id}/price", {"customer": str(salon.id)}).data["unit_price"]) == D("140"), "no R.P: the list"

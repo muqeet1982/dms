@@ -170,8 +170,9 @@ export function customerFields(can: (p: string) => boolean): FieldDef[] {
       options: [{ value: "", label: "Not set" }, { value: "Registered", label: "Registered" }, { value: "Unregistered", label: "Unregistered" }] },
     { ...sec("Tax & FBR", "ti-receipt"), name: "advance_income_tax_rate", label: "Advance Income Tax (Section 236G/236H)", type: "number", col: "col-md-4", default: 0, suffix: "%", hint: "charged on the invoice total — your invoice and ledger, never sent to FBR" },
     { ...sec("Tax & FBR", "ti-receipt"), name: "charge_tax", label: "Tax invoice — charge FBR sales tax on this customer's invoices (each item at the GST rate of its HS classification)", type: "checkbox", col: "col-md-8", default: false,
-      // a tax-invoice customer is charged advance income tax at the company's rate (owner, 14 Nov 2026: 0.5%) unless one is set
-      follow: (on, vals) => (on && !Number(vals.advance_income_tax_rate) ? { advance_income_tax_rate: String(taxCustomerAdvancePct()) } : undefined) },
+      // a tax-invoice customer is charged advance income tax at the company's rate (owner, 14 Nov 2026: 0.5%) unless one is
+      // set; switched off, it goes back to 0
+      follow: (on, vals) => (!on ? { advance_income_tax_rate: "0" } : !Number(vals.advance_income_tax_rate) ? { advance_income_tax_rate: String(taxCustomerAdvancePct()) } : undefined) },
 
     // the customer's total discount (owner, 27 Oct 2026); who funds each % is shown only in Settings → Discount
     // contributions, where the splits are set (owner, 29 Oct 2026: "do not want to show anywhere other then the form
