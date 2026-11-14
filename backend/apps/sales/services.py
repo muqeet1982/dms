@@ -1549,26 +1549,13 @@ class InvoiceService:
         (its posting, COGS, manufacturer claims, receipts, returns), which the customer's ledger and the general ledger
         read. Everything else points at the invoice itself and follows it. A -2 invoice is never mistaken for its parent.
         """
-        import re
-
-        from django.db.models import Q
-
-        from apps.accounting.models import JournalEntry, JournalLine
-        from apps.core.numbering import renumber
+        from apps.core.numbering import renumber, rewrite_quoted_numbers
 
         old = inv.number
         if not old or old == new:
             return inv
         renumber(inv, new)
-        quoted = re.compile(re.escape(old) + r"(?![-\w])")
-        for je in JournalEntry.objects.filter(Q(memo__contains=old) | Q(source_number=old)):
-            je.memo = quoted.sub(new, je.memo)
-            if je.source_number == old:
-                je.source_number = new
-            je.save(update_fields=["memo", "source_number", "updated_at"])
-        for line in JournalLine.objects.filter(description__contains=old):
-            line.description = quoted.sub(new, line.description)
-            line.save(update_fields=["description"])
+        rewrite_quoted_numbers(inv.tenant_id, [(inv.pk, old, new)])
         AuditService.log(action, inv, before={"number": old}, after={"number": new})
         return inv
 

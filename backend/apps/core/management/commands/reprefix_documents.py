@@ -50,6 +50,11 @@ class Command(BaseCommand):
         with transaction.atomic():
             for m, pk, _old, new in plan:
                 m.all_objects.filter(pk=pk).update(number=new)
+            # the journals and the stock ledger quote the numbers as text: they follow (14 Nov 2026)
+            from apps.core.numbering import rewrite_quoted_numbers
+
+            quoted = rewrite_quoted_numbers(tenant.id, [(pk, old, new) for _m, pk, old, new in plan])
+            self.stdout.write(f"Quoted elsewhere and rewritten: {dict(quoted)}")
             if not opts["commit"]:
                 transaction.set_rollback(True)
                 self.stdout.write(self.style.WARNING("DRY RUN — rolled back. Re-run with --commit."))

@@ -68,6 +68,61 @@ def renumber(doc, number: str) -> None:
     doc.number = number
 
 
+def rewrite_quoted_numbers(tenant_id, renames) -> dict:
+    """
+    After documents are renumbered: everything that QUOTES their numbers as text follows them — every journal's memo,
+    source number and line descriptions, and every stock-ledger line's note and reference number. TDN's mid-October
+    renumbering moved only the documents, so INV-00013 (now TDN-INV-00015) stayed in its journals and read as another
+    invoice (14 Nov 2026). `renames` is [(document pk, old number, new number)]. All old → new are applied in one pass,
+    so a chain of renames never compounds; an old number is matched as a whole token, never inside a longer one
+    (TDN-INV-00013, INV-00013-2). Returns how many rows changed.
+    """
+    import re
+    from collections import Counter
+
+    from apps.accounting.models import JournalEntry, JournalLine
+    from apps.inventory.models import StockMovement
+
+    renames = [(pk, old, new) for pk, old, new in renames if old and new and old != new]
+    done = Counter()
+    if not renames:
+        return done
+    mapping = {old: new for _pk, old, new in renames}
+    token = re.compile(r"(?<![\w-])(" + "|".join(sorted(map(re.escape, mapping), key=len, reverse=True)) + r")(?![-\w])")
+
+    def sub(text):
+        return token.sub(lambda m: mapping[m.group(1)], text or "")
+
+    from functools import reduce
+
+    from django.db.models import Q
+
+    def quoting(*fields):
+        """Only the rows that can quote one of the numbers — one invoice renumbered at posting must not scan the books."""
+        if len(mapping) > 200:
+            return Q()
+        return reduce(lambda a, b: a | b, (Q(**{f"{f}__contains": old}) for old in mapping for f in fields))
+
+    for pk, memo, src in JournalEntry.all_objects.filter(quoting("memo", "source_number"), tenant_id=tenant_id).values_list("pk", "memo", "source_number"):
+        new_memo, new_src = sub(memo), mapping.get(src, src)
+        if (new_memo, new_src) != (memo, src):
+            JournalEntry.all_objects.filter(pk=pk).update(memo=new_memo, source_number=new_src)
+            done["journals"] += 1
+    for pk, text in JournalLine.all_objects.filter(quoting("description"), tenant_id=tenant_id).exclude(description="").values_list("pk", "description"):
+        new = sub(text)
+        if new != text:
+            JournalLine.all_objects.filter(pk=pk).update(description=new)
+            done["journal_lines"] += 1
+    for pk, note in StockMovement.all_objects.filter(quoting("note"), tenant_id=tenant_id).exclude(note="").values_list("pk", "note"):
+        new = sub(note)
+        if new != note:
+            StockMovement.all_objects.filter(pk=pk).update(note=new)
+            done["stock_notes"] += 1
+    for pk, _old, new in renames:
+        done["stock_references"] += StockMovement.all_objects.filter(tenant_id=tenant_id, reference_id=str(pk)).exclude(reference_number=new).update(reference_number=new)
+    return done
+
+
 def give_back(document_type: str, number: str, tenant_id=None) -> bool:
     """A number the series gave last returns to it, so the next document takes it and the series has no gap. Any
     other number is not reused: two papers must never carry the same one. True if it went back."""
