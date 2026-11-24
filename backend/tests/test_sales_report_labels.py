@@ -116,7 +116,7 @@ def test_product_names_print_bold_and_every_figure_reads_right(api, sold, monkey
     assert data["column_styles"] == {"label": "bold"}
     html = _pdf_html(api, monkeypatch, "sales_by_product")
     assert f'<td class="b">{v.name}<div class="cell-note">' in html
-    assert '<th>Product Name</th><th class="r">Qty</th>' in html, "the quantity is a figure: right, though it is the second column"
+    assert '<th>Product Name</th><th class="r">Net Qty</th>' in html, "the quantity is a figure: right, though it is the second column"
     assert '<th class="r">Invoices</th>' in html and '<td class="r">1</td>' in html
 
 

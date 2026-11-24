@@ -151,3 +151,25 @@ def test_sales_by_customer_takes_returns_off(api, tenant, world):
     salons = api.get("/api/v1/reports/sales_by_customer", {"customer_type": "Salon"}).data
     assert [r["label"] for r in salons["rows"]] == ["Shine Salon"] and D(salons["totals"]["returns"]) == D("150"), "the type filter reaches the returns too"
     assert api.get("/api/v1/reports/sales_by_customer", {"customer_type": "Retailer"}).data["totals"]["returns"] == "0"
+
+
+def test_every_grouped_sales_report_takes_returns_off(api, tenant, world):
+    """Owner, 24 Nov 2026 ("3 = yes fix"): by product, brand, supplier, territory and route — returns off, like by customer."""
+    from apps.sales.models import SalesInvoice
+    from apps.sales.services import CreditNoteService
+
+    _a, b, _naveed, _salon = world
+    with tenant_context(tenant, tenant.owner):
+        order_id = str(SalesInvoice.objects.get(pk=b["id"]).order_id)
+    assert api.post(f"/api/v1/sales-orders/{order_id}/mark-delivered", {}, format="json").status_code == 200
+    with tenant_context(tenant, tenant.owner):
+        inv = SalesInvoice.objects.get(pk=b["id"])
+        line = inv.lines.first()
+        CreditNoteService.post(CreditNoteService.create(customer=inv.customer, invoice=inv, reason="back",
+                                                        lines=[{"variant": line.variant, "qty": "1", "unit_price": str(line.unit_price), "unit_cost": str(line.unit_cost), "condition": "good", "restock": True}]))
+    for key in ("sales_by_product", "sales_by_brand", "sales_by_supplier", "sales_by_territory", "sales_by_route", "gross_margin_by_supplier"):
+        data = api.get(f"/api/v1/reports/{key}").data
+        t = data["totals"]
+        assert data["columns"][2:5] == ["sales", "returns", "net_sales"], key
+        assert (D(t["sales"]), D(t["returns"]), D(t["net_sales"])) == (D("420"), D("150"), D("270")), (key, t)
+        assert D(t["gross_margin"]) == D(t["net_sales"]) - D(t["cogs"]), key

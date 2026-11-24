@@ -102,6 +102,7 @@ def sales_by_product(date_from=None, date_to=None, **_):
 
     out = _group(_inv_lines(date_from, date_to), lambda l: l.variant_id, lambda l: l.variant.name, codes)
     out["column_labels"] = {"label": "Product Name", "upc": "UPC"}
+    _with_returns(out, date_from, date_to, lambda l: (str(l.variant_id), l.variant.name, codes(l)))
     out["column_styles"] = {"label": "bold"}   # owner, 8 Nov 2026
     out["notes"] = {"label": "codes"}
     out["export_columns"] = ["label", "item_code", "upc", *out["columns"][1:]]
@@ -110,15 +111,17 @@ def sales_by_product(date_from=None, date_to=None, **_):
 
 
 def sales_by_brand(date_from=None, date_to=None, **_):
-    out = _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.brand_id, lambda l: l.variant.product.brand.name if l.variant.product.brand_id else "(no brand)")
+    brand = lambda l: (str(l.variant.product.brand_id), l.variant.product.brand.name if l.variant.product.brand_id else "(no brand)")
+    out = _group(_inv_lines(date_from, date_to), lambda l: brand(l)[0], lambda l: brand(l)[1])
     out["column_labels"] = {"label": "Brand"}
-    return out
+    return _with_returns(out, date_from, date_to, brand)
 
 
 def sales_by_supplier(date_from=None, date_to=None, **_):
-    out = _group(_inv_lines(date_from, date_to), lambda l: l.variant.product.supplier_id, lambda l: l.variant.product.supplier.name if l.variant.product.supplier_id else "(no supplier)")
+    maker = lambda l: (str(l.variant.product.supplier_id), l.variant.product.supplier.name if l.variant.product.supplier_id else "(no supplier)")
+    out = _group(_inv_lines(date_from, date_to), lambda l: maker(l)[0], lambda l: maker(l)[1])
     out["column_labels"] = {"label": "Supplier Name"}
-    return out
+    return _with_returns(out, date_from, date_to, maker)
 
 
 def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
@@ -131,14 +134,17 @@ def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
     """
     from apps.sales.models import CreditNoteLine
 
-    key_of = key_of or (lambda cn: (str(cn.customer_id), cn.customer.name))
+    key_of = key_of or (lambda l: (str(l.credit_note.customer_id), l.credit_note.customer.name))
     cnl = _window(CreditNoteLine.objects.filter(credit_note__status="posted", **by_type).select_related(
-        "credit_note__customer", "credit_note__invoice__rep", "credit_note__invoice__order__rep", "credit_note__invoice__order__trip__rep",
+        "variant__product__brand", "variant__product__supplier", "credit_note__customer__territory", "credit_note__customer__route",
+        "credit_note__invoice__rep", "credit_note__invoice__order__rep", "credit_note__invoice__order__trip__rep",
         "credit_note__invoice__delivery_note__trip__rep"), "credit_note__date", date_from, date_to)
-    back = defaultdict(lambda: {"value": Z, "cost": Z, "qty": Z, "name": ""})
+    back = defaultdict(lambda: {"value": Z, "cost": Z, "qty": Z, "name": "", "extra": {}})
     for l in cnl:
-        key, name = key_of(l.credit_note)
+        got = key_of(l)
+        key, name = got[0], got[1]
         b = back[key]
+        b["extra"] = got[2] if len(got) > 2 else {}
         b["value"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
         b["cost"] += l.qty * l.unit_cost
         b["qty"] += l.qty
@@ -146,7 +152,7 @@ def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
     have = {r["key"] for r in out["rows"]}
     for k, b in back.items():
         if k not in have:
-            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0, **(blank or {})})
+            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0, **b["extra"], **(blank or {})})
     for r in out["rows"]:
         b = back.get(r["key"], {"value": Z, "cost": Z, "qty": Z})
         net = Decimal(r["sales"]) - b["value"]
@@ -155,6 +161,15 @@ def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
         r.update({"returns": str(b["value"]), "net_sales": str(net), "qty": str(Decimal(r["qty"]) - b["qty"]), "cogs": str(cogs),
                   "gross_margin": str(margin), "margin_pct": str((margin / net * 100).quantize(Decimal("0.01")) if net else Z)})
     out["rows"].sort(key=lambda r: -Decimal(r["net_sales"]))
+
+
+def _with_returns(out, date_from, date_to, key_of):
+    """Sales by product / brand / supplier / territory / route, net of the period's returns (owner, 24 Nov 2026: "yes fix")."""
+    _net_of_returns(out, date_from, date_to, by_type={}, key_of=key_of)
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
+    out["column_labels"] = {**out.get("column_labels", {}), "qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
+    return out
 
 
 def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
@@ -226,7 +241,7 @@ def sales_by_rep(date_from=None, date_to=None, **_):
         r["outstanding"] = str(outstanding[r["key"]])
     # returns in the period (credit-note date) come off the sales side, as in Sales by customer (owner, 24 Nov 2026)
     _net_of_returns(out, date_from, date_to, by_type={},
-                    key_of=lambda cn: (str(_sale_person(cn.invoice)[0]), names.get(str(_sale_person(cn.invoice)[0]), _sale_person(cn.invoice)[1])) if cn.invoice_id else ("None", "No Sale Person"),
+                    key_of=lambda l: (str(_sale_person(l.credit_note.invoice)[0]), names.get(str(_sale_person(l.credit_note.invoice)[0]), _sale_person(l.credit_note.invoice)[1])) if l.credit_note.invoice_id else ("None", "No Sale Person"),
                     blank={k: "0" for k in ("cash_sales", "credit_sales", "billed", "credited", "received", "outstanding")})
     out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"]
     out["column_labels"].update({"qty": "Net Qty", "net_sales": "Net Sales", "billed": "Billed (Incl. Tax)", "credited": "Credited (Incl. Tax)", "cogs": "COGS"})
@@ -377,11 +392,15 @@ def pending_payments(due_within="Next 7 days", pay_type=None, rep=None, customer
 
 
 def sales_by_territory(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to).select_related("invoice__customer__territory", "invoice__customer__route"), lambda l: l.invoice.customer.territory_id, lambda l: l.invoice.customer.territory.name if l.invoice.customer.territory_id else "(no territory)")
+    area = lambda c: (str(c.territory_id), c.territory.name if c.territory_id else "(no territory)")
+    out = _group(_inv_lines(date_from, date_to).select_related("invoice__customer__territory", "invoice__customer__route"), lambda l: area(l.invoice.customer)[0], lambda l: area(l.invoice.customer)[1])
+    return _with_returns(out, date_from, date_to, lambda l: area(l.credit_note.customer))
 
 
 def sales_by_route(date_from=None, date_to=None, **_):
-    return _group(_inv_lines(date_from, date_to).select_related("invoice__customer__route"), lambda l: l.invoice.customer.route_id, lambda l: l.invoice.customer.route.name if l.invoice.customer.route_id else "(no route)")
+    road = lambda c: (str(c.route_id), c.route.name if c.route_id else "(no route)")
+    out = _group(_inv_lines(date_from, date_to).select_related("invoice__customer__route"), lambda l: road(l.invoice.customer)[0], lambda l: road(l.invoice.customer)[1])
+    return _with_returns(out, date_from, date_to, lambda l: road(l.credit_note.customer))
 
 
 def sales_by_period(date_from=None, date_to=None, granularity="day", **_):
