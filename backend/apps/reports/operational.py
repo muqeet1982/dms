@@ -39,6 +39,28 @@ def _net_sales(l):
     return l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
 
 
+def _sale_person(inv):
+    """
+    (rep id, name) of who sold an invoice — the rule the invoice list's Sales person follows: the invoice's own rep, else
+    its order's, else the sales rep on the order's or the delivery's trip. Reports used the invoice's rep alone and put
+    the rest under "(staff)": TDN's nine in October were NAVEED's and Anza's, their rep only on the order (owner, 24 Nov 2026).
+    """
+    if inv.rep_id:
+        return inv.rep_id, inv.rep.name
+    o = inv.order if inv.order_id else None
+    if o is not None and o.rep_id:
+        return o.rep_id, o.rep.name
+    if o is not None and o.trip_id and o.trip.rep_id:
+        return o.trip.rep_id, o.trip.rep.name
+    dn = inv.delivery_note if inv.delivery_note_id else None
+    if dn is not None and dn.trip_id and dn.trip.rep_id:
+        return dn.trip.rep_id, dn.trip.rep.name
+    return None, "No Sale Person"
+
+
+SALE_PERSON_RELATED = ("invoice__rep", "invoice__order__rep", "invoice__order__trip__rep", "invoice__delivery_note__trip__rep")
+
+
 def _group(rows, key_fn, label_fn, extra_fn=None):
     out = defaultdict(lambda: {"qty": Z, "sales": Z, "cogs": Z, "invoices": set()})
     for l in rows:
@@ -87,15 +109,18 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
     return out
 
 
-def sales_by_customer(date_from=None, date_to=None, **_):
+def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     """Headed Customer Name, with who sold to them under the name (owner, 8 Nov 2026): the sale persons on its invoices in
-    the period, else the reps the customer is assigned to. A spreadsheet takes them as a column of their own."""
-    lines = _inv_lines(date_from, date_to).select_related("invoice__customer", "invoice__rep")
+    the period, else the reps the customer is assigned to. A spreadsheet takes them as a column of their own. Customer
+    Type narrows it to salons, retailers ... (owner, 24 Nov 2026)."""
+    by_type = {"invoice__customer__type": CUSTOMER_TYPES[customer_type]} if customer_type in CUSTOMER_TYPES else {}
+    lines = _inv_lines(date_from, date_to, **by_type).select_related("invoice__customer", *SALE_PERSON_RELATED)
     out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
     sold_by = defaultdict(dict)
     for l in lines:
-        if l.invoice.rep_id:
-            sold_by[str(l.invoice.customer_id)][l.invoice.rep.name] = None
+        rep_id, name = _sale_person(l.invoice)
+        if rep_id:
+            sold_by[str(l.invoice.customer_id)][name] = None
     from apps.partners.models import Customer
 
     assigned = {str(c.pk): [r.name for r in c.assigned_reps.all()] for c in Customer.objects.filter(pk__in=[r["key"] for r in out["rows"] if r["key"] not in sold_by]).prefetch_related("assigned_reps")}
@@ -116,15 +141,15 @@ def _sold_on_credit(invoice):
 
 
 def sales_by_rep(date_from=None, date_to=None, **_):
-    lines = _inv_lines(date_from, date_to).select_related("invoice__order", "invoice__customer")
-    out = _group(lines, lambda l: l.invoice.rep_id, lambda l: l.invoice.rep.name if l.invoice.rep_id else "(staff)")
+    lines = _inv_lines(date_from, date_to).select_related("invoice__order", "invoice__customer", *SALE_PERSON_RELATED)
+    out = _group(lines, lambda l: _sale_person(l.invoice)[0], lambda l: _sale_person(l.invoice)[1])
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
     out["column_labels"] = {"label": "Sale Person"}   # owner, 8 Nov 2026: "Sales by Sale Person"
 
     # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
     credit, returns, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()
     for l in lines:
-        rep = str(l.invoice.rep_id)
+        rep = str(_sale_person(l.invoice)[0])
         if _sold_on_credit(l.invoice):
             credit[rep] += _net_sales(l)
         if l.invoice_id not in counted:
@@ -147,6 +172,40 @@ def sales_by_rep(date_from=None, date_to=None, **_):
                      "returns": str(sum(returns.values(), Z)), "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
                      **{k: v for k, v in out["totals"].items() if k != "sales"}}
     return out
+
+
+PAYMENT_STATUS = {"posted": "Unpaid", "partially_paid": "Partially Paid", "paid": "Paid", "overdue": "Overdue", "returned": "Returned"}
+
+
+def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, **_):
+    """
+    Daily sale report (owner, 24 Nov 2026): one row per invoice on the books — Date, Invoice No, Customer, Sale Person,
+    Payment Status, Total (before discount), Discount, Grand Total (what the customer is billed), and a link to the invoice.
+    Opens on today; any date range, one sale person or one payment status can be picked.
+    """
+    from apps.sales.models import SalesInvoice
+
+    qs = SalesInvoice.objects.filter(status__in=list(PAYMENT_STATUS)).select_related("customer", "rep", "order__rep", "order__trip__rep", "delivery_note__trip__rep")
+    qs = _window(qs, "date", date_from, date_to)
+    wanted = {v: k for k, v in PAYMENT_STATUS.items()}.get(payment_status)
+    if wanted:
+        qs = qs.filter(status=wanted)
+    rows, tot = [], {"total": Z, "discount": Z, "grand_total": Z}
+    for inv in qs.order_by("date", "number"):
+        rep_id, person = _sale_person(inv)
+        if rep and str(rep_id) != str(rep):
+            continue
+        row = {"date": inv.date, "invoice": inv.number, "customer": inv.customer.name, "sale_person": person,
+               "payment_status": PAYMENT_STATUS[inv.status], "total": str(inv.subtotal), "discount": str(inv.discount),
+               "grand_total": str(inv.total), "view": "View", "invoice_id": str(inv.pk)}
+        for k in tot:
+            tot[k] += Decimal(row[k])
+        rows.append(row)
+    cols = ["date", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "grand_total", "view"]
+    return {"columns": cols, "rows": rows, "totals": {k: str(v) for k, v in tot.items()},
+            "column_labels": {"invoice": "Invoice No", "sale_person": "Sale Person", "payment_status": "Payment Status", "grand_total": "Grand Total", "view": "View Invoice"},
+            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id"}},
+            "export_columns": cols[:-1]}
 
 
 def sales_by_territory(date_from=None, date_to=None, **_):

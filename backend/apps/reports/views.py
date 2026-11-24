@@ -47,7 +47,10 @@ class ReportRunView(APIView):
             v = request.query_params.get(p["name"])
             if v in (None, ""):
                 if p.get("default") is not None:
-                    params[p["name"]] = p["default"]
+                    # "today" for a date opens on the current day (the Daily sale report, 24 Nov 2026)
+                    from django.utils import timezone
+
+                    params[p["name"]] = timezone.localdate() if p["default"] == "today" else p["default"]
                 continue
             if p["type"] == "date" or p["name"] in DATE_PARAMS:
                 v = date.fromisoformat(v)
