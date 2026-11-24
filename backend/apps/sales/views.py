@@ -140,9 +140,11 @@ class SalesOrderViewSet(DocumentViewSet):
         can_override = m.has_perm("sales.override_price") or m.is_owner
         if m.supplier_rep_id and not d["customer"].assigned_reps.filter(pk=rep.pk).exists():
             raise DomainError("Customer is not assigned to you.", status_code=403)
+        OrderService.require_payment_mode(d.get("payment_mode"))
         serializer.instance = OrderService.create(
             customer=d["customer"], lines=self._lines(d["lines"]), source=source, rep=rep, supplier=d.get("supplier"), warehouse=d.get("warehouse"), order_date=d.get("order_date"), requested_delivery_date=d.get("requested_delivery_date"),
             notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), price_list=d.get("price_list"), allow_override=can_override, apply_customer_discount=d.get("apply_customer_discount", True), discount_pct=d.get("discount_pct"), charge_tax=d.get("charge_tax"), auto_confirm=bool(self.request.data.get("confirm")) and m.has_perm("sales.confirm_sales_order"),
+            payment_mode=d.get("payment_mode") or None,
         )
 
     def perform_update(self, serializer):

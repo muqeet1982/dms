@@ -282,6 +282,7 @@ class ExtOrdersView(ExtBase):
         if want_photo == "required" and not photos and rep is not None:
             raise DomainError("Take a photo of the shop to submit this order.", code="photo_required", status_code=400)
         source = "api" if getattr(request, "api_key", None) else "rep_app"
+        OrderService.require_payment_mode(d.get("payment_mode"))
         order = OrderService.create(customer=customer, lines=lines, source=source, rep=rep, supplier=supplier, location=location, requested_delivery_date=d.get("requested_delivery_date"), notes=d.get("notes", ""), external_ref=d.get("external_ref", ""), allow_override=False, payment_mode=d.get("payment_mode"))
         GeoFenceService.link(rep, "order", order)
         where = coords(d.get("gps"))

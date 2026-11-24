@@ -119,6 +119,7 @@ export function RepNewOrderPage() {
   const [cart, setCart] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [notes, setNotes] = useState("");
+  const [payMode, setPayMode] = useState("");   // Cash or Credit, chosen on every new order (owner, 24 Nov 2026)
   const editing = useQuery({ queryKey: ["rep-order", editId], queryFn: () => api.get(`/ext/v1/orders/${editId}`), enabled: Boolean(editId) });
   const [seeded, setSeeded] = useState(false);
   if (editId && editing.data && !seeded) {
@@ -137,6 +138,7 @@ export function RepNewOrderPage() {
   const total = cart.reduce((s, c) => s + (c.price || 0) * c.qty, 0);
   const submit = async () => {
     if (!customer || !cart.length) return toast.error("Choose a customer and add items");
+    if (!editId && !payMode) return toast.error("Choose Cash or Credit for this order");
     try {
       if (editId) {
         const r = await api.patch(`/ext/v1/orders/${editId}`, {
@@ -147,7 +149,7 @@ export function RepNewOrderPage() {
         return nav(`/rep/orders/${r.id}`);
       }
       const r = await api.post("/ext/v1/orders", {
-        customer: { id: customer }, requested_delivery_date: deliveryDate || undefined, notes,
+        customer: { id: customer }, requested_delivery_date: deliveryDate || undefined, notes, payment_mode: payMode,
         gps: visit.gps || undefined,
         attachments: visit.photo ? [visit.photo] : undefined,
         lines: cart.map((c) => ({ variant_id: c.variant_id, qty: c.qty, packaging: c.packaging || undefined })),
@@ -160,7 +162,7 @@ export function RepNewOrderPage() {
     <>
       <PageHeader title={editId ? `Correct ${editing.data?.number || "order"}` : "New order"} crumbs={[]} />
       {editId ? <Alert kind="info">You are correcting this order — the whole basket below replaces its lines when you save. No location check on a correction.</Alert> : <VisitCard visit={visit} />}
-      <div className="card mb-3"><div className="card-body"><Field label="Customer *"><EntitySelect endpoint="/ext/v1/customers" value={customer} onChange={setCustomer} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""}` })} /></Field><div className="row"><Field label="Requested delivery" col="col-6"><DateInput className="form-control" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} /></Field><Field label="Notes" col="col-6"><input className="form-control" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field></div></div></div>
+      <div className="card mb-3"><div className="card-body"><Field label="Customer *"><EntitySelect endpoint="/ext/v1/customers" value={customer} onChange={setCustomer} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""}` })} /></Field>{!editId && <Field label="Payment *"><select className="form-select" value={payMode} onChange={(e) => setPayMode(e.target.value)}><option value="">— Choose —</option><option value="cash">Cash</option><option value="credit">Credit</option></select></Field>}<div className="row"><Field label="Requested delivery" col="col-6"><DateInput className="form-control" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} /></Field><Field label="Notes" col="col-6"><input className="form-control" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field></div></div></div>
       <div className="row g-3">
         <div className="col-lg-7">
           <div className="card"><div className="card-header"><div className="input-group"><span className="input-group-text"><i className="ti ti-scan" /></span><input className="form-control" placeholder="Scan barcode…" value={scan} onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doScan()} /><input className="form-control" placeholder="Search products…" value={search} onChange={(e) => setSearch(e.target.value)} /></div></div>

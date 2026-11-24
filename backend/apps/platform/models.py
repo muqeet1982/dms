@@ -228,6 +228,11 @@ class Tenant(models.Model):
         # the advance income tax % (236G/236H) a customer is given when its Tax invoice is switched on with no rate of its
         # own (owner, 14 Nov 2026: "when tax invoice on then advance income tax should be 0.5"); a rate typed stays
         "tax_customer_advance_tax_pct": 0.5,
+        # every new order says Cash or Credit — the person taking it chooses, nothing is assumed from the customer's terms
+        # (owner, 24 Nov 2026: almost every TDN sale read as cash because customers had 0 credit days)
+        "payment_mode_required": True,
+        # an order sold on Credit to a customer with no credit days of its own is due this many days after its invoice
+        "credit_days_default": 30,
     }
 
     def setting(self, key):

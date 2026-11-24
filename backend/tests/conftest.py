@@ -40,7 +40,7 @@ def make_tenant(slug, admin):
     # the strict order (owner, 11 Nov 2026: no trip before the invoice is posted, no delivery without a trip) is on for
     # every company; the tests written before it deliver straight from the note, so it is off here and its own tests
     # (test_strict_dispatch_order.py) turn it on
-    t.settings = {**(t.settings or {}), "trip_needs_posted_invoice": False, "delivery_needs_trip": False}
+    t.settings = {**(t.settings or {}), "trip_needs_posted_invoice": False, "delivery_needs_trip": False, "payment_mode_required": False}
     t.save(update_fields=["settings"])
     return t
 

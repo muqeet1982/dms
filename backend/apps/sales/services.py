@@ -353,6 +353,18 @@ class OrderService:
                     line.save(update_fields=["discount_pct"])
         OrderService.recompute(order, allow_override)
 
+    @staticmethod
+    def require_payment_mode(mode):
+        """A new order from the office or the rep app says Cash or Credit — chosen, not assumed (owner, 24 Nov 2026: "make the
+        sale person always choose"). Setting `payment_mode_required` (on by default); imports and other internal callers still
+        default from the customer's terms."""
+        if mode in ("cash", "credit"):
+            return
+        if mode:
+            raise DomainError("payment_mode must be cash or credit.", code="bad_payment_mode", status_code=400)
+        if get_current_tenant().setting("payment_mode_required"):
+            raise DomainError("Choose Cash or Credit for this order.", code="payment_mode_required", status_code=400)
+
     # ---------------------------------------------------------------- create
     @staticmethod
     @transaction.atomic
@@ -1114,7 +1126,7 @@ class InvoiceService:
             return dn.invoice
         order = dn.order
         customer = order.customer
-        inv = SalesInvoice.objects.create(number=derived_number(order.number if order else (dn.order.number if dn and dn.order_id else None), "sales_invoice", SalesInvoice), customer=customer, order=order, delivery_note=dn, rep=order.rep, date=timezone.localdate(), due_date=timezone.localdate() + timedelta(days=customer.credit_days or 0), cost_centre=order.cost_centre, from_transit=bool(order.trip_id and get_current_tenant().setting("two_step_dispatch")))
+        inv = SalesInvoice.objects.create(number=derived_number(order.number if order else (dn.order.number if dn and dn.order_id else None), "sales_invoice", SalesInvoice), customer=customer, order=order, delivery_note=dn, rep=order.rep, date=timezone.localdate(), due_date=timezone.localdate() + timedelta(days=InvoiceService.days_to_pay(order, customer)), cost_centre=order.cost_centre, from_transit=bool(order.trip_id and get_current_tenant().setting("two_step_dispatch")))
         subtotal = disc = t1 = t2 = Decimal("0")
         tax1_type = tax2_type = None
         for i, dl in enumerate(dn.lines.select_related("order_line", "variant", "batch")):
@@ -1558,6 +1570,16 @@ class InvoiceService:
         rewrite_quoted_numbers(inv.tenant_id, [(inv.pk, old, new)])
         AuditService.log(action, inv, before={"number": old}, after={"number": new})
         return inv
+
+    @staticmethod
+    def days_to_pay(order, customer):
+        """How long the customer has to pay: the customer's own credit days; an order sold on Credit to a customer with none
+        takes the company's `credit_days_default` (Settings → Rules, 30) — almost every TDN customer had 0 days, so every
+        invoice fell due the day it was made (owner, 24 Nov 2026). Cash is due on the day."""
+        days = int(customer.credit_days or 0)
+        if days <= 0 and order is not None and order.payment_mode == "credit":
+            days = int(get_current_tenant().setting("credit_days_default") or 0)
+        return days
 
     @staticmethod
     def is_tax_numbered(inv):

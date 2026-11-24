@@ -290,7 +290,7 @@ export function OrderFormPage() {
   if (id && existing.isLoading) return <Spinner />;
   if (!form) {
     const o = existing.data;
-    setForm(o ? { customer: o.customer, warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
+    setForm(o ? { customer: o.customer, payment_mode: o.payment_mode || "", warehouse: o.warehouse, rep: o.rep, order_date: o.order_date, requested_delivery_date: o.requested_delivery_date || "", notes: o.notes || "", version: o.version, apply_customer_discount: true, discount_pct: o.discount_pct != null ? String(Number(o.discount_pct)) : (o.apply_customer_discount ? "" : "0") } : { customer: sp.get("customer") || null, payment_mode: "", warehouse: "", rep: null, order_date: new Date().toISOString().slice(0, 10), requested_delivery_date: "", notes: "", apply_customer_discount: true, discount_pct: "" });
     // a carton line is stored in pieces at the piece price; the form shows (and sends) cartons at the carton price. A price
     // somebody typed (requested_price) is kept as typed; every other line is re-priced by the server on save
     if (o) setLines(o.lines.map((l: any) => { const per = l.packaging ? Number(l.packaging_qty_in_base) || 1 : 1; return { key: l.id, variant: l.variant, variant_name: l.variant_name, sku: l.variant_sku, packaging: l.packaging, packagings: [], qty: String(Number(l.qty_ordered) / per), unit_price: String(Number(l.unit_price) * per), discount_pct: l.discount_pct, extra: { typed_price: l.requested_price != null, priced_for: o.customer, base_price: String(Number(l.unit_price)), fbr_rate: l.product_fbr_rate || "", fbr_others: { fed: l.product_fed_rate, extra: l.product_extra_tax_rate, further: l.product_further_tax_rate, wht: l.product_wht_rate } } }; }));
@@ -298,6 +298,7 @@ export function OrderFormPage() {
   }
   const submit = async (confirm: boolean) => {
     if (!form.customer) return toast.error("Select a customer");
+    if (!form.payment_mode) { setErr("Choose Cash or Credit for this order."); return toast.error("Choose Cash or Credit for this order"); }
     const valid = lines.filter((l) => l.variant && Number(l.qty) > 0);
     if (!valid.length) return toast.error("Add at least one line");
     setSaving(true);
@@ -315,7 +316,9 @@ export function OrderFormPage() {
       <SaveError error={err} what="order" />
       <div className="card mb-3"><div className="card-body">
         <div className="row">
-          <Field label="Customer *" col="col-md-4"><EntitySelect endpoint="/api/v1/customers" query={{ status: "active" }} value={form.customer} onChange={(v, raw) => setForm({ ...form, customer: v, discount_pct: raw ? String(Number(raw.default_discount_pct) || 0) : form.discount_pct })} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""} · outstanding ${money(c.outstanding)}`, raw: c })} /></Field>
+          <Field label="Customer *" col="col-md-3"><EntitySelect endpoint="/api/v1/customers" query={{ status: "active" }} value={form.customer} onChange={(v, raw) => setForm({ ...form, customer: v, discount_pct: raw ? String(Number(raw.default_discount_pct) || 0) : form.discount_pct })} mapOption={(c) => ({ id: c.id, label: c.name, sub: `${c.code} · ${c.city || ""} · outstanding ${money(c.outstanding)}`, raw: c })} /></Field>
+          {/* chosen on every new order, nothing pre-selected (owner, 24 Nov 2026: "make the sale person always choose") */}
+          <Field label="Payment *" col="col-md-2"><select className={`form-select ${err && !form.payment_mode ? "is-invalid" : ""}`} value={form.payment_mode || ""} onChange={(e) => setForm({ ...form, payment_mode: e.target.value })}><option value="">— Choose —</option><option value="cash">Cash</option><option value="credit">Credit</option></select></Field>
           <Field label="Warehouse" col="col-md-2"><select className="form-select" value={form.warehouse || warehouses.defaultId || ""} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>{!warehouses.rows.length && <option value="">—</option>}{warehouses.rows.map((w: any) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? " (default)" : ""}</option>)}</select></Field>
           <Field label="Sale person" col="col-md-2" hint="linked on the customer — change it there"><SalePersonAuto customer={form.customer} editingRep={form.rep} /></Field>
           <Field label="Order date" col="col-md-2"><DateInput className="form-control" value={form.order_date} onChange={(e) => setForm({ ...form, order_date: e.target.value })} /></Field>

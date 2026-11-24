@@ -3,7 +3,7 @@
 Written for: the AI/developer building the React Native (Expo) mobile app for the Distribution Management SaaS.
 Everything the app needs — authentication, tenant selection, every endpoint with payloads, push notifications,
 offline sync rules and worked examples — is in this file. The backend is **live** and seeded with demo data.
-**Document version: 13 Nov 2026 (rev 12)** — this is the single source of truth; §14 lists what changed since rev 1.
+**Document version: 24 Nov 2026 (rev 13)** — this is the single source of truth; §14 lists what changed since rev 1.
 
 | Item | Value |
 | --- | --- |
@@ -299,6 +299,7 @@ POST /ext/v1/orders            Idempotency-Key: 0f3c…
   "customer": { "id": "uuid" },                 // or {"code": "C-00042"} or {"phone": "+92300…", "name": "…", "address": "…"} (creates)
   "requested_delivery_date": "2026-09-24",
   "notes": "deliver before 2pm",
+  "payment_mode": "cash",                       // REQUIRED (rev 13): "cash" | "credit" — the rep chooses, nothing pre-selected
   "lines": [
     { "barcode": "6291041500001", "qty": 2, "packaging": "box" },      // scanned carton/box barcode → 2 boxes = 24 pcs
     { "sku": "SC-1", "qty": 6 },                                        // base units
@@ -702,5 +703,6 @@ the diff so an app built against the first version knows what to touch.
 | **Delivery (rev 12)** | New staff action `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` for a note not yet on a trip; notes carry **`can_cancel`**, and the page extra `delivery_notes.cancel` gates it. Optional for the app — the office does this on the web | §7.3 |
 | **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/cancel` answers **`422 invoiced`** for an order with a posted invoice (it used to cancel the invoice silently). Hide the button when any `invoices[]` entry is neither `draft` nor `cancelled`; show `detail` if the server refuses | §7.x orders |
 | **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/mark-delivered` answers `422 trip_required` until the order is on a trip (setting `delivery_needs_trip`, default on); show it only when the order has a `trip`. `POST /api/v1/delivery-notes/{id}/deliver-again` answers `422 delivered` once anything of the order was delivered | §7.x orders |
+| **Orders (rev 13)** | `POST /ext/v1/orders` (and the staff `POST /api/v1/sales-orders`) now **require `payment_mode`** — `"cash"` or `"credit"` — and answer **`400 payment_mode_required`** ("Choose Cash or Credit for this order.") without it; anything else is `400 bad_payment_mode`. Owner, 24 Nov 2026: the sale person always chooses — the app must show Cash / Credit with **nothing pre-selected** and not fall back to the customer's terms. Setting `payment_mode_required` (on by default). A Credit order to a customer with 0 credit days is due after the company's `credit_days_default` (30) instead of on the day. Order edits do not need it. | Place order |
 
 Questions or a missing endpoint: check `https://dms.invoiceflow.pk/api/docs/` first — it is generated from the running code.

@@ -230,6 +230,77 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, **_
             "export_columns": cols[:-1]}
 
 
+DUE_WINDOWS = {"Next 7 days": 7, "Next 14 days": 14, "Next 30 days": 30}
+
+
+def pending_payments(due_within="Next 7 days", pay_type=None, rep=None, customer=None, **_):
+    """
+    What customers still owe (owner, 24 Nov 2026: "what much pending and how much cash or credit pending ... which payments
+    are due in next 7 days with option to change to 14 or 30"). Cards on top: Total, Cash and Credit pending, Overdue, and
+    Due in the chosen window — over everything pending for the chosen sale person / customer / cash-or-credit. The table
+    lists the invoices in the window (Next 7, 14 or 30 days from today), the Overdue ones, or All pending. Cash or credit
+    is the order's own choice; a cash sale is due on its invoice day.
+    """
+    from apps.sales.models import SalesInvoice
+
+    today = timezone.localdate()
+    qs = SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "overdue"]).select_related(
+        "customer", "rep", "order", "order__rep", "order__trip__rep", "delivery_note__trip__rep")
+    if customer:
+        qs = qs.filter(customer_id=customer)
+    names = _rep_names()
+    pending = []
+    for inv in qs:
+        due = inv.balance
+        if due <= Decimal("0.005"):
+            continue
+        rep_id, person = _sale_person(inv)
+        if rep and str(rep_id) != str(rep):
+            continue
+        kind = "Credit" if _sold_on_credit(inv) else "Cash"
+        if pay_type in ("Cash", "Credit") and kind != pay_type:
+            continue
+        on = inv.due_date or inv.date
+        days = (on - today).days
+        when = "Due today" if days == 0 else (f"Due in {days} day{'' if days == 1 else 's'}" if days > 0 else f"{-days} day{'' if days == -1 else 's'} overdue")
+        pending.append({"date": inv.date, "invoice": inv.number, "customer": inv.customer.name, "sale_person": names.get(str(rep_id), person),
+                        "pay_type": kind, "due_date": on, "when": when, "cash_due": str(due) if kind == "Cash" else "", "credit_due": str(due) if kind == "Credit" else "",
+                        "due": str(due), "view": "View", "invoice_id": str(inv.pk), "_days": days, "_due": due, "_kind": kind})
+    window = DUE_WINDOWS.get(due_within)
+    if due_within == "Overdue":
+        rows = [r for r in pending if r["_days"] < 0]
+    elif due_within == "All pending":
+        rows = pending
+    else:
+        window = window or 7
+        rows = [r for r in pending if 0 <= r["_days"] <= window]
+    rows.sort(key=lambda r: (r["due_date"], r["invoice"]))
+
+    def total(rs, kind=None):
+        return sum((r["_due"] for r in rs if kind is None or r["_kind"] == kind), Z)
+
+    soon = window or 7
+    summary = [
+        {"label": "Total pending", "value": str(total(pending)), "count": len(pending)},
+        {"label": "Cash pending", "value": str(total(pending, "Cash")), "count": sum(1 for r in pending if r["_kind"] == "Cash")},
+        {"label": "Credit pending", "value": str(total(pending, "Credit")), "count": sum(1 for r in pending if r["_kind"] == "Credit")},
+        {"label": "Overdue", "value": str(total([r for r in pending if r["_days"] < 0])), "count": sum(1 for r in pending if r["_days"] < 0), "tone": "danger"},
+        {"label": f"Due in next {soon} days", "value": str(total([r for r in pending if 0 <= r["_days"] <= soon])), "count": sum(1 for r in pending if 0 <= r["_days"] <= soon), "tone": "warning"},
+    ]
+    for r in rows:
+        for k in ("_days", "_due", "_kind"):
+            r.pop(k, None)
+    cols = ["date", "invoice", "customer", "sale_person", "pay_type", "due_date", "when", "cash_due", "credit_due", "due", "view"]
+    return {"columns": cols, "rows": rows, "summary": summary,
+            "totals": {"cash_due": str(sum((Decimal(r["cash_due"] or 0) for r in rows), Z)), "credit_due": str(sum((Decimal(r["credit_due"] or 0) for r in rows), Z)),
+                       "due": str(sum((Decimal(r["due"]) for r in rows), Z))},
+            "column_labels": {"invoice": "Invoice No", "sale_person": "Sale Person", "pay_type": "Cash / Credit", "due_date": "Due Date", "when": "Status",
+                              "cash_due": "Cash Pending", "credit_due": "Credit Pending", "due": "Total Pending", "view": "View Invoice"},
+            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id"}},
+            "column_styles": {"when": "danger"} if due_within == "Overdue" else {},
+            "export_columns": cols[:-1]}
+
+
 def sales_by_territory(date_from=None, date_to=None, **_):
     return _group(_inv_lines(date_from, date_to).select_related("invoice__customer__territory", "invoice__customer__route"), lambda l: l.invoice.customer.territory_id, lambda l: l.invoice.customer.territory.name if l.invoice.customer.territory_id else "(no territory)")
 

@@ -116,3 +116,32 @@ def test_trip_reaches_rep_only_with_their_own_stop(rep_app, tenant):
         trip.stops_count = 0
         emit("delivery.assigned", trip=trip)  # no stop of theirs on it
         assert not Notification.objects.filter(user=rep_app["rep"].user, data__trip_id=str(trip.id)).exists()
+
+
+def _require(tenant):
+    tenant.settings = {**(tenant.settings or {}), "payment_mode_required": True}
+    tenant.save(update_fields=["settings"])
+
+
+def test_the_rep_must_choose_cash_or_credit(rep_app):
+    """Owner, 24 Nov 2026: almost every TDN sale read as cash because customers had 0 credit days. A new order says Cash or
+    Credit, chosen by whoever takes it — nothing is assumed."""
+    _require(rep_app["tenant"])
+    r = _post_order(rep_app)
+    assert r.status_code == 400 and r.data["type"] == "payment_mode_required", r.content
+    assert _post_order(rep_app, mode="credit").data["payment_mode"] == "credit"
+    assert _post_order(rep_app, mode="cash").data["payment_mode"] == "cash"
+
+
+def test_the_office_must_choose_cash_or_credit_too(api, tenant):
+    from .conftest import seed_basic
+
+    wh, _s, v, cust = seed_basic(tenant)
+    _require(tenant)
+    body = {"customer": str(cust.id), "warehouse": str(wh.id), "lines": [{"variant": str(v.id), "qty": "1"}]}
+    r = api.post("/api/v1/sales-orders", body, format="json")
+    assert r.status_code == 400 and r.data["type"] == "payment_mode_required", r.content
+    r = api.post("/api/v1/sales-orders", {**body, "payment_mode": "credit"}, format="json")
+    assert r.status_code == 201 and r.data["payment_mode"] == "credit", "the office's choice is kept, not the customer's terms"
+    r = api.patch(f"/api/v1/sales-orders/{r.data['id']}", {"payment_mode": "cash", "version": r.data["version"]}, format="json")
+    assert r.status_code == 200 and r.data["payment_mode"] == "cash", "and can be corrected on an edit"
