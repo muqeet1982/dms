@@ -61,7 +61,7 @@ def test_the_daily_sale_report(api, world):
     for r in data["rows"]:
         assert D(r["total"]) - D(r["discount"]) + D(r["tax"]) == D(r["grand_total"]), r
     cards = {c["label"]: c for c in data["summary"]}
-    assert D(cards["Sales"]["value"]) == D("420") and D(cards["Received"]["value"]) == D("100") and D(cards["Pending"]["value"]) == D("320")
+    assert D(cards["Sales"]["value"]) == D("420") and D(cards["Received"]["value"]) == D("100") and D(cards["Outstanding"]["value"]) == D("320")
     assert D(cards["Returns"]["value"]) == 0 and D(cards["Net sales"]["value"]) == D("420")
     assert D(data["totals"]["grand_total"]) == D("420") and D(data["totals"]["discount"]) == D("30")
     assert "view" not in data["export_columns"] and "href" not in data["export_columns"], "no link column in the spreadsheet"

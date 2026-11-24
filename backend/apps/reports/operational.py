@@ -258,7 +258,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
     Invoice / Return No, Customer, Sale Person, Payment Status, Total (before discount), Discount, Tax, Grand Total and a
     read-only View. Total − Discount + Tax = Grand Total on every row: a tax invoice's Grand Total carries its GST and
     advance income tax, which is why it could exceed Total with no Tax column to show it. A return reads in minus, so the
-    totals are the net. Cards on top: Sales, Returns, Net Sales, and what is Received / still Pending on the day's invoices.
+    totals are the net. Cards on top: Sales, Returns, Net Sales, and what is Received / still Outstanding on the day's invoices.
     Opens on today; filters: sale person, payment status (sales only), Show sales and returns / sales only / returns only.
     """
     from apps.sales.models import CreditNote, SalesInvoice
@@ -311,7 +311,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
         {"label": "Returns", "value": str(back), "sub": plural(n_back, "credit note"), "tone": "warning"},
         {"label": "Net sales", "value": str(sold - back), "sub": "sales less returns", "tone": "success"},
         {"label": "Received", "value": str(received), "sub": "on these invoices"},
-        {"label": "Pending", "value": str(pending), "sub": "still owed on them", "tone": "danger"},
+        {"label": "Outstanding", "value": str(pending), "sub": "still owed on them", "tone": "danger"},
     ]
     cols = ["date", "type", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "tax", "grand_total", "view"]
     return {"columns": cols, "rows": rows, "summary": summary, "totals": {k: str(v) for k, v in tot.items()},
