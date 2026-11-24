@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { date, DATE_PRESETS, labelCase, money, presetRange, qty, titleCase, today } from "@/lib/format";
+import { date, DATE_PRESETS, labelCase, money, presetRange, qty, startOfMonth, titleCase, today } from "@/lib/format";
 import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, PageHeader, Spinner, StatCard } from "@/components/ui/Bits";
@@ -56,7 +56,7 @@ export function ReportViewPage() {
   const { can } = usePerms();
   const catalog = useQuery({ queryKey: ["report-catalog"], queryFn: () => api.get("/api/v1/reports") });
   const spec = catalog.data?.find((r: any) => r.key === key);
-  const defaults = useMemo(() => { const d: Record<string, string> = {}; for (const p of spec?.params || []) { if (p.name === "date_from" || p.name === "date_to" || p.name === "as_of" || p.name === "date") d[p.name] = today(); if (p.default !== undefined) d[p.name] = p.default === "today" ? today() : String(p.default); } return d; }, [spec]);
+  const defaults = useMemo(() => { const d: Record<string, string> = {}; for (const p of spec?.params || []) { if (p.name === "date_from") d[p.name] = spec.opens_on === "month" ? startOfMonth() : today(); if (p.name === "date_to" || p.name === "as_of" || p.name === "date") d[p.name] = today(); if (p.default !== undefined) d[p.name] = p.default === "today" ? today() : String(p.default); } return d; }, [spec]);
   const params = { ...defaults, ...Object.fromEntries(sp.entries()) };
   const [draft, setDraft] = useState<Record<string, string> | null>(null);
   const [picked, setPicked] = useState("");

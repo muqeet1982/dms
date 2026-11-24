@@ -112,6 +112,13 @@ REPORTS = {
 }
 
 
+# The Reports page opens every report on today; these period statements open on the month so far (owner, 24 Nov
+# 2026). Only the page's starting dates: the API without dates is unchanged.
+OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary", "sales_tax_register", "advance_tax_register",
+                  "expense_by_category", "gross_margin_by_supplier"}
+assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
+
+
 def catalog():
     return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"], "feature": v.get("feature"),
-             "saved_filters": v.get("saved_filters", True)} for k, v in REPORTS.items()]
+             "saved_filters": v.get("saved_filters", True), "opens_on": "month" if k in OPENS_ON_MONTH else "today"} for k, v in REPORTS.items()]
