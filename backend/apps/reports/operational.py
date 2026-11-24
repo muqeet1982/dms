@@ -226,7 +226,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, **_
     cols = ["date", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "grand_total", "view"]
     return {"columns": cols, "rows": rows, "totals": {k: str(v) for k, v in tot.items()},
             "column_labels": {"invoice": "Invoice No", "sale_person": "Sale Person", "payment_status": "Payment Status", "grand_total": "Grand Total", "view": "View Invoice"},
-            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id"}},
+            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}},
             "export_columns": cols[:-1]}
 
 
@@ -296,7 +296,7 @@ def pending_payments(due_within="Next 7 days", pay_type=None, rep=None, customer
                        "due": str(sum((Decimal(r["due"]) for r in rows), Z))},
             "column_labels": {"invoice": "Invoice No", "sale_person": "Sale Person", "pay_type": "Cash / Credit", "due_date": "Due Date", "when": "Status",
                               "cash_due": "Cash Pending", "credit_due": "Credit Pending", "due": "Total Pending", "view": "View Invoice"},
-            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id"}},
+            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}},
             "column_styles": {"when": "danger"} if due_within == "Overdue" else {},
             "export_columns": cols[:-1]}
 

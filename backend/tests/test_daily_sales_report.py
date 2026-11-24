@@ -57,7 +57,7 @@ def test_the_daily_sale_report(api, world):
     ra, rb = rows[a["number"]], rows[b["number"]]
     assert (ra["sale_person"], ra["payment_status"], D(ra["total"]), D(ra["discount"]), D(ra["grand_total"])) == ("NAVEED", "Partially Paid", D("300"), D("30"), D("270"))
     assert (rb["sale_person"], rb["payment_status"], D(rb["grand_total"])) == ("No Sale Person", "Unpaid", D("150"))
-    assert ra["invoice_id"] == a["id"] and data["links"]["view"] == {"to": "/app/sales/invoices/", "id": "invoice_id"}
+    assert ra["invoice_id"] == a["id"] and data["links"]["view"] == {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}
     assert D(data["totals"]["grand_total"]) == D("420") and D(data["totals"]["discount"]) == D("30")
     assert "view" not in data["export_columns"], "no link column in the spreadsheet"
     assert [r["invoice"] for r in api.get("/api/v1/reports/daily_sales", {"rep": str(naveed.id)}).data["rows"]] == [a["number"]]

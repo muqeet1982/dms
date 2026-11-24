@@ -54,6 +54,10 @@ export function InvoiceDetailPage() {
   const q = useDoc("/api/v1/invoices", id);
   const pays = useQuery({ queryKey: ["invoice-payments", id], queryFn: () => api.get(`/api/v1/invoices/${id}/payments`), enabled: Boolean(id) });
   const { run, busy } = useAction("/api/v1/invoices", id);
+  // opened from a report's View (Daily sale report, Pending payments): to look at, not to act on (owner, 24 Nov 2026) —
+  // no Receive payment, Credit note / return, Reopen, Tax on/off, discount, FBR or post; Print and PDF stay
+  const [viewSp] = useSearchParams();
+  const viewOnly = viewSp.get("view") === "1";
   const [reopen, setReopen] = useState(false);
   const [fbrView, setFbrView] = useState(false);
   const contribs = useQuery({ queryKey: ["discount-rates"], queryFn: () => api.get("/api/v1/settings/discount-contributions/rates"), enabled: Boolean(id) });
@@ -72,6 +76,7 @@ export function InvoiceDetailPage() {
     <>
       <PageHeader title={inv.number} badge={<><StatusBadge status={inv.status} />{inv.delivery_status && <span className="badge bg-purple-light text-purple ms-1"><i className="ti ti-truck me-1" />{inv.delivery_status}</span>}</>} crumbs={[inv.force_tax_type ? { label: "Tax invoices", to: "/app/sales/tax-invoices" } : { label: "Invoices", to: "/app/sales/invoices" }, { label: inv.number }]}
         actions={<>
+          {!viewOnly && <>
           {inv.status === "draft" && page.can("discount") && <div className="btn-group">
             <select className="form-select form-select-sm" style={{ width: 150 }} value={String(Number(inv.discount_pct || 0))} onChange={(e) => run("discount", { action: e.target.value === "0" ? "remove" : "apply", percent: e.target.value }, { success: "Discount updated" })} title="Co-funded total discount">
               <option value="0">No discount</option>
@@ -107,6 +112,7 @@ export function InvoiceDetailPage() {
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
           {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
+          </>}
           {inv.force_tax_type && inv.fbr?.status === "submitted" && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
