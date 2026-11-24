@@ -61,6 +61,18 @@ def _sale_person(inv):
 SALE_PERSON_RELATED = ("invoice__rep", "invoice__order__rep", "invoice__order__trip__rep", "invoice__delivery_note__trip__rep")
 
 
+def _rep_names():
+    """{rep id: name} where two sale persons share a name, the name carries the rep's code — TDN has two "Muhammad Haris"
+    (TDN-REP-00009 and TDN-REP-00012), and the report showed two rows of the same name (24 Nov 2026)."""
+    from collections import Counter
+
+    from apps.partners.models import SupplierRep
+
+    reps = list(SupplierRep.objects.values_list("pk", "name", "code"))
+    seen = Counter(n.strip().lower() for _pk, n, _c in reps)
+    return {str(pk): (f"{n} ({c})" if seen[n.strip().lower()] > 1 and c else n) for pk, n, c in reps}
+
+
 def _group(rows, key_fn, label_fn, extra_fn=None):
     out = defaultdict(lambda: {"qty": Z, "sales": Z, "cogs": Z, "invoices": set()})
     for l in rows:
@@ -117,10 +129,11 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     lines = _inv_lines(date_from, date_to, **by_type).select_related("invoice__customer", *SALE_PERSON_RELATED)
     out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
     sold_by = defaultdict(dict)
+    names = _rep_names()
     for l in lines:
         rep_id, name = _sale_person(l.invoice)
         if rep_id:
-            sold_by[str(l.invoice.customer_id)][name] = None
+            sold_by[str(l.invoice.customer_id)][names.get(str(rep_id), name)] = None
     from apps.partners.models import Customer
 
     assigned = {str(c.pk): [r.name for r in c.assigned_reps.all()] for c in Customer.objects.filter(pk__in=[r["key"] for r in out["rows"] if r["key"] not in sold_by]).prefetch_related("assigned_reps")}
@@ -142,12 +155,16 @@ def _sold_on_credit(invoice):
 
 def sales_by_rep(date_from=None, date_to=None, **_):
     lines = _inv_lines(date_from, date_to).select_related("invoice__order", "invoice__customer", *SALE_PERSON_RELATED)
-    out = _group(lines, lambda l: _sale_person(l.invoice)[0], lambda l: _sale_person(l.invoice)[1])
+    names = _rep_names()
+    out = _group(lines, lambda l: _sale_person(l.invoice)[0], lambda l: names.get(str(_sale_person(l.invoice)[0]), _sale_person(l.invoice)[1]))
     out["drill"] = {"column": "label", "report": "rep_daily_sheet", "param": "rep"}   # a rep's name opens their daily sheet
     out["column_labels"] = {"label": "Sale Person"}   # owner, 8 Nov 2026: "Sales by Sale Person"
 
     # how much of it was sold on cash and how much on credit (owner, 5 Nov 2026): the two add up to Sales
     credit, returns, received, outstanding, counted = defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), defaultdict(lambda: Z), set()
+    # Sales is before tax; what was billed, returned, received and is still owed include it — Billed (Incl. Tax) makes the
+    # last four add up on a tax invoice (Billed = Returns + Received + Outstanding), owner 24 Nov 2026
+    billed = defaultdict(lambda: Z)
     for l in lines:
         rep = str(_sale_person(l.invoice)[0])
         if _sold_on_credit(l.invoice):
@@ -156,20 +173,23 @@ def sales_by_rep(date_from=None, date_to=None, **_):
             # the money that has come in on these invoices and what is still owed on them (owner, 5 Nov 2026). What a
             # credit note settled is neither: those goods came back, no money did.
             counted.add(l.invoice_id)
+            billed[rep] += l.invoice.total
             returns[rep] += l.invoice.credited_amount
             received[rep] += l.invoice.cash_paid
             outstanding[rep] += l.invoice.balance
     for r in out["rows"]:
         r["credit_sales"] = str(credit[r["key"]])
         r["cash_sales"] = str(Decimal(r["sales"]) - credit[r["key"]])
+        r["billed"] = str(billed[r["key"]])
         r["returns"] = str(returns[r["key"]])
         r["received"] = str(received[r["key"]])
         r["outstanding"] = str(outstanding[r["key"]])
     sales = out["columns"].index("sales") + 1
-    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "returns", "received", "outstanding"]
+    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "billed", "returns", "received", "outstanding"]
+    out["column_labels"]["billed"] = "Billed (Incl. Tax)"
     all_credit = sum(credit.values(), Z)
     out["totals"] = {"sales": out["totals"]["sales"], "cash_sales": str(Decimal(out["totals"]["sales"]) - all_credit), "credit_sales": str(all_credit),
-                     "returns": str(sum(returns.values(), Z)), "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
+                     "billed": str(sum(billed.values(), Z)), "returns": str(sum(returns.values(), Z)), "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
                      **{k: v for k, v in out["totals"].items() if k != "sales"}}
     return out
 
@@ -191,8 +211,10 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, **_
     if wanted:
         qs = qs.filter(status=wanted)
     rows, tot = [], {"total": Z, "discount": Z, "grand_total": Z}
+    names = _rep_names()
     for inv in qs.order_by("date", "number"):
         rep_id, person = _sale_person(inv)
+        person = names.get(str(rep_id), person)
         if rep and str(rep_id) != str(rep):
             continue
         row = {"date": inv.date, "invoice": inv.number, "customer": inv.customer.name, "sale_person": person,

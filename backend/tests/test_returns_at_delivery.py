@@ -654,7 +654,7 @@ def test_sales_by_rep_shows_returns_so_the_columns_add_up(api, w):
     stop(api, dn, cash_collected="300")
     with tenant_context(w.tenant):
         rep = _rows("sales_by_rep")
-    assert rep["columns"][:7] == ["label", "qty", "sales", "cash_sales", "credit_sales", "returns", "received"]
+    assert rep["columns"][:8] == ["label", "qty", "sales", "cash_sales", "credit_sales", "billed", "returns", "received"]
     r = rep["rows"][0]
     assert (D(r["sales"]), D(r["returns"]), D(r["received"]), D(r["outstanding"])) == (D(750), D(150), D(300), D(300))
     assert D(r["sales"]) - D(r["returns"]) - D(r["received"]) == D(r["outstanding"])

@@ -79,3 +79,18 @@ def test_sales_by_customer_by_customer_type(api, world):
     assert [r["label"] for r in api.get("/api/v1/reports/sales_by_customer", {"customer_type": "Salon"}).data["rows"]] == ["Shine Salon"]
     assert [r["label"] for r in api.get("/api/v1/reports/sales_by_customer", {"customer_type": "Retailer"}).data["rows"]] == ["Salon One"]
     assert len(api.get("/api/v1/reports/sales_by_customer").data["rows"]) == 2
+
+
+def test_billed_adds_up_and_same_named_reps_are_told_apart(api, tenant, world):
+    from apps.partners.models import SupplierRep
+
+    _a, _b, naveed, _salon = world
+    with tenant_context(tenant, tenant.owner):
+        SupplierRep.objects.create(supplier=naveed.supplier, code="R-2", name="NAVEED", phone="03002220000")
+    data = api.get("/api/v1/reports/sales_by_rep").data
+    assert data["column_labels"]["billed"] == "Billed (Incl. Tax)"
+    assert data["columns"].index("billed") == data["columns"].index("credit_sales") + 1
+    for r in data["rows"]:
+        assert D(r["billed"]) == D(r["returns"]) + D(r["received"]) + D(r["outstanding"]), r
+    assert {r["label"] for r in data["rows"]} == {"NAVEED (R-1)", "No Sale Person"}, "two of the same name carry their code"
+    assert D(data["totals"]["billed"]) == D("420")
