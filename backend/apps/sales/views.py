@@ -75,7 +75,7 @@ class SalesOrderViewSet(DocumentViewSet):
             "stats": ["external.view_own_orders"],
         },
     )
-    filterset_fields = ["status", "customer", "rep", "supplier", "source", "warehouse", "trip", "order_date"]
+    filterset_fields = ["status", "customer", "rep", "supplier", "source", "warehouse", "trip", "order_date", "payment_mode"]
     search_fields = ["number", "customer__name", "customer__code", "external_ref", "rep__name", "notes"]
     ordering_fields = ["order_date", "number", "total", "created_at", "status"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]

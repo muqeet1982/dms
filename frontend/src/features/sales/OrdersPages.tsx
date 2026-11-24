@@ -55,6 +55,13 @@ export function LocationCheck({ check, compact }: { check?: { verdict: string; d
     {map && <div className="fs-11 mt-1"><a href={map} target="_blank" rel="noreferrer"><i className="ti ti-external-link me-1" />Open on map</a></div>}</>;
 }
 
+/** Cash or Credit, as chosen when the order was taken (owner, 25 Nov 2026); older orders chose nothing */
+function PaymentMode({ mode }: { mode?: string }) {
+  if (mode === "cash") return <span className="badge bg-success-light text-success"><i className="ti ti-cash me-1" />Cash</span>;
+  if (mode === "credit") return <span className="badge bg-warning-light text-warning"><i className="ti ti-credit-card me-1" />Credit</span>;
+  return <span className="text-muted">—</span>;
+}
+
 const orderColumns: Column<any>[] = [
   { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span> <i className={`ti ${o.source === "rep_app" ? "ti-device-mobile text-success" : "ti-world text-info"} fs-12`} title={o.source === "rep_app" ? "Taken on the mobile app" : "Entered on the web"} /><LocationCheck check={o.location_check} compact /></> },
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
@@ -62,6 +69,7 @@ const orderColumns: Column<any>[] = [
   { key: "sales_person", header: "Sales person", render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
   { key: "trip_number", header: "Trip", render: (o) => o.trip_number || "—" },
   { key: "total", header: "Total", num: true, sortKey: "total", render: (o) => <span className="fw-semibold">{money(o.total)}</span> },
+  { key: "payment_mode", header: "Payment", render: (o) => <PaymentMode mode={o.payment_mode} /> },
   { key: "status", header: "Status", sortKey: "status", render: (o) => <><StatusBadge status={o.status} />{o.delivery_status && <div className="fs-11 text-muted mt-1"><i className="ti ti-truck me-1" />{o.delivery_status}</div>}{o.hold_reason && <div className="text-warning fs-11 mt-1" style={{ maxWidth: 220 }}>{o.hold_reason}</div>}</> },
 ];
 
@@ -69,7 +77,7 @@ export function OrdersPage() {
   const stats = useQuery({ queryKey: ["orders-stats"], queryFn: () => api.get("/api/v1/sales-orders/stats") });
   return (
     <ListPage title="Sales orders" endpoint="/api/v1/sales-orders" columns={orderColumns} rowLink={(o) => `/app/sales/orders/${o.id}`} page="sales_orders" createTo="/app/sales/orders/new" createLabel="New order" defaultOrdering="-order_date" searchPlaceholder="Search number, customer, external ref…"
-      filters={[{ name: "status", label: "Status", type: "select", options: STATUS_OPTIONS }, { name: "customer", label: "Customer", type: "entity", endpoint: "/api/v1/customers", mapOption: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, { name: "rep", label: "Rep", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r) => ({ id: r.id, label: r.name, sub: r.supplier_name }) }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]}
+      filters={[{ name: "status", label: "Status", type: "select", options: STATUS_OPTIONS }, { name: "customer", label: "Customer", type: "entity", endpoint: "/api/v1/customers", mapOption: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, { name: "rep", label: "Rep", type: "entity", endpoint: "/api/v1/supplier-reps", mapOption: (r) => ({ id: r.id, label: r.name, sub: r.supplier_name }) }, { name: "payment_mode", label: "Payment", type: "select", options: [{ value: "cash", label: "Cash" }, { value: "credit", label: "Credit" }] }, { name: "date_from", label: "From", type: "date" }, { name: "date_to", label: "To", type: "date" }]}
       stats={stats.data && <div className="row g-3 mb-3"><div className="col-6 col-md-3"><StatCard label="Inbox" value={stats.data.inbox} icon="ti-inbox" color="warning" to="/app/sales/inbox" /></div><div className="col-6 col-md-3"><StatCard label="Confirmed (to dispatch)" value={stats.data.by_status.confirmed || 0} icon="ti-circle-check" color="primary" /></div><div className="col-6 col-md-3"><StatCard label="Dispatched" value={stats.data.dispatched} icon="ti-truck" color="purple" /></div><div className="col-6 col-md-3"><StatCard label="Today" value={stats.data.today} icon="ti-calendar" color="success" sub={money(stats.data.today_value)} /></div></div>} />
   );
 }
@@ -162,7 +170,7 @@ export function OrderDetailPage() {
                 <InfoItem label="Sales person / supplier" col="col-md-2">{o.sales_person || o.rep_name || "—"}<div className="text-muted fs-12">{o.supplier_name}</div></InfoItem>
                 <InfoItem label="Taken at" col="col-md-2"><LocationCheck check={o.location_check} /></InfoItem>
                 <InfoItem label="Dates" col="col-md-2">{date(o.order_date)}<div className="text-muted fs-12">deliver by {date(o.requested_delivery_date)}</div></InfoItem>
-                <InfoItem label="Warehouse" col="col-md-2">{o.warehouse_name}</InfoItem><InfoItem label="Payment term" col="col-md-2">{o.payment_terms || "—"}</InfoItem><InfoItem label="Delivery person" col="col-md-2">{o.delivery_person || "—"}</InfoItem>
+                <InfoItem label="Warehouse" col="col-md-2">{o.warehouse_name}</InfoItem><InfoItem label="Payment" col="col-md-2"><PaymentMode mode={o.payment_mode} /></InfoItem><InfoItem label="Payment term" col="col-md-2">{o.payment_terms || "—"}</InfoItem><InfoItem label="Delivery person" col="col-md-2">{o.delivery_person || "—"}</InfoItem>
                 {o.charge_tax && <InfoItem label="Tax" col="col-md-2"><span className="badge bg-success-light text-success"><i className="ti ti-percentage me-1" />Tax invoice — FBR rates</span></InfoItem>}
                 <InfoItem label="Trip" col="col-md-3">{o.trip_number ? <Link to={`/app/delivery/trips/${o.trip}`}>{o.trip_number}</Link> : "—"}{o.driver_name && <div className="text-muted fs-12">{o.driver_name} · {o.vehicle_reg}</div>}</InfoItem>
               </div>
