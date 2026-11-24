@@ -121,28 +121,32 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
     return out
 
 
-def _net_of_returns(out, date_from, date_to, by_type):
+def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
     """
-    Returns in the same period, by credit-note date (as the ledger's Sales Returns), taken off each customer's sales:
-    Returns and Net Sales columns, the returned qty off Qty, the returned goods' cost off COGS, the margin on net sales.
-    Sales by customer counted every sale in full — November had 111 credit notes (600,612) and 49 TDN customers who sent
-    back all they bought still showed their full sales (owner, 24 Nov 2026). A customer with returns and no sale in the
-    period gets a row of its own.
+    Returns in the same period, by credit-note date (as the ledger's Sales Returns), taken off each row's sales: Returns
+    and Net Sales, the returned qty off Qty, the returned goods' cost off COGS, the margin on net sales. Sales by customer
+    and by sale person counted every sale in full — November had 111 credit notes (600,612) and 49 TDN customers who sent
+    back all they bought still showed their full sales (owner, 24 Nov 2026). `key_of(credit note)` → (row key, label);
+    a key with returns and no sale in the period gets a row of its own (with `blank` for the caller's other columns).
     """
     from apps.sales.models import CreditNoteLine
 
-    cnl = _window(CreditNoteLine.objects.filter(credit_note__status="posted", **by_type).select_related("credit_note__customer"), "credit_note__date", date_from, date_to)
+    key_of = key_of or (lambda cn: (str(cn.customer_id), cn.customer.name))
+    cnl = _window(CreditNoteLine.objects.filter(credit_note__status="posted", **by_type).select_related(
+        "credit_note__customer", "credit_note__invoice__rep", "credit_note__invoice__order__rep", "credit_note__invoice__order__trip__rep",
+        "credit_note__invoice__delivery_note__trip__rep"), "credit_note__date", date_from, date_to)
     back = defaultdict(lambda: {"value": Z, "cost": Z, "qty": Z, "name": ""})
     for l in cnl:
-        b = back[str(l.credit_note.customer_id)]
+        key, name = key_of(l.credit_note)
+        b = back[key]
         b["value"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
         b["cost"] += l.qty * l.unit_cost
         b["qty"] += l.qty
-        b["name"] = l.credit_note.customer.name
+        b["name"] = name
     have = {r["key"] for r in out["rows"]}
     for k, b in back.items():
         if k not in have:
-            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0})
+            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0, **(blank or {})})
     for r in out["rows"]:
         b = back.get(r["key"], {"value": Z, "cost": Z, "qty": Z})
         net = Decimal(r["sales"]) - b["value"]
@@ -151,9 +155,6 @@ def _net_of_returns(out, date_from, date_to, by_type):
         r.update({"returns": str(b["value"]), "net_sales": str(net), "qty": str(Decimal(r["qty"]) - b["qty"]), "cogs": str(cogs),
                   "gross_margin": str(margin), "margin_pct": str((margin / net * 100).quantize(Decimal("0.01")) if net else Z)})
     out["rows"].sort(key=lambda r: -Decimal(r["net_sales"]))
-    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
-    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
-    out["column_labels"] = {"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
 
 
 def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
@@ -164,6 +165,9 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     lines = _inv_lines(date_from, date_to, **by_type).select_related("invoice__customer", *SALE_PERSON_RELATED)
     out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
     _net_of_returns(out, date_from, date_to, by_type={"credit_note__customer__type": by_type["invoice__customer__type"]} if by_type else {})
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
+    out["column_labels"] = {"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
     sold_by = defaultdict(dict)
     names = _rep_names()
     for l in lines:
@@ -210,23 +214,23 @@ def sales_by_rep(date_from=None, date_to=None, **_):
             # credit note settled is neither: those goods came back, no money did.
             counted.add(l.invoice_id)
             billed[rep] += l.invoice.total
-            returns[rep] += l.invoice.credited_amount
+            returns[rep] += l.invoice.credited_amount   # credit on these invoices, tax included — the money side
             received[rep] += l.invoice.cash_paid
             outstanding[rep] += l.invoice.balance
     for r in out["rows"]:
         r["credit_sales"] = str(credit[r["key"]])
         r["cash_sales"] = str(Decimal(r["sales"]) - credit[r["key"]])
         r["billed"] = str(billed[r["key"]])
-        r["returns"] = str(returns[r["key"]])
+        r["credited"] = str(returns[r["key"]])
         r["received"] = str(received[r["key"]])
         r["outstanding"] = str(outstanding[r["key"]])
-    sales = out["columns"].index("sales") + 1
-    out["columns"][sales:sales] = ["cash_sales", "credit_sales", "billed", "returns", "received", "outstanding"]
-    out["column_labels"]["billed"] = "Billed (Incl. Tax)"
-    all_credit = sum(credit.values(), Z)
-    out["totals"] = {"sales": out["totals"]["sales"], "cash_sales": str(Decimal(out["totals"]["sales"]) - all_credit), "credit_sales": str(all_credit),
-                     "billed": str(sum(billed.values(), Z)), "returns": str(sum(returns.values(), Z)), "received": str(sum(received.values(), Z)), "outstanding": str(sum(outstanding.values(), Z)),
-                     **{k: v for k, v in out["totals"].items() if k != "sales"}}
+    # returns in the period (credit-note date) come off the sales side, as in Sales by customer (owner, 24 Nov 2026)
+    _net_of_returns(out, date_from, date_to, by_type={},
+                    key_of=lambda cn: (str(_sale_person(cn.invoice)[0]), names.get(str(_sale_person(cn.invoice)[0]), _sale_person(cn.invoice)[1])) if cn.invoice_id else ("None", "No Sale Person"),
+                    blank={k: "0" for k in ("cash_sales", "credit_sales", "billed", "credited", "received", "outstanding")})
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["column_labels"].update({"qty": "Net Qty", "net_sales": "Net Sales", "billed": "Billed (Incl. Tax)", "credited": "Credited (Incl. Tax)", "cogs": "COGS"})
+    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin")}
     return out
 
 

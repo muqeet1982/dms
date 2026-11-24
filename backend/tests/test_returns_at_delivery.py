@@ -654,11 +654,11 @@ def test_sales_by_rep_shows_returns_so_the_columns_add_up(api, w):
     stop(api, dn, cash_collected="300")
     with tenant_context(w.tenant):
         rep = _rows("sales_by_rep")
-    assert rep["columns"][:8] == ["label", "qty", "sales", "cash_sales", "credit_sales", "billed", "returns", "received"]
+    assert rep["columns"][:11] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding"]
     r = rep["rows"][0]
-    assert (D(r["sales"]), D(r["returns"]), D(r["received"]), D(r["outstanding"])) == (D(750), D(150), D(300), D(300))
-    assert D(r["sales"]) - D(r["returns"]) - D(r["received"]) == D(r["outstanding"])
-    assert D(rep["totals"]["returns"]) == 150
+    assert (D(r["sales"]), D(r["credited"]), D(r["received"]), D(r["outstanding"])) == (D(750), D(150), D(300), D(300))
+    assert D(r["billed"]) - D(r["credited"]) - D(r["received"]) == D(r["outstanding"])
+    assert D(rep["totals"]["credited"]) == 150 and D(r["returns"]) == 150 and D(r["net_sales"]) == 600
 
 
 def test_stock_figures_stay_true(api, w):

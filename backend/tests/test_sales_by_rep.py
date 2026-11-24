@@ -327,7 +327,7 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
     assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
 
     summary = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat()}).data
-    assert summary["columns"] == ["label", "qty", "sales", "cash_sales", "credit_sales", "billed", "returns", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with the additions"
+    assert summary["columns"] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with the additions"
     assert summary["totals"] and not summary.get("totals_in_rows") and not summary.get("header_groups")
     row = next(r for r in summary["rows"] if r["label"] == "Talha")
     assert D(row["qty"]) == 4 and D(row["sales"]) == 400 and row["invoices"] == 1
@@ -382,7 +382,7 @@ def test_the_main_report_shows_how_much_on_cash_and_how_much_on_credit(api, tena
     assert (D(anza["sales"]), D(anza["cash_sales"]), D(anza["credit_sales"])) == (D("300"), D("0"), D("300"))
     t = data["totals"]
     assert (D(t["sales"]), D(t["cash_sales"]), D(t["credit_sales"])) == (D("1000"), D("500"), D("500"))
-    assert list(t)[:3] == ["sales", "cash_sales", "credit_sales"]
+    assert list(t)[:5] == ["sales", "returns", "net_sales", "cash_sales", "credit_sales"]
     assert D(t["cogs"]) > 0 and "gross_margin" in t, "the original totals are all still there"
 
 
@@ -453,7 +453,7 @@ def test_the_main_report_shows_what_came_in_and_what_is_still_owed(api, tenant, 
     assert D(talha["invoices"]) == 3, "each invoice counted once, however many lines it has"
     t = data["totals"]
     assert D(t["received"]) == D("150") and D(t["outstanding"]) == D("750")
-    assert list(t)[:7] == ["sales", "cash_sales", "credit_sales", "billed", "returns", "received", "outstanding"]
+    assert list(t)[:9] == ["sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding"]
 
 
 def test_an_invoice_with_many_lines_is_counted_once(api, tenant, world):

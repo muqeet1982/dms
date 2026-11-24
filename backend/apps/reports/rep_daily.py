@@ -9,11 +9,12 @@ import re
 from collections import defaultdict
 from decimal import Decimal
 
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 Z = Decimal("0")
-LOST = ("cancelled", "rejected")   # taken, and it counts as a shop visited, but it is not a sale
+LOST = ("cancelled", "rejected", "returned")   # taken, and it counts as a shop visited, but it is not a sale (returned: all of it came back, 24 Nov 2026)
 
 # the product columns, in the order of the owner's sheet: (key, heading over it, label)
 FAMILIES = [
@@ -122,20 +123,24 @@ def daily_sheet(date_from=None, date_to=None, rep=None, **_):
     days = defaultdict(day)
 
     # "Till Date" runs from the 1st of the row's month, so it reads back to the 1st of the first month shown
-    orders = SalesOrder.objects.exclude(status="draft").select_related("customer", "customer__territory", "customer__route", "location")
+    orders = SalesOrder.objects.exclude(status="draft").select_related("customer", "customer__territory", "customer__route", "location", "trip")
     if start:
         orders = orders.filter(order_date__gte=start.replace(day=1))
     if end:
         orders = orders.filter(order_date__lte=end)
     if rep:
-        orders = orders.filter(rep_id=rep)
+        # an order taken in the office has no rep of its own: the trip's sales rep sold it, as every sales report reads it
+        orders = orders.filter(Q(rep_id=rep) | Q(rep__isnull=True, trip__rep_id=rep))
     month = defaultdict(dict)
+
+    def seller(o):
+        return o.rep_id or (o.trip.rep_id if o.trip_id else None)
     sold = {}
     for o in orders:
-        key = (o.rep_id, o.order_date)
+        key = (seller(o), o.order_date)
         live = o.status not in LOST
         if live:
-            spot = month[(o.rep_id, o.order_date.year, o.order_date.month)]
+            spot = month[(seller(o), o.order_date.year, o.order_date.month)]
             spot[o.order_date] = spot.get(o.order_date, Z) + o.total
         if not shown(o.order_date):
             continue
