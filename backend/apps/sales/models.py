@@ -42,7 +42,7 @@ class SalesOrder(OtherTaxTotalsMixin, DocumentModel):
     SOURCES = [("rep_app", "Rep app"), ("api", "API"), ("staff", "Staff"), ("portal", "Portal")]
     STATUS = [
         ("draft", "Draft"), ("submitted", "Submitted"), ("under_review", "Under review"), ("on_hold", "On hold"), ("confirmed", "Confirmed"), ("on_hold_credit", "On hold (credit)"), ("on_hold_stock", "On hold (stock)"),
-        ("issued", "Issued from warehouse"), ("dispatched", "Dispatched"), ("partially_delivered", "Partially delivered"), ("delivered", "Delivered"), ("invoiced", "Invoiced"), ("cancelled", "Cancelled"), ("rejected", "Rejected"),
+        ("issued", "Issued from warehouse"), ("dispatched", "Dispatched"), ("partially_delivered", "Partially delivered"), ("delivered", "Delivered"), ("invoiced", "Invoiced"), ("returned", "Returned"), ("cancelled", "Cancelled"), ("rejected", "Rejected"),
     ]
     OPEN_STATUSES = ["submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "issued", "dispatched", "partially_delivered"]
     customer = models.ForeignKey("partners.Customer", on_delete=models.PROTECT, related_name="orders")

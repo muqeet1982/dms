@@ -83,7 +83,7 @@ def _group(rows, key_fn, label_fn, extra_fn=None):
             r["extra"] = extra_fn(l)
         r["qty"] += l.qty
         r["sales"] += _net_sales(l)
-        r["cogs"] += l.qty * l.unit_cost
+        r["cogs"] += (l.qty + l.free_qty) * l.unit_cost   # free goods cost what they cost — as the invoice's COGS journal books them
         r["invoices"].add(l.invoice_id)
     result = []
     for k, r in out.items():
@@ -121,6 +121,41 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
     return out
 
 
+def _net_of_returns(out, date_from, date_to, by_type):
+    """
+    Returns in the same period, by credit-note date (as the ledger's Sales Returns), taken off each customer's sales:
+    Returns and Net Sales columns, the returned qty off Qty, the returned goods' cost off COGS, the margin on net sales.
+    Sales by customer counted every sale in full — November had 111 credit notes (600,612) and 49 TDN customers who sent
+    back all they bought still showed their full sales (owner, 24 Nov 2026). A customer with returns and no sale in the
+    period gets a row of its own.
+    """
+    from apps.sales.models import CreditNoteLine
+
+    cnl = _window(CreditNoteLine.objects.filter(credit_note__status="posted", **by_type).select_related("credit_note__customer"), "credit_note__date", date_from, date_to)
+    back = defaultdict(lambda: {"value": Z, "cost": Z, "qty": Z, "name": ""})
+    for l in cnl:
+        b = back[str(l.credit_note.customer_id)]
+        b["value"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
+        b["cost"] += l.qty * l.unit_cost
+        b["qty"] += l.qty
+        b["name"] = l.credit_note.customer.name
+    have = {r["key"] for r in out["rows"]}
+    for k, b in back.items():
+        if k not in have:
+            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0})
+    for r in out["rows"]:
+        b = back.get(r["key"], {"value": Z, "cost": Z, "qty": Z})
+        net = Decimal(r["sales"]) - b["value"]
+        cogs = Decimal(r["cogs"]) - b["cost"]
+        margin = net - cogs
+        r.update({"returns": str(b["value"]), "net_sales": str(net), "qty": str(Decimal(r["qty"]) - b["qty"]), "cogs": str(cogs),
+                  "gross_margin": str(margin), "margin_pct": str((margin / net * 100).quantize(Decimal("0.01")) if net else Z)})
+    out["rows"].sort(key=lambda r: -Decimal(r["net_sales"]))
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
+    out["column_labels"] = {"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
+
+
 def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     """Headed Customer Name, with who sold to them under the name (owner, 8 Nov 2026): the sale persons on its invoices in
     the period, else the reps the customer is assigned to. A spreadsheet takes them as a column of their own. Customer
@@ -128,6 +163,7 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     by_type = {"invoice__customer__type": CUSTOMER_TYPES[customer_type]} if customer_type in CUSTOMER_TYPES else {}
     lines = _inv_lines(date_from, date_to, **by_type).select_related("invoice__customer", *SALE_PERSON_RELATED)
     out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
+    _net_of_returns(out, date_from, date_to, by_type={"credit_note__customer__type": by_type["invoice__customer__type"]} if by_type else {})
     sold_by = defaultdict(dict)
     names = _rep_names()
     for l in lines:
@@ -141,7 +177,7 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
         names = list(sold_by.get(r["key"], {})) or assigned.get(r["key"], [])
         r["sale_person"] = ", ".join(names)
         r["sold_by"] = f"Sale Person: {r['sale_person']}" if names else ""
-    out["column_labels"] = {"label": "Customer Name", "sale_person": "Sale Person"}
+    out["column_labels"] = {"label": "Customer Name", "sale_person": "Sale Person", **out.get("column_labels", {})}
     out["notes"] = {"label": "sold_by"}
     out["export_columns"] = ["label", "sale_person", *out["columns"][1:]]
     return out
@@ -197,36 +233,71 @@ def sales_by_rep(date_from=None, date_to=None, **_):
 PAYMENT_STATUS = {"posted": "Unpaid", "partially_paid": "Partially Paid", "paid": "Paid", "overdue": "Overdue", "returned": "Returned"}
 
 
-def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, **_):
+def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, show=None, **_):
     """
-    Daily sale report (owner, 24 Nov 2026): one row per invoice on the books — Date, Invoice No, Customer, Sale Person,
-    Payment Status, Total (before discount), Discount, Grand Total (what the customer is billed), and a link to the invoice.
-    Opens on today; any date range, one sale person or one payment status can be picked.
+    Daily sale report (owner, 24 Nov 2026): the day's invoices AND its returns (credit notes), one row each — Date, Type,
+    Invoice / Return No, Customer, Sale Person, Payment Status, Total (before discount), Discount, Tax, Grand Total and a
+    read-only View. Total − Discount + Tax = Grand Total on every row: a tax invoice's Grand Total carries its GST and
+    advance income tax, which is why it could exceed Total with no Tax column to show it. A return reads in minus, so the
+    totals are the net. Cards on top: Sales, Returns, Net Sales, and what is Received / still Pending on the day's invoices.
+    Opens on today; filters: sale person, payment status (sales only), Show sales and returns / sales only / returns only.
     """
-    from apps.sales.models import SalesInvoice
+    from apps.sales.models import CreditNote, SalesInvoice
 
-    qs = SalesInvoice.objects.filter(status__in=list(PAYMENT_STATUS)).select_related("customer", "rep", "order__rep", "order__trip__rep", "delivery_note__trip__rep")
-    qs = _window(qs, "date", date_from, date_to)
-    wanted = {v: k for k, v in PAYMENT_STATUS.items()}.get(payment_status)
-    if wanted:
-        qs = qs.filter(status=wanted)
-    rows, tot = [], {"total": Z, "discount": Z, "grand_total": Z}
     names = _rep_names()
-    for inv in qs.order_by("date", "number"):
-        rep_id, person = _sale_person(inv)
-        person = names.get(str(rep_id), person)
-        if rep and str(rep_id) != str(rep):
-            continue
-        row = {"date": inv.date, "invoice": inv.number, "customer": inv.customer.name, "sale_person": person,
-               "payment_status": PAYMENT_STATUS[inv.status], "total": str(inv.subtotal), "discount": str(inv.discount),
-               "grand_total": str(inv.total), "view": "View", "invoice_id": str(inv.pk)}
-        for k in tot:
-            tot[k] += Decimal(row[k])
-        rows.append(row)
-    cols = ["date", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "grand_total", "view"]
-    return {"columns": cols, "rows": rows, "totals": {k: str(v) for k, v in tot.items()},
-            "column_labels": {"invoice": "Invoice No", "sale_person": "Sale Person", "payment_status": "Payment Status", "grand_total": "Grand Total", "view": "View Invoice"},
-            "links": {"invoice": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}, "view": {"to": "/app/sales/invoices/", "id": "invoice_id", "query": "view=1"}},
+    sales_too = show in (None, "", "Sales and returns", "Sales only")
+    returns_too = show in (None, "", "Sales and returns", "Returns only") and not payment_status
+    rows = []
+    sold = Z
+    received = pending = Z
+    n_sales = 0
+    if sales_too:
+        qs = SalesInvoice.objects.filter(status__in=list(PAYMENT_STATUS)).select_related("customer", "rep", "order__rep", "order__trip__rep", "delivery_note__trip__rep")
+        qs = _window(qs, "date", date_from, date_to)
+        wanted = {v: k for k, v in PAYMENT_STATUS.items()}.get(payment_status)
+        if wanted:
+            qs = qs.filter(status=wanted)
+        for inv in qs:
+            rep_id, person = _sale_person(inv)
+            if rep and str(rep_id) != str(rep):
+                continue
+            rows.append({"date": inv.date, "type": "Sale", "invoice": inv.number, "customer": inv.customer.name, "sale_person": names.get(str(rep_id), person),
+                         "payment_status": PAYMENT_STATUS[inv.status], "total": str(inv.subtotal), "discount": str(inv.discount),
+                         "tax": str(inv.total - (inv.subtotal - inv.discount)), "grand_total": str(inv.total), "view": "View",
+                         "href": f"/app/sales/invoices/{inv.pk}?view=1", "_order": 0})
+            sold += inv.total
+            received += inv.cash_paid
+            pending += inv.balance
+            n_sales += 1
+    back = Z
+    n_back = 0
+    if returns_too:
+        qs = CreditNote.objects.filter(status="posted").select_related("customer", "invoice", "invoice__rep", "invoice__order__rep", "invoice__order__trip__rep", "invoice__delivery_note__trip__rep")
+        qs = _window(qs, "date", date_from, date_to)
+        for cn in qs:
+            rep_id, person = _sale_person(cn.invoice) if cn.invoice_id else (None, "No Sale Person")
+            if rep and str(rep_id) != str(rep):
+                continue
+            rows.append({"date": cn.date, "type": "Return", "invoice": cn.number, "customer": cn.customer.name, "sale_person": names.get(str(rep_id), person),
+                         "payment_status": f"Return of {cn.invoice.number}" if cn.invoice_id else "Return", "total": str(-cn.subtotal), "discount": str(-cn.discount),
+                         "tax": str(-(cn.total - (cn.subtotal - cn.discount))), "grand_total": str(-cn.total), "view": "View",
+                         "href": f"/app/sales/credit-notes/{cn.pk}", "_order": 1})
+            back += cn.total
+            n_back += 1
+    rows.sort(key=lambda r: (r["date"], r.pop("_order"), r["invoice"]))
+    tot = {k: sum((Decimal(r[k]) for r in rows), Z) for k in ("total", "discount", "tax", "grand_total")}
+    plural = lambda n, w: f"{n} {w}{'' if n == 1 else 's'}"
+    summary = [
+        {"label": "Sales", "value": str(sold), "sub": plural(n_sales, "invoice")},
+        {"label": "Returns", "value": str(back), "sub": plural(n_back, "credit note"), "tone": "warning"},
+        {"label": "Net sales", "value": str(sold - back), "sub": "sales less returns", "tone": "success"},
+        {"label": "Received", "value": str(received), "sub": "on these invoices"},
+        {"label": "Pending", "value": str(pending), "sub": "still owed on them", "tone": "danger"},
+    ]
+    cols = ["date", "type", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "tax", "grand_total", "view"]
+    return {"columns": cols, "rows": rows, "summary": summary, "totals": {k: str(v) for k, v in tot.items()},
+            "column_labels": {"invoice": "Invoice / Return No", "sale_person": "Sale Person", "payment_status": "Payment Status", "grand_total": "Grand Total", "view": "View"},
+            "links": {"invoice": {"href": "href"}, "view": {"href": "href"}},
             "export_columns": cols[:-1]}
 
 
@@ -487,7 +558,7 @@ def stock_summary(warehouse=None, **_):
         qs = qs.filter(warehouse_id=warehouse)
     from apps.delivery.services import DeliveryService
 
-    out_statuses = ["dispatched", "partially_delivered", "delivered", "invoiced"]
+    out_statuses = ["dispatched", "partially_delivered", "delivered", "invoiced", "returned"]
     back = DeliveryService.settled_returns(status__in=out_statuses)
     disp = {r["variant_id"]: ((r["d"] or 0) - (r["dl"] or 0) - back.get(r["variant_id"], 0), r["dl"] or 0) for r in SalesOrderLine.objects.filter(order__status__in=out_statuses).values("variant_id").annotate(d=Sum("qty_dispatched"), dl=Sum("qty_delivered"))}
     rows = []

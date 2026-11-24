@@ -170,7 +170,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     def get_delivery_state(self, obj):
         """The dispatch stage as a code — "", "on_trip" or "out_for_delivery" — for counting, not reading.
         The prose `delivery_status` is derived from this, so the two cannot disagree."""
-        if not obj.trip_id or obj.status in ("delivered", "invoiced", "cancelled", "rejected"):
+        if not obj.trip_id or obj.status in ("delivered", "invoiced", "returned", "cancelled", "rejected"):
             return ""
         if obj.trip.status in ("planned", "loading"):
             return "on_trip"

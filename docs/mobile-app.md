@@ -526,7 +526,7 @@ Useful on mobile: `sales_by_customer`, `sales_by_rep`, `pending_orders`, `dispat
 
 | Entity | Values |
 | --- | --- |
-| Sales order | `draft, submitted, under_review, confirmed, on_hold_credit, on_hold_stock, issued, dispatched, partially_delivered, delivered, invoiced, cancelled, rejected` (`issued` = warehouse handed the stock over, not yet on a vehicle) |
+| Sales order | `draft, submitted, under_review, confirmed, on_hold_credit, on_hold_stock, issued, dispatched, partially_delivered, delivered, invoiced, returned, cancelled, rejected` (`issued` = warehouse handed the stock over, not yet on a vehicle) |
 | Delivery note | `pending, loaded` (issued), `dispatched` (out for delivery), `delivered, partially_delivered, failed, returned` |
 | Load form (pick list) | `open` (pending), `sent` (to warehouse), `picking`, `issued`, `partially_issued`, `cancelled` |
 | Trip | `planned, loading, out_for_delivery, completed, closed, cancelled` |
@@ -703,6 +703,7 @@ the diff so an app built against the first version knows what to touch.
 | **Delivery (rev 12)** | New staff action `POST /api/v1/delivery-notes/{id}/cancel` `{ reason }` for a note not yet on a trip; notes carry **`can_cancel`**, and the page extra `delivery_notes.cancel` gates it. Optional for the app — the office does this on the web | §7.3 |
 | **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/cancel` answers **`422 invoiced`** for an order with a posted invoice (it used to cancel the invoice silently). Hide the button when any `invoices[]` entry is neither `draft` nor `cancelled`; show `detail` if the server refuses | §7.x orders |
 | **Orders (rev 12)** | `POST /api/v1/sales-orders/{id}/mark-delivered` answers `422 trip_required` until the order is on a trip (setting `delivery_needs_trip`, default on); show it only when the order has a `trip`. `POST /api/v1/delivery-notes/{id}/deliver-again` answers `422 delivered` once anything of the order was delivered | §7.x orders |
+| **Orders (rev 13)** | New order status **`returned`** (label "Returned"): every unit delivered came back afterwards on credit notes (owner, 24 Nov 2026 — TDN-SO-00575 read Delivered). It is final like `delivered`: no cancel. Deleting that return puts the order back to `delivered`. Show it like `delivered` with a warning colour. | Orders list / detail |
 | **Orders (rev 13)** | `POST /ext/v1/orders` (and the staff `POST /api/v1/sales-orders`) now **require `payment_mode`** — `"cash"` or `"credit"` — and answer **`400 payment_mode_required`** ("Choose Cash or Credit for this order.") without it; anything else is `400 bad_payment_mode`. Owner, 24 Nov 2026: the sale person always chooses — the app must show Cash / Credit with **nothing pre-selected** and not fall back to the customer's terms. Setting `payment_mode_required` (on by default). A Credit order to a customer with 0 credit days is due after the company's `credit_days_default` (30) instead of on the day. Order edits do not need it. | Place order |
 
 Questions or a missing endpoint: check `https://dms.invoiceflow.pk/api/docs/` first — it is generated from the running code.

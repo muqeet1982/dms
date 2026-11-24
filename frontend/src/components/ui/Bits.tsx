@@ -9,7 +9,7 @@ export const LINES_SCROLL_FROM = 10;
 const STATUS_COLORS: Record<string, string> = {
   draft: "secondary", submitted: "info", under_review: "info", confirmed: "primary", on_hold: "warning", on_hold_credit: "warning", on_hold_stock: "warning", dispatched: "purple", partially_delivered: "purple",
   delivered: "success", invoiced: "success", cancelled: "danger", rejected: "danger", posted: "success", partially_paid: "warning", paid: "success", overdue: "danger", pending: "secondary", loaded: "info",
-  failed: "danger", returned: "warning", planned: "secondary", loading: "info", out_for_delivery: "purple", completed: "success", closed: "dark", sent: "info", partially_received: "warning", received: "success",
+  failed: "danger", returned: "warning", partially_returned: "warning", planned: "secondary", loading: "info", out_for_delivery: "purple", completed: "success", closed: "dark", sent: "info", partially_received: "warning", received: "success",
   requested: "info", approved: "success", in_transit: "purple", pending_approval: "warning", open: "info", counting: "info", review: "warning", active: "success", inactive: "secondary", blocked: "danger",
   trial: "info", past_due: "warning", suspended: "danger", archived: "dark", held_by_rep: "warning", settled: "success", cleared: "success", deposited: "info", bounced: "danger", issued: "primary", partially_issued: "warning", picking: "info", partial: "warning", void: "dark",
   reversed: "dark", running: "info", done: "success", expired: "danger", expiring: "warning", low_stock: "warning", negative: "danger", dead_stock: "secondary", drift: "danger", reorder: "info",

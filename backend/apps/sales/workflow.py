@@ -102,7 +102,7 @@ def order_workflow(order):
 
     # 5 · Dispatch — vehicle, driver, helper. A delivery confirmed with no trip (TDN-SO-00308, owner 11 Nov 2026:
     # "Delivery Completed but Dispatch in progress") went out all the same: done, saying no vehicle was recorded
-    reached = bool(delivered) or order.status in ("delivered", "partially_delivered", "invoiced")
+    reached = bool(delivered) or order.status in ("delivered", "partially_delivered", "invoiced", "returned")
     # with the strict order a trip waits for the posted invoice (owner, 11 Nov 2026)
     from apps.core.tenancy import get_current_tenant
 
@@ -146,7 +146,7 @@ def order_workflow(order):
     done_note = delivered[0] if delivered else None
     came_back = sum(l.qty_returned for n in delivered for l in n.lines.all())
     steps.append(_step(
-        "delivered", "Delivery confirmation", "done" if order.status in ("delivered", "invoiced") or done_note else ("current" if out else "todo"),
+        "delivered", "Delivery confirmation", "done" if order.status in ("delivered", "invoiced", "returned") or done_note else ("current" if out else "todo"),
         at=done_note.delivered_at if done_note else order.delivered_at,
         by=_person(done_note.delivered_by) if done_note else "",
         detail=(

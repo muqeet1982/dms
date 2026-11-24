@@ -747,7 +747,7 @@ class OrderService:
     def cancel(order, reason, by_rep=False, final_status="cancelled"):
         if by_rep and not OrderService.rep_can_cancel(order):
             raise DomainError("This order can no longer be cancelled from the app — ask the office.", code="cancel_window_closed", status_code=403)
-        if order.status in ("partially_delivered", "delivered", "invoiced"):
+        if order.status in ("partially_delivered", "delivered", "invoiced", "returned"):
             raise DomainError("Delivered or invoiced orders cannot be cancelled; use a return.")
         if order.status in ("cancelled", "rejected"):
             raise DomainError("Order already closed.")
@@ -813,7 +813,7 @@ class OrderService:
         home), damaged ones are written off instead, the invoice's entries come off the books, and the order closes as
         Rejected.
         """
-        if order.status in ("partially_delivered", "delivered", "invoiced"):
+        if order.status in ("partially_delivered", "delivered", "invoiced", "returned"):
             raise DomainError(f"{order.number} was delivered — goods the customer kept and sent back later are a return: "
                               "use Credit note / return on the invoice.", code="delivered")
         # a stop that could not be delivered, its goods still out with the trip: refused now, it is settled like a refusal
@@ -838,7 +838,7 @@ class OrderService:
         the goods back and credited the invoice. An order something was delivered on is finished by refresh_delivery_status.
         """
         order = SalesOrder.objects.select_for_update().get(pk=order.pk)
-        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced"):
+        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced", "returned"):
             return None
         if order.lines.filter(qty_delivered__gt=0).exists():
             return None
@@ -872,7 +872,7 @@ class OrderService:
         if inv is None or inv.order_id is None or inv.delivery_note_id is None or inv.delivery_note.status != "cancelled":
             return None
         order = SalesOrder.objects.select_for_update().get(pk=inv.order_id)
-        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced"):
+        if order.status in ("cancelled", "rejected", "delivered", "partially_delivered", "invoiced", "returned"):
             return None
         if order.delivery_notes.exclude(status="cancelled").exists() or order.lines.filter(qty_delivered__gt=0).exists():
             return None
@@ -946,11 +946,45 @@ class OrderService:
             order.status = "partially_delivered"
         elif order.status in ("delivered", "partially_delivered"):
             order.status = "dispatched"
+        if order.status == "delivered" and OrderService.fully_returned(order, lines):
+            order.status = "returned"
         order.save(update_fields=["status", "delivered_at", "updated_at"])
         if before != order.status:
             AuditService.log("status.delivery", order, before={"status": before}, after={"status": order.status})
             if order.status == "delivered":
                 emit("order.delivered", order=order)
+
+    @staticmethod
+    def fully_returned(order, lines=None):
+        """Everything the customer received came back afterwards, on credit notes (owner, 24 Nov 2026: TDN-SO-00575 was
+        returned in full on TDN-CN-00101 and still read Delivered). Units refused at the stop were never delivered and do
+        not count; something must have been delivered."""
+        from apps.delivery.models import DeliveryNoteLine
+
+        lines = lines if lines is not None else list(SalesOrderLine.objects.filter(order=order))
+        at_stop = {}
+        for r in DeliveryNoteLine.objects.filter(order_line__order=order).exclude(delivery_note__status="cancelled").values("order_line_id", "qty_returned"):
+            at_stop[r["order_line_id"]] = at_stop.get(r["order_line_id"], Decimal("0")) + (r["qty_returned"] or 0)
+        got = [l for l in lines if l.qty_delivered > 0]
+        return bool(got) and all(l.qty_returned - at_stop.get(l.pk, Decimal("0")) >= l.qty_delivered for l in got)
+
+    @staticmethod
+    def refresh_returned(order):
+        """After a return is posted, deleted or undone: a delivered order whose goods all came back reads Returned, and goes
+        back to Delivered when they no longer all have."""
+        if order is None:
+            return
+        order = SalesOrder.objects.get(pk=order.pk)
+        if order.status not in ("delivered", "invoiced", "returned"):
+            return
+        before = order.status
+        if OrderService.fully_returned(order):
+            order.status = "returned"
+        elif order.status == "returned":
+            order.status = "delivered"
+        if order.status != before:
+            order.save(update_fields=["status", "updated_at"])
+            AuditService.log("status.returns", order, before={"status": before}, after={"status": order.status})
 
     @staticmethod
     @transaction.atomic
@@ -2527,6 +2561,8 @@ class CreditNoteService:
                 ol.save(update_fields=["qty_returned"])
         _claw_back_claims(cn)
         OrderService.cancel_when_credited(cn)
+        if cn.invoice_id and cn.invoice.order_id:
+            OrderService.refresh_returned(cn.invoice.order)
         if cn.delivery_note_id is None and cn.invoice_id and cn.invoice.delivery_note_id and cn.lines.filter(stock_back=True).exists():
             from apps.delivery.services import DeliveryService
 
@@ -2625,7 +2661,9 @@ class CreditNoteService:
         if cn.invoice_id:
             AuditService.log("credit_note.deleted", cn.invoice, after=snapshot, actor=actor)
         AuditService.log("credit_note.deleted", cn, before=snapshot, actor=actor)
+        order_after = cn.invoice.order if cn.invoice_id and cn.invoice.order_id else None
         cn.delete()
+        OrderService.refresh_returned(order_after)
         return snapshot
 
     @staticmethod

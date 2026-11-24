@@ -21,7 +21,7 @@ import { WorkflowStepper } from "@/components/documents/WorkflowStepper";
 import { useOverlapGuard } from "@/components/documents/OverlapGuard";
 import { deliveryNeedsTrip } from "@/features/delivery/DeliveryPages";
 
-const STATUS_OPTIONS = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
+const STATUS_OPTIONS = ["draft", "submitted", "under_review", "on_hold", "confirmed", "on_hold_credit", "on_hold_stock", "dispatched", "partially_delivered", "delivered", "invoiced", "returned", "cancelled", "rejected"].map((s) => ({ value: s, label: s.replace(/_/g, " ") }));
 
 // the picker lives with the other document parts; re-exported for the pages that import it from here
 export { DiscountPctSelect };
@@ -196,14 +196,16 @@ export function OrderDetailPage() {
               <div className="col-lg-6">
                 <h6 className="fs-13 mb-2">{labelCase("delivery notes")}</h6>
                 {!o.delivery_notes.length && <p className="text-muted fs-13">None yet</p>}
-                <div className="list-group">{o.delivery_notes.map((d: any) => <div key={d.id} className="list-group-item py-2">
-                  <div className="d-flex align-items-center gap-2"><Link to={`/app/delivery/notes/${d.id}`} className="fw-semibold text-nowrap">{d.number}</Link><span className="ms-auto"><StatusBadge status={d.status} /></span></div>
+                <div className="list-group">{o.delivery_notes.map((d: any) => { const dinv = (o.invoices || []).find((i: any) => i.number === d.invoice_number); const back = (dinv?.credit_notes || []).filter((c: any) => c.status === "posted"); const allBack = dinv?.status === "returned"; return <div key={d.id} className="list-group-item py-2">
+                  <div className="d-flex align-items-center gap-2"><Link to={`/app/delivery/notes/${d.id}`} className="fw-semibold text-nowrap">{d.number}</Link><span className="ms-auto d-flex gap-1"><StatusBadge status={d.status} />{back.length > 0 && <StatusBadge status={allBack ? "returned" : "partially_returned"} />}</span></div>
                   <div className="fs-12 text-muted mt-1 d-flex flex-wrap gap-3">
                     <span><i className="ti ti-truck me-1" />{d.trip || labelCase("no trip")}</span>
                     <span><i className="ti ti-clock me-1" />{d.delivered_at ? datetime(d.delivered_at) : labelCase("not delivered yet")}</span>
                     {d.invoice_number && <span><i className="ti ti-file-invoice me-1" />{d.invoice_number}</span>}
                   </div>
-                </div>)}</div>
+                  {/* goods sent back after delivery, on a credit note (owner, 24 Nov 2026: TDN-SO-00575 read Delivered) */}
+                  {back.length > 0 && <div className="fs-12 text-warning mt-1"><i className="ti ti-receipt-refund me-1" />{labelCase(allBack ? "returned on" : "part returned on")} {back.map((c: any, k: number) => <span key={c.id}>{k ? ", " : ""}<Link to={`/app/sales/credit-notes/${c.id}`} className="text-warning">{c.number}</Link></span>)}</div>}
+                </div>; })}</div>
               </div>
               <div className="col-lg-6">
                 <h6 className="fs-13 mb-2">{labelCase("invoices")}</h6>
