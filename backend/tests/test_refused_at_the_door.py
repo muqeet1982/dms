@@ -63,6 +63,15 @@ def test_the_refused_button_does_the_same(api, w):
     assert again.status_code == 422, "a refused order does not go out again"
 
 
+def test_the_phone_app_sends_it_as_a_form_and_it_is_still_a_refusal(api, w):
+    """The app posts multipart, so both flags arrive as the text "true" (mobile AI's question, 25 Nov 2026)."""
+    shelf, ledger = on_hand(w), books(w)
+    o, inv, _t, dn = out(api, w)
+    r = api.post(f"/api/v1/delivery-notes/{dn['id']}/deliver", {"failed": "true", "refused": "true", "failure_reason": "Customer refused the delivery"}, format="multipart")
+    assert r.status_code == 200, r.content
+    _the_sale_is_undone(api, w, o, inv, shelf, ledger, r)
+
+
 def test_could_not_deliver_waits_and_customer_rejected_later_settles_it_the_same_way(api, w):
     shelf, ledger = on_hand(w), books(w)
     o, inv, _t, dn = out(api, w)
