@@ -9,6 +9,7 @@ import { toast } from "@/lib/toast";
 import { Alert, PageHeader, Spinner, StatCard } from "@/components/ui/Bits";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { Modal } from "@/components/ui/Modal";
+import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Pagination } from "@/components/ui/DataTable";
 
 // columns that hold codes, not amounts, however they look (a UPC, an NTN, a phone number) — exporters.IDENT_COL
@@ -36,19 +37,17 @@ const ENTITY_ENDPOINTS: Record<string, { endpoint: string; query?: Record<string
   variant: { endpoint: "/api/v1/variants", map: (v) => ({ id: v.id, label: v.name, sub: v.sku }) }, category: { endpoint: "/api/v1/categories", map: (c) => ({ id: c.id, label: c.name }) }, account: { endpoint: "/api/v1/accounting/accounts", query: { is_group: false }, map: (a) => ({ id: a.id, label: `${a.code} ${a.name}` }) }, cost_centre: { endpoint: "/api/v1/accounting/cost-centres", map: (c) => ({ id: c.id, label: c.name }) }, rep: { endpoint: "/api/v1/supplier-reps", map: (r) => ({ id: r.id, label: r.name, sub: r.code }) },
 };
 
-/** The sale person filter as a plain dropdown, like the report's other filters (owner, 24 Nov 2026). Two of the same name
- *  read with their code, as the reports name them. */
+/** The sale person filter: a dropdown like the report's other filters (owner, 24 Nov 2026), searchable by name or code
+ *  (25 Nov). Two of the same name read with their code, as the reports name them. */
 function RepSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const reps = useQuery({ queryKey: ["report-reps"], queryFn: () => api.list("/api/v1/supplier-reps", { is_active: true, page_size: 500 }), staleTime: 60_000 });
-  const rows = [...(reps.data?.results || [])].sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+  const active = reps.data?.results || [];
+  // someone no longer active, opened from a name on the summary: the filter still says who it is
+  const one = useQuery({ queryKey: ["report-rep", value], queryFn: () => api.get(`/api/v1/supplier-reps/${value}`), enabled: Boolean(value && reps.data && !active.some((r: any) => r.id === value)), staleTime: 60_000, retry: false });
+  const rows = [...active, ...(one.data && !active.some((r: any) => r.id === one.data.id) ? [one.data] : [])].sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
   const seen: Record<string, number> = {};
   rows.forEach((r: any) => { const k = String(r.name).trim().toLowerCase(); seen[k] = (seen[k] || 0) + 1; });
-  return (
-    <select className="form-select form-select-sm" value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">all</option>
-      {rows.map((r: any) => <option key={r.id} value={r.id}>{seen[String(r.name).trim().toLowerCase()] > 1 ? `${r.name} (${r.code})` : r.name}</option>)}
-    </select>
-  );
+  return <SearchSelect size="sm" value={value} onChange={onChange} options={rows.map((r: any) => ({ value: r.id, label: seen[String(r.name).trim().toLowerCase()] > 1 ? `${r.name} (${r.code})` : r.name, search: r.code }))} />;
 }
 
 type Out = "print" | "pdf" | "xlsx" | "csv";

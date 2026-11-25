@@ -17,6 +17,28 @@ from .registry import REPORTS, catalog, may_see
 DATE_PARAMS = {"date_from", "date_to", "as_of", "date", "compare_from", "compare_to"}
 
 
+# what a filter holding an id names in the printed heading
+_NAMED = {"rep": ("partners", "SupplierRep"), "customer": ("partners", "Customer"), "supplier": ("partners", "Supplier"), "warehouse": ("inventory", "Warehouse"),
+          "variant": ("catalog", "ProductVariant"), "category": ("catalog", "Category"), "account": ("accounting", "Account"), "cost_centre": ("accounting", "CostCentre")}
+
+
+def named_params(spec, params):
+    """The filters as the printed heading reads them: a name where the filter holds an id ("Rep: 01a14e44-…", 25 Nov 2026)."""
+    from django.apps import apps
+    from django.core.exceptions import ValidationError
+
+    out = {k: str(v) for k, v in params.items()}
+    for p in spec["params"]:
+        if out.get(p["name"]) and p["type"] in _NAMED:
+            try:
+                row = apps.get_model(*_NAMED[p["type"]]).objects.filter(pk=out[p["name"]]).first()
+            except (ValueError, ValidationError):
+                row = None
+            if row is not None:
+                out[p["name"]] = getattr(row, "name", "") or str(row)
+    return out
+
+
 class ReportCatalogView(APIView):
     permission_classes = [IsTenantUser]
     required_perm = "reports.view_report"  # the Reports page's View switch; each report still has its own
@@ -76,7 +98,7 @@ class ReportRunView(APIView):
         elif fmt == "xlsx":
             data, ct = to_xlsx(result, title), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif fmt == "pdf":
-            data, ct = to_pdf(result, title, request.tenant, {k: str(v) for k, v in params.items()}), "application/pdf"
+            data, ct = to_pdf(result, title, request.tenant, named_params(spec, params), {p["name"]: p["label"] for p in spec["params"] if p.get("label")}), "application/pdf"
         else:
             raise DomainError("format must be json, csv, xlsx or pdf", status_code=400)
         resp = HttpResponse(data, content_type=ct)
