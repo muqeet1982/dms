@@ -143,7 +143,7 @@ def test_sales_by_customer_takes_returns_off(api, tenant, world):
         CreditNoteService.post(CreditNoteService.create(customer=inv.customer, invoice=inv, reason="all back",
                                                         lines=[{"variant": line.variant, "qty": "1", "unit_price": str(line.unit_price), "unit_cost": str(cost), "condition": "good", "restock": True}]))
     data = api.get("/api/v1/reports/sales_by_customer").data
-    assert data["columns"][:6] == ["label", "qty", "sales", "returns", "net_sales", "cogs"]
+    assert data["columns"][:7] == ["label", "qty", "sales", "returns", "net_sales", "company_share", "cogs"]
     row = {r["label"]: r for r in data["rows"]}["Shine Salon"]
     assert (D(row["sales"]), D(row["returns"]), D(row["net_sales"]), D(row["qty"]), D(row["cogs"])) == (D("150"), D("150"), D("0"), D("0"), D("0")), row
     assert D(data["totals"]["net_sales"]) == D("270") and D(data["totals"]["returns"]) == D("150")

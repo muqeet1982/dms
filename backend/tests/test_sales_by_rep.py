@@ -327,7 +327,7 @@ def test_the_original_report_is_back_and_its_names_open_the_sheet(api, tenant, w
     assert api.post(f"/api/v1/sales-orders/{order.pk}/invoice", {"post": True}, format="json").status_code == 201
 
     summary = api.get("/api/v1/reports/sales_by_rep", {"date_from": on.isoformat(), "date_to": on.isoformat()}).data
-    assert summary["columns"] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with the additions"
+    assert summary["columns"] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "company_share", "cogs", "gross_margin", "margin_pct", "invoices"], "the original columns, with the additions"
     assert summary["totals"] and not summary.get("totals_in_rows") and not summary.get("header_groups")
     row = next(r for r in summary["rows"] if r["label"] == "Talha")
     assert D(row["qty"]) == 4 and D(row["sales"]) == 400 and row["invoices"] == 1

@@ -39,7 +39,7 @@ def test_excel_and_csv_leave_out_the_unticked_columns_and_their_totals(api, exce
 
     sheet = _book(api, "sales_by_rep", **_params(on, hide_columns="cogs,gross_margin,margin_pct"))
     heads = [c.value for c in sheet[1]]
-    assert heads == [h for h in every if h not in ("COGS", "Gross Margin", "Margin Pct")]
+    assert heads == [h for h in every if h not in ("COGS", "Gross Margin", "Margin %")]
     assert [c.value for c in sheet[2]][0] == "Talha" and len([c for c in sheet[2] if c.value is not None]) == len(heads)
     first_column = [row[0].value for row in sheet.iter_rows()]
     assert "sales" in first_column and not {"cogs", "gross_margin"} & set(first_column), "no total of a column left out"
@@ -64,8 +64,8 @@ def test_print_and_pdf_leave_them_out_too(api, excel_on, world, monkeypatch):
     monkeypatch.setattr(loader, "render_to_string", spy)
     r = api.get("/api/v1/reports/sales_by_rep", _params(timezone.localdate(), format="pdf", hide_columns="cogs,gross_margin,margin_pct,invoices"))
     assert r.status_code == 200 and r.content.startswith(b"%PDF-")
-    assert seen["cols"] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding"]
-    assert len(seen["rows"][0]["cells"]) == 9 and not {"cogs", "gross_margin"} & set(seen["totals"])
+    assert seen["cols"] == ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "company_share"]
+    assert len(seen["rows"][0]["cells"]) == 10 and not {"cogs", "gross_margin", "margin_pct"} & set(seen["totals"])
     assert "hide_columns" not in seen["params"], "not printed as a filter"
 
 

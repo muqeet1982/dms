@@ -73,8 +73,72 @@ def _rep_names():
     return {str(pk): (f"{n} ({c})" if seen[n.strip().lower()] > 1 and c else n) for pk, n, c in reps}
 
 
+def _company_per_unit(invoice_ids):
+    """
+    What the company (manufacturer) pays of an invoice's discount, per unit of each item: {(invoice, variant): amount}.
+    Read off the claims raised when the invoice posted — every invoice has them, where the split on the line is stored
+    only since 8 Nov 2026 — so it is the figure in the books. A cancelled claim pays nothing.
+    """
+    from apps.sales.models import CompanyClaimLine
+
+    got = defaultdict(lambda: [Z, Z])
+    for cl in CompanyClaimLine.objects.filter(claim__invoice_id__in=set(invoice_ids)).exclude(claim__status="cancelled").values("claim__invoice_id", "variant_id", "qty", "company_amount"):
+        g = got[(cl["claim__invoice_id"], cl["variant_id"])]
+        g[0] += cl["company_amount"]
+        g[1] += cl["qty"]
+    return {k: amount / qty for k, (amount, qty) in got.items() if qty}
+
+
+def _q4(x):
+    return x.quantize(Decimal("0.0001"))
+
+
+def _returned_shares(lines):
+    """
+    The company's share on each returned line, {line id: amount}: it does not fund goods that came back. Never more in a
+    note than the discount the note reverses — as the return posts it (sales.services.returned_company_shares).
+    """
+    funded = _company_per_unit(l.credit_note.invoice_id for l in lines if l.credit_note.invoice_id)
+    share, per_note = {}, defaultdict(lambda: Z)
+    for l in lines:
+        share[l.pk] = funded.get((l.credit_note.invoice_id, l.variant_id), Z) * l.qty
+        per_note[l.credit_note_id] += share[l.pk]
+    out = {}
+    for l in lines:
+        most, all_of_it = l.credit_note.discount, per_note[l.credit_note_id]
+        out[l.pk] = _q4(share[l.pk] * most / all_of_it if all_of_it > most else share[l.pk])
+    return out
+
+
+def _no_crumbs(x):
+    """Under half a paisa is nothing: a tax line sold and all returned left -0.0040 of sales, read as -0.00 at 100% margin."""
+    return Z if abs(x) < Decimal("0.005") else x
+
+
+def _margin_pct(margin, net):
+    """Of net sales. Where nothing was sold net of returns there is no rate: a loss on returns alone (-76 of -760) read as 10%."""
+    return str((margin / net * 100).quantize(Decimal("0.01"))) if net > 0 else ""
+
+
+def _sales_totals(out, keys):
+    """The columns' totals, to the last decimal of the books (the rows are cleared of crumbs, see _no_crumbs), and the margin rate of the whole."""
+    exact = out.pop("exact", {})
+    totals = {k: str(exact[k] if k in exact else sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in keys}
+    pct = _margin_pct(Decimal(totals["gross_margin"]), Decimal(totals["net_sales"]))
+    return {**totals, "margin_pct": pct} if pct else totals
+
+
+MARGIN_LABELS = {"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS", "margin_pct": "Margin %"}
+
+
 def _group(rows, key_fn, label_fn, extra_fn=None):
-    out = defaultdict(lambda: {"qty": Z, "sales": Z, "cogs": Z, "invoices": set()})
+    """
+    Gross Margin = sales + the company's share of the discount − COGS. The customer pays less by the whole discount, but the
+    company pays its part of it: Waqas Traders' 7% was 3 of ours and 4 of Keune's, and the report took all 7 as ours — 3.20%
+    for a sale that made 7.50% (owner, 25 Nov 2026). The income statement's gross profit counts it the same way.
+    """
+    out = defaultdict(lambda: {"qty": Z, "sales": Z, "share": Z, "cogs": Z, "invoices": set()})
+    funded = _company_per_unit(l.invoice_id for l in rows)
     for l in rows:
         k = key_fn(l)
         r = out[k]
@@ -83,15 +147,12 @@ def _group(rows, key_fn, label_fn, extra_fn=None):
             r["extra"] = extra_fn(l)
         r["qty"] += l.qty
         r["sales"] += _net_sales(l)
+        r["share"] += _q4(funded.get((l.invoice_id, l.variant_id), Z) * l.qty)
         r["cogs"] += (l.qty + l.free_qty) * l.unit_cost   # free goods cost what they cost — as the invoice's COGS journal books them
         r["invoices"].add(l.invoice_id)
-    result = []
-    for k, r in out.items():
-        margin = r["sales"] - r["cogs"]
-        result.append({"key": str(k), "label": r["label"], "qty": str(r["qty"]), "sales": str(r["sales"]), "cogs": str(r["cogs"]), "gross_margin": str(margin), "margin_pct": str((margin / r["sales"] * 100).quantize(Decimal("0.01")) if r["sales"] else Z), "invoices": len(r["invoices"]), **r.get("extra", {})})
-    result.sort(key=lambda r: -Decimal(r["sales"]))
-    totals = {"sales": str(sum((Decimal(r["sales"]) for r in result), Z)), "cogs": str(sum((Decimal(r["cogs"]) for r in result), Z)), "gross_margin": str(sum((Decimal(r["gross_margin"]) for r in result), Z))}
-    return {"columns": ["label", "qty", "sales", "cogs", "gross_margin", "margin_pct", "invoices"], "rows": result, "totals": totals}
+    result = [{"key": str(k), "label": r["label"], "qty": str(r["qty"]), "sales": str(r["sales"]), "company_share": str(r["share"]), "cogs": str(r["cogs"]),
+               "invoices": len(r["invoices"]), **r.get("extra", {})} for k, r in out.items()]
+    return {"columns": [], "rows": result, "totals": {}}   # columns, margin and totals come once the returns are off (_net_of_returns)
 
 
 def sales_by_product(date_from=None, date_to=None, **_):
@@ -127,7 +188,8 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
 def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
     """
     Returns in the same period, by credit-note date (as the ledger's Sales Returns), taken off each row's sales: Returns
-    and Net Sales, the returned qty off Qty, the returned goods' cost off COGS, the margin on net sales. Sales by customer
+    and Net Sales, the returned qty off Qty, the returned goods' cost off COGS and the company's share of their discount off
+    Company Share, the margin on net sales. Sales by customer
     and by sale person counted every sale in full — November had 111 credit notes (600,612) and 49 TDN customers who sent
     back all they bought still showed their full sales (owner, 24 Nov 2026). `key_of(credit note)` → (row key, label);
     a key with returns and no sale in the period gets a row of its own (with `blank` for the caller's other columns).
@@ -139,37 +201,58 @@ def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
         "variant__product__brand", "variant__product__supplier", "credit_note__customer__territory", "credit_note__customer__route",
         "credit_note__invoice__rep", "credit_note__invoice__order__rep", "credit_note__invoice__order__trip__rep",
         "credit_note__invoice__delivery_note__trip__rep"), "credit_note__date", date_from, date_to)
-    back = defaultdict(lambda: {"value": Z, "cost": Z, "qty": Z, "name": "", "extra": {}})
+    unfunded = _returned_shares(cnl)
+    back = defaultdict(lambda: {"value": Z, "share": Z, "cost": Z, "qty": Z, "name": "", "extra": {}})
     for l in cnl:
         got = key_of(l)
         key, name = got[0], got[1]
         b = back[key]
         b["extra"] = got[2] if len(got) > 2 else {}
         b["value"] += l.line_total - l.tax1_amount - l.tax2_amount - l.fed_amount - l.extra_tax_amount - l.further_tax_amount
+        b["share"] += unfunded[l.pk]
         b["cost"] += l.qty * l.unit_cost
         b["qty"] += l.qty
         b["name"] = name
     have = {r["key"] for r in out["rows"]}
     for k, b in back.items():
         if k not in have:
-            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "cogs": "0", "gross_margin": "0", "margin_pct": "0", "invoices": 0, **b["extra"], **(blank or {})})
+            out["rows"].append({"key": k, "label": b["name"], "qty": "0", "sales": "0", "company_share": "0", "cogs": "0", "invoices": 0, **b["extra"], **(blank or {})})
+    exact = {"net_sales": Z, "company_share": Z, "cogs": Z, "gross_margin": Z}
     for r in out["rows"]:
-        b = back.get(r["key"], {"value": Z, "cost": Z, "qty": Z})
-        net = Decimal(r["sales"]) - b["value"]
-        cogs = Decimal(r["cogs"]) - b["cost"]
-        margin = net - cogs
-        r.update({"returns": str(b["value"]), "net_sales": str(net), "qty": str(Decimal(r["qty"]) - b["qty"]), "cogs": str(cogs),
-                  "gross_margin": str(margin), "margin_pct": str((margin / net * 100).quantize(Decimal("0.01")) if net else Z)})
+        b = back.get(r["key"], {"value": Z, "share": Z, "cost": Z, "qty": Z})
+        net, share, cogs = Decimal(r["sales"]) - b["value"], Decimal(r["company_share"]) - b["share"], Decimal(r["cogs"]) - b["cost"]
+        for k, v in (("net_sales", net), ("company_share", share), ("cogs", cogs), ("gross_margin", net + share - cogs)):
+            exact[k] += v
+        net, share, cogs = _no_crumbs(net), _no_crumbs(share), _no_crumbs(cogs)
+        margin = net + share - cogs
+        r.update({"returns": str(b["value"]), "net_sales": str(net), "qty": str(Decimal(r["qty"]) - b["qty"]), "company_share": str(share), "cogs": str(cogs),
+                  "gross_margin": str(margin), "margin_pct": _margin_pct(margin, net)})
     out["rows"].sort(key=lambda r: -Decimal(r["net_sales"]))
+    out["exact"] = exact
+
+
+SALES_COLUMNS = ["label", "qty", "sales", "returns", "net_sales", "company_share", "cogs", "gross_margin", "margin_pct", "invoices"]
+SALES_TOTALS = ("sales", "returns", "net_sales", "company_share", "cogs", "gross_margin")
 
 
 def _with_returns(out, date_from, date_to, key_of):
     """Sales by product / brand / supplier / territory / route, net of the period's returns (owner, 24 Nov 2026: "yes fix")."""
     _net_of_returns(out, date_from, date_to, by_type={}, key_of=key_of)
-    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
-    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
-    out["column_labels"] = {**out.get("column_labels", {}), "qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
+    out["columns"] = list(SALES_COLUMNS)
+    out["totals"] = _sales_totals(out, SALES_TOTALS)
+    out["column_labels"] = {**out.get("column_labels", {}), **MARGIN_LABELS}
     return out
+
+
+def _customer_names(keys):
+    """{customer id: name}, with the customer's code where another customer has the same name — TDN has 34 such names
+    ("She Cosmetics" of Township and of Walton), two rows of the report nobody could tell apart (25 Nov 2026)."""
+    from django.db.models.functions import Lower, Trim
+
+    from apps.partners.models import Customer
+
+    shared = set(Customer.objects.annotate(n=Lower(Trim("name"))).values("n").annotate(c=Count("id")).filter(c__gt=1).order_by().values_list("n", flat=True))
+    return {str(pk): (f"{n} ({c})" if n.strip().lower() in shared and c else n) for pk, n, c in Customer.objects.filter(pk__in=list(keys)).values_list("pk", "name", "code")}
 
 
 def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
@@ -180,9 +263,9 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     lines = _inv_lines(date_from, date_to, **by_type).select_related("invoice__customer", *SALE_PERSON_RELATED)
     out = _group(lines, lambda l: l.invoice.customer_id, lambda l: l.invoice.customer.name)
     _net_of_returns(out, date_from, date_to, by_type={"credit_note__customer__type": by_type["invoice__customer__type"]} if by_type else {})
-    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
-    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cogs", "gross_margin")}
-    out["column_labels"] = {"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"}
+    out["columns"] = list(SALES_COLUMNS)
+    out["totals"] = _sales_totals(out, SALES_TOTALS)
+    out["column_labels"] = dict(MARGIN_LABELS)
     sold_by = defaultdict(dict)
     names = _rep_names()
     for l in lines:
@@ -192,7 +275,9 @@ def sales_by_customer(date_from=None, date_to=None, customer_type=None, **_):
     from apps.partners.models import Customer
 
     assigned = {str(c.pk): [r.name for r in c.assigned_reps.all()] for c in Customer.objects.filter(pk__in=[r["key"] for r in out["rows"] if r["key"] not in sold_by]).prefetch_related("assigned_reps")}
+    called = _customer_names(r["key"] for r in out["rows"])
     for r in out["rows"]:
+        r["label"] = called.get(r["key"], r["label"])
         names = list(sold_by.get(r["key"], {})) or assigned.get(r["key"], [])
         r["sale_person"] = ", ".join(names)
         r["sold_by"] = f"Sale Person: {r['sale_person']}" if names else ""
@@ -244,9 +329,9 @@ def sales_by_rep(date_from=None, date_to=None, **_):
                     key_of=lambda l: (str(_sale_person(l.credit_note.invoice)[0]), names.get(str(_sale_person(l.credit_note.invoice)[0]), _sale_person(l.credit_note.invoice)[1])) if l.credit_note.invoice_id else ("None", "No Sale Person"),
                     blank={k: "0" for k in ("cash_sales", "credit_sales", "billed", "credited", "received", "outstanding")})
     # Billed and Credited (both incl. tax) are worked out but not shown (owner, 25 Nov 2026: hide them)
-    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"]
-    out["column_labels"].update({"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"})
-    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin")}
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "company_share", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["column_labels"].update(MARGIN_LABELS)
+    out["totals"] = _sales_totals(out, ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "company_share", "cogs", "gross_margin"))
     return out
 
 
@@ -741,66 +826,83 @@ def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=
     """
     Who bore every discount given (owner, 8 Nov 2026: salon discount sharing, "need report for this as well"): per
     invoice line, the list price (a salon's R.P), the T.P, the discount, and the distributor's and the company's
-    shares as they were posted, with the rule that split it. The shares are what the books carry: the company's is
-    its claim, the distributor's is Discounts Allowed.
-    """
-    from apps.sales.models import CompanyClaimLine
+    shares, with the rule that split it. The company's share is what its claim carries, so a cancelled claim pays nothing,
+    and the distributor's is Discounts Allowed. Returns of the period are rows of their own in minus (25 Nov 2026), so the
+    totals are the books': the report counted the discount on goods that had come back.
 
-    filters = {"discount_amount__gt": 0}
+    Every figure of a row is before tax, as the discount is: on a tax invoice (its T.P includes tax) the list price was the
+    T.P with tax and the discount without, so 6 × 1,255 less 3% read 180.72 where 225.90 was expected (25 Nov 2026).
+    """
+    from apps.sales.models import CreditNoteLine, SalesInvoiceLine
+
+    by = {}
     if customer_type in CUSTOMER_TYPES:
-        filters["invoice__customer__type"] = CUSTOMER_TYPES[customer_type]
+        by["customer__type"] = CUSTOMER_TYPES[customer_type]
     if customer:
-        filters["invoice__customer_id"] = customer
-    lines = _inv_lines(date_from, date_to, **filters).select_related("variant__product__brand__supplier").order_by("invoice__date", "invoice__number", "sequence")
-    if supplier:
-        lines = lines.filter(Q(variant__product__supplier_id=supplier) | Q(variant__product__supplier__isnull=True, variant__product__brand__supplier_id=supplier))
-    lines = list(lines)
-    # invoices posted before the breakdown was stored: the company's share is what their claims carry
-    claimed = defaultdict(lambda: [Z, Z])
-    old = {l.invoice_id for l in lines if not l.discount_rule}
-    if old:
-        for cl in CompanyClaimLine.objects.filter(claim__invoice_id__in=old).exclude(claim__status="cancelled").values("claim__invoice_id", "variant_id", "qty", "company_amount"):
-            c = claimed[(cl["claim__invoice_id"], cl["variant_id"])]
-            c[0] += cl["company_amount"]
-            c[1] += cl["qty"]
+        by["customer_id"] = customer
+    maker_of = lambda p: p.supplier or (p.brand.supplier if p.brand_id else None)  # noqa: E731
+    wanted = lambda p: not supplier or (maker_of(p) is not None and str(maker_of(p).pk) == str(supplier))  # noqa: E731
+
+    lines = [l for l in _inv_lines(date_from, date_to, discount_amount__gt=0, **{f"invoice__{k}": v for k, v in by.items()})
+             .select_related("variant__product__brand__supplier").order_by("invoice__date", "invoice__number", "sequence") if wanted(l.variant.product)]
+    returns = list(_window(CreditNoteLine.objects.filter(credit_note__status="posted", discount_amount__gt=0, **{f"credit_note__{k}": v for k, v in by.items()}),
+                           "credit_note__date", date_from, date_to).select_related("credit_note__customer", "credit_note__invoice", "variant__product__brand__supplier", "variant__product__supplier")
+                   .order_by("credit_note__date", "credit_note__number", "id"))
+    funded = _company_per_unit(l.invoice_id for l in lines)
+    unfunded = _returned_shares(returns)
+    # what is charged before tax, of the T.P as sold: 1 except on a tax invoice
+    sold = {(x.invoice_id, x.variant_id): x for x in SalesInvoiceLine.objects.filter(invoice_id__in={l.credit_note.invoice_id for l in returns})}
+    names = _customer_names({str(l.invoice.customer_id) for l in lines} | {str(l.credit_note.customer_id) for l in returns})
 
     def pct(x):
         return f"{Decimal(x).normalize():f}%"
 
+    def before_tax(line):
+        return line.unit_price / line.tp if line is not None and line.tp else Decimal("1")
+
+    def rule_of(l, company, gross):
+        table = f"Discount Table (Company {pct((company / gross * 100).quantize(Decimal('0.01')))} Of Sale)" if gross else ""
+        if l.company_discount and not company:
+            return "Claim Cancelled"
+        if not l.discount_rule:
+            return table if company else "No Company Share"
+        return {"table": table if company else "No Company Share", "above_tp": "Salon: At Or Above T.P", "below_tp": f"Salon: Below T.P (Company {pct(l.share_pct)} Of R.P)",
+                "bracket": f"Salon Bracket (Company Bears {pct(l.share_pct)})", "no_bracket": "Salon: No Bracket Set"}[l.discount_rule]
+
     rows, tot = [], defaultdict(Decimal)
-    for l in lines:
+
+    def add(l, document, on, who, sign, company, factor, rule):
         p = l.variant.product
         gross = l.qty * l.unit_price
-        listed = l.tp if l.tp else l.unit_price
         off = (l.discount_amount / gross) if gross else Z
-        company = l.company_discount
-        if l.discount_rule:
-            rule = {"table": f"Discount Table (Company {pct(l.share_pct)} Of Sale)", "above_tp": "Salon: At Or Above T.P",
-                    "below_tp": f"Salon: Below T.P (Company {pct(l.share_pct)} Of R.P)",
-                    "bracket": f"Salon Bracket (Company Bears {pct(l.share_pct)})", "no_bracket": "Salon: No Bracket Set"}[l.discount_rule]
-        else:
-            amount, qty = claimed.get((l.invoice_id, l.variant_id), (Z, Z))
-            company = (amount / qty * l.qty).quantize(Decimal("0.01")) if qty else Z
-            rule = f"Discount Table {pct(l.invoice.discount_pct)}" if company else "No Company Share"
-        maker = p.supplier or (p.brand.supplier if p.brand_id else None)
+        maker = maker_of(p)
         rows.append({
-            "date": l.invoice.date, "invoice": l.invoice.number, "customer": l.invoice.customer.name, "customer_type": l.invoice.customer.get_type_display(),
+            "date": on, "invoice": document, "tax_note": "Tax Invoice, Before Tax" if factor != 1 else "", "customer": names.get(str(who.pk), who.name), "customer_type": who.get_type_display(),
             "label": l.variant.name, "codes": " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x),
-            "qty": str(l.qty), "list_price": str(listed), "trade_price": str(l.variant.sale_price),
-            "discount_pct": str((off * 100).quantize(Decimal("0.01"))), "price_after": str((listed * (1 - off)).quantize(Decimal("0.01"))),
-            "discount": str(l.discount_amount), "distributor_share": str(l.discount_amount - company), "company_share": str(company),
+            "qty": str(sign * l.qty), "list_price": str(l.unit_price), "trade_price": str((l.variant.sale_price * factor).quantize(Decimal("0.01"))),
+            "discount_pct": str((off * 100).quantize(Decimal("0.01"))), "price_after": str((l.unit_price * (1 - off)).quantize(Decimal("0.01"))),
+            "discount": str(sign * l.discount_amount), "distributor_share": str(sign * (l.discount_amount - company) or Z), "company_share": str(sign * company or Z),
             "rule": rule, "company": maker.name if maker else "",
         })
-        tot["discount"] += l.discount_amount
-        tot["company_share"] += company
+        tot["discount"] += sign * l.discount_amount
+        tot["company_share"] += sign * company
+
+    for l in lines:
+        company = _q4(funded.get((l.invoice_id, l.variant_id), Z) * l.qty)
+        add(l, l.invoice.number, l.invoice.date, l.invoice.customer, 1, company, before_tax(l), rule_of(l, company, l.qty * l.unit_price))
+    for l in returns:
+        if wanted(l.variant.product):
+            cn = l.credit_note
+            add(l, cn.number, cn.date, cn.customer, -1, unfunded[l.pk], before_tax(sold.get((cn.invoice_id, l.variant_id))), f"Return Of {cn.invoice.number}" if cn.invoice_id else "Return")
+    rows.sort(key=lambda r: r["date"])      # a day's returns after its sales
     tot["distributor_share"] = tot["discount"] - tot["company_share"]
     return {
         "columns": ["date", "invoice", "customer", "label", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
         "rows": rows, "totals": {k: str(tot[k]) for k in ("discount", "distributor_share", "company_share")},
-        "column_labels": {"label": "Product Name", "list_price": "List Price", "trade_price": "T.P", "discount_pct": "Discount %", "price_after": "Price After Discount",
+        "column_labels": {"invoice": "Invoice / Return No", "label": "Product Name", "list_price": "List Price", "trade_price": "T.P", "discount_pct": "Discount %", "price_after": "Price After Discount",
                           "discount": "Total Discount", "distributor_share": "Distributor Share", "company_share": "Company Share"},
-        "column_styles": {"label": "bold"}, "notes": {"label": "codes", "customer": "customer_type"},
-        "export_columns": ["date", "invoice", "customer", "customer_type", "label", "codes", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
+        "column_styles": {"label": "bold"}, "notes": {"label": "codes", "customer": "customer_type", "invoice": "tax_note"},
+        "export_columns": ["date", "invoice", "tax_note", "customer", "customer_type", "label", "codes", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
         "text_columns": ["codes"],
     }
 
