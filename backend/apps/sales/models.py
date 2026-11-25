@@ -221,7 +221,7 @@ class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):
     sequence = models.PositiveSmallIntegerField(default=0)
     # who bears this line's discount, written when the invoice posts (owner, 8 Nov 2026: "store the discount breakdown
     # against the sale"): the company's (manufacturer's) share; the distributor bears discount_amount less it. The rule
-    # says why: the discount table (non-salon), a salon sold at or above the T.P, a salon bracket, or no bracket set.
+    # says why: the discount table (a salon's too since 25 Nov 2026), a salon sold at or above the T.P, below it, or an older bracket.
     RULES = [("", "None"), ("table", "Discount table"), ("above_tp", "At or above T.P"), ("below_tp", "Salon below T.P"),
              ("bracket", "Salon bracket"), ("no_bracket", "No bracket set")]   # bracket / no_bracket: lines posted before 14 Nov 2026
     company_discount = models.DecimalField(**MONEY)
@@ -367,7 +367,8 @@ class SalonDiscountBracket(TenantModel):
     """
     A discount % offered for salons (`up_to_pct`), on top of the discount table's: the discount dropdown lists both.
     Until 14 Nov 2026 each row was a sharing bracket ("discount up to X%: company bears Y%"); the owner's rule since is
-    one fixed distributor share below the T.P (tenant setting `salon_distributor_pct`, see InvoiceService.discount_split),
+    the discount table's where it has the % (25 Nov 2026), else one fixed distributor share below the T.P (tenant setting
+    `salon_distributor_pct`, see InvoiceService.discount_split),
     so `company_pct` is no longer read — kept for the rows and lines made before.
     """
     up_to_pct = models.DecimalField(max_digits=6, decimal_places=3)

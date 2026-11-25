@@ -3,7 +3,8 @@ Salon discount sharing. A salon buys at the R.P and its discount is off the R.P 
 T.P after the discount, the distributor bears it all. Below the T.P (owner, 14 Nov 2026) the distributor bears a fixed
 3% of the R.P, whatever the discount, and the company (the product's manufacturer) the rest. The company's share is
 claimed exactly like a discount-table share, the split is stored on every invoice line, and a return brings back only
-what the company funded.
+what the company funded. Since 25 Nov 2026 all of that is for a discount the table has no slot for; one it has a slot for
+is split by the slot, as anyone else's.
 
 The world: T.P 150, R.P 200, so a salon is at the T.P with 25% off; and the owner's own, R.P 650 and T.P 550.
 """
@@ -76,17 +77,66 @@ def test_at_or_above_the_tp_the_distributor_bears_it_all(tenant, salon):
         assert _gl(tenant, "discount", inv) == line.discount_amount and _gl(tenant, "manufacturer_incentive", inv) == 0
 
 
-def test_the_discount_table_never_splits_a_salon_above_the_tp(tenant, salon):
-    """The table's 5% = 3 + 2 is for the T.P trade: a salon 5% off the R.P is still well above the T.P."""
+def _slot(tenant, total, ours, company, active=True):
     from apps.sales.models import DiscountContribution
 
+    with tenant_context(tenant, tenant.owner):
+        DiscountContribution.objects.update_or_create(total_pct=D(total), defaults={"distributor_pct": D(ours), "company_pct": D(company), "is_active": active})
+
+
+def test_a_discount_with_a_slot_is_split_by_it(tenant, salon):
+    """Owner, 25 Nov 2026: "For salon discounts use discount slots": 15% = 3 + 12 of the R.P, though 170 is still above the
+    T.P of 150 (until then the distributor bore all of it)."""
     sup, v, cust = salon
+    _slot(tenant, "15", "3", "12")
+    inv = _invoice(tenant, cust, v, "15")                 # 2000 less 300
+    line = _line(tenant, inv)
+    assert (line.company_discount, line.discount_rule, line.share_pct) == (D("240"), "table", D("12"))
     with tenant_context(tenant):
-        assert DiscountContribution.objects.filter(total_pct=5, company_pct=2).exists()
+        claim = inv.company_claims.get()
+        assert claim.total == D("240") and claim.company_pct == D("12") and claim.supplier_id == sup.pk
+    assert _gl(tenant, "discount", inv) == D("60"), "3% of the R.P is ours"
+
+
+def test_the_slot_holds_below_the_tp_as_well(tenant, salon):
+    """30% off is 140, under the T.P of 150: with a 30% slot it is the slot's, not "3% and the rest"."""
+    sup, v, cust = salon
+    _slot(tenant, "30", "10", "20")
+    line = _line(tenant, _invoice(tenant, cust, v, "30"))
+    assert (line.company_discount, line.discount_rule) == (D("400"), "table")
+
+
+def test_a_discount_without_a_slot_keeps_the_salon_rule(tenant, salon):
+    """20%, 25% … have no row in the table (or one switched off): at or above the T.P ours alone, below it 3% ours."""
+    sup, v, cust = salon
+    _slot(tenant, "20", "3", "17", active=False)
+    assert _line(tenant, _invoice(tenant, cust, v, "20")).discount_rule == "above_tp"
+    line = _line(tenant, _invoice(tenant, cust, v, "30"))
+    assert (line.company_discount, line.discount_rule) == (D("540"), "below_tp")
+
+
+def test_a_salons_small_slot(tenant, salon):
+    """The table's 5% = 3 + 2 is a salon's too."""
+    sup, v, cust = salon
     inv = _invoice(tenant, cust, v, "5")
-    assert _line(tenant, inv).discount_rule == "above_tp"
-    with tenant_context(tenant):
-        assert not inv.company_claims.exists()
+    line = _line(tenant, inv)
+    assert (line.company_discount, line.discount_rule) == (D("40"), "table")
+
+
+def test_a_salons_return_gives_back_its_slots_share(api, tenant, salon):
+    from apps.sales.services import CreditNoteService
+
+    sup, v, cust = salon
+    _slot(tenant, "15", "3", "12")
+    inv = _invoice(tenant, cust, v, "15")
+    with tenant_context(tenant, tenant.owner):
+        CreditNoteService.post(CreditNoteService.create(customer=cust, invoice=inv, reason="salon return",
+                                                        lines=[{"variant": v, "qty": "2", "unit_price": "200", "unit_cost": "100", "condition": "good", "restock": True}]))
+        assert inv.company_claims.get().total == D("192"), "24 a unit, two units back"
+    t = api.get("/api/v1/reports/discount_sharing", {"customer_type": "Salon"}).data
+    assert (D(t["totals"]["distributor_share"]), D(t["totals"]["company_share"])) == (D("48"), D("192"))
+    assert t["rows"][0]["rule"] == "Discount Table (Company 12% Of Sale)"
+    assert api.get("/api/v1/reports/sales_by_customer", {"customer_type": "Salon"}).data["totals"]["company_share"] == t["totals"]["company_share"]
 
 
 def test_the_owners_example_rp_650_tp_550(tenant, salon):

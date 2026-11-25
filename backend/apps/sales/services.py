@@ -1801,14 +1801,16 @@ class InvoiceService:
         invoice posting, its claims and the stored breakdown (record_discount_split) all read THIS, so the split in
         Discounts Allowed can never drift from what is claimed or what the reports show.
 
-        * A salon (owner, 8 Nov 2026) buys at the R.P, its discount off the R.P. Still at or above the T.P after the
-          discount, the line is the distributor's alone ("above_tp"). Below it (owner, 14 Nov 2026), the distributor
-          bears a fixed `salon_distributor_pct` (3) % of the R.P — whatever the discount, 20%, 25% or 30% — and the
-          company (the product's manufacturer) the rest of the discount ("below_tp"; share_pct = the company's points
-          of the R.P). R.P 650, T.P 550, 20% off = 130: distributor 19.50, company 110.50 (17%). Lines posted before
-          keep the bracket rule they were split by ("bracket", "no_bracket").
-        * Anyone else: the discount table row for the invoice's discount % (5% = 3 + 2), the company's points OF THE
-          SALE ("table"), so a product's own discount (not co-funded) never inflates the claim.
+        * The discount table row for the invoice's discount % (5% = 3 + 2, 15% = 3 + 12): the company's points OF THE SALE
+          ("table"), so a product's own discount (not co-funded) never inflates the claim. A salon too (owner, 25 Nov 2026:
+          "for salon discounts use discount slots"): 15% off its R.P of 1,000 is 30 ours and 120 the company's.
+        * A salon whose discount has no row in the table (20%, 25% …) keeps the rule of 8 and 14 Nov 2026. It buys at the R.P,
+          its discount off the R.P. Still at or above the T.P after the discount, the line is the distributor's alone
+          ("above_tp"). Below it, the distributor bears a fixed `salon_distributor_pct` (3) % of the R.P — whatever the
+          discount — and the company (the product's manufacturer) the rest of the discount ("below_tp"; share_pct = the
+          company's points of the R.P). R.P 650, T.P 550, 20% off = 130: distributor 19.50, company 110.50 (17%).
+        * Lines posted before keep the rule they were split by: a salon's of 7–25 Nov "above_tp" at 5, 10 and 15% as well,
+          and "bracket", "no_bracket".
         """
         from .models import DiscountContribution
 
@@ -1821,7 +1823,8 @@ class InvoiceService:
             product = line.variant.product
             return product.supplier or (product.brand.supplier if product.brand_id else None)
 
-        if inv.customer.type == "salon":
+        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first() if inv.discount_pct and inv.discount_pct > 0 else None
+        if inv.customer.type == "salon" and row is None:
             ours_pct = Decimal(str(get_current_tenant().setting("salon_distributor_pct") or 0))
             for line in lines:
                 gross = q4(line.qty * line.unit_price)
@@ -1842,7 +1845,6 @@ class InvoiceService:
                 out.append((line, supplier, company, "below_tp", share))
             return out
 
-        row = DiscountContribution.objects.filter(total_pct=inv.discount_pct, is_active=True).first() if inv.discount_pct and inv.discount_pct > 0 else None
         for line in lines:
             supplier = supplier_of(line)
             if row is None or row.company_pct <= 0 or row.total_pct <= 0 or supplier is None:
