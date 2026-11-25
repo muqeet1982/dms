@@ -418,7 +418,7 @@ class PostingService:
                 claim_ded = sum((a.amount for a in payment.allocations.filter(document_type="company_claim")), Decimal("0"))
             lines = [Line(partner_acct, debit=payment.amount + claim_ded, description=f"Payment {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id), Line(money, credit=net, description=f"Payment {payment.number}")]
             if claim_ded:
-                lines.append(Line(account_for("manufacturer_claim", "payment"), credit=claim_ded, description=f"Discount claims deducted {payment.number}"))
+                lines.append(Line(account_for("manufacturer_claim", "payment"), credit=claim_ded, description=f"Discount claims deducted {payment.number}", partner_type="supplier", partner_id=payment.partner_id))
             if payment.withholding_amount:
                 lines.append(Line(account_for("withholding_payable", "payment"), credit=payment.withholding_amount, description="Withholding tax withheld", tax_type=payment.withholding_tax))
         return PostingService.post(lines, date_=payment.date, memo=f"{'Receipt' if payment.direction == 'in' else 'Payment'} {payment.number} – {payment.partner_name}", source=payment)

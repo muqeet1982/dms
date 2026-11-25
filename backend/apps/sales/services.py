@@ -2188,7 +2188,7 @@ def _claw_back_claims(cn):
         lines = []
         if open_part > 0:
             lines += [Line(inc, debit=open_part, description=f"Claim {claim.number} clawed back — {cn.number}"),
-                      Line(recv, credit=open_part, description=f"Claim {claim.number} reduced by return")]
+                      Line(recv, credit=open_part, description=f"Claim {claim.number} reduced by return", partner_type="supplier", partner_id=supplier_id)]
             claim.total = q4(claim.total - open_part)
         if settled_part > 0:
             ap = claim.supplier.account if claim.supplier.account_id else account_for("ap", "company_claim")
@@ -2932,7 +2932,8 @@ class CompanyClaimService:
         recv = account_for("manufacturer_claim", "company_claim")
         PostingService.post(
             [Line(ap, debit=amount, description=f"Claim {claim.number} netted against purchases", partner_type="supplier", partner_id=supplier.id),
-             Line(recv, credit=amount, description=f"Claim {claim.number} settled")],
+             # tagged like the claim's own line: untagged, the supplier's ledger counted the claim twice (25 Nov 2026)
+             Line(recv, credit=amount, description=f"Claim {claim.number} settled", partner_type="supplier", partner_id=supplier.id)],
             date_=date or timezone.localdate(), memo=f"Claim {claim.number} net-off – {supplier.name}", source=claim,
         )
         PaymentService._apply(claim, "company_claim", amount)

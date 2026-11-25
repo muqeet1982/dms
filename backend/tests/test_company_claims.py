@@ -365,3 +365,65 @@ def test_a_return_takes_the_keune_share_back(tenant):
         CreditNoteService.post(cn2)
         ap_end = ReportQueries.account_balance(account_for("ap", "company_claim"))
         assert abs(ap_end - ap_mid) == Decimal("6"), (ap_mid, ap_end)
+
+
+def _ledger_and_payable(sup):
+    """(the supplier's ledger screen, what the books say of it) — claims receivable and payable together, credit less debit."""
+    from apps.accounting.models import GL_LIVE, JournalLine
+    from apps.accounting.services import account_for
+    from apps.partners.services import PartnerLedgerService
+
+    heads = [account_for("ap", "company_claim").pk, account_for("manufacturer_claim", "company_claim").pk]
+    agg = JournalLine.objects.filter(entry__status__in=GL_LIVE, account_id__in=heads).aggregate(d=Sum("debit"), c=Sum("credit"))
+    return PartnerLedgerService.balance("supplier", sup.pk), (agg["d"] or Decimal("0")) - (agg["c"] or Decimal("0"))
+
+
+def test_a_claim_netted_off_counts_once_on_the_suppliers_ledger(tenant):
+    """25 Nov 2026: the claim's own line carried the supplier and the line that settled it did not, so Keune's ledger read
+    267,038 less owed than the books — every claim twice."""
+    from apps.core.tenancy import tenant_context
+    from apps.sales.models import CompanyClaim
+    from apps.sales.services import CompanyClaimService
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        before = _ledger_and_payable(sup)[0]
+        CompanyClaimService.net_off(CompanyClaim.objects.get(invoice=_posted_invoice(tenant, cust, v, pct="6")))
+        ledger, books = _ledger_and_payable(sup)
+        assert ledger - before == Decimal("30") == books, "30 less owed to the company, once"
+
+
+def test_a_return_on_an_open_claim_comes_off_the_suppliers_ledger(tenant):
+    from apps.core.tenancy import tenant_context
+    from apps.sales.services import CreditNoteService
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        before = _ledger_and_payable(sup)[0]
+        inv = _posted_invoice(tenant, cust, v, pct="6")          # the claim stays open: 30
+        line = inv.lines.first()
+        CreditNoteService.post(CreditNoteService.create(customer=cust, invoice=inv, reason="back", lines=[
+            {"variant": v, "qty": "4", "unit_price": str(line.unit_price), "unit_cost": str(line.unit_cost), "condition": "damaged", "restock": False}]))
+        ledger, books = _ledger_and_payable(sup)
+        assert ledger - before == Decimal("18") == books, "12 of the 30 went back with the goods"
+
+
+def test_a_claim_deducted_from_a_payment_counts_once_on_the_suppliers_ledger(tenant):
+    from apps.accounting.services import PaymentService
+    from apps.core.tenancy import tenant_context
+    from apps.purchasing.models import PurchaseBill
+    from apps.sales.models import CompanyClaim
+    from .conftest import seed_basic
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        before = _ledger_and_payable(sup)[0]
+        claim = CompanyClaim.objects.get(invoice=_posted_invoice(tenant, cust, v, pct="6"))
+        bill = PurchaseBill.objects.create(number="PB-T-9", supplier=sup, subtotal=Decimal("100"), total=Decimal("100"), status="posted")
+        PaymentService.record(direction="out", partner_type="supplier", partner_id=str(sup.pk), amount=Decimal("70"), method="cash",
+                              allocations=[{"document_type": "purchase_bill", "document_id": str(bill.pk), "amount": Decimal("100")}],
+                              claim_deductions=[{"claim_id": str(claim.pk), "amount": Decimal("30")}])
+        ledger, books = _ledger_and_payable(sup)
+        assert ledger - before == books == Decimal("100"), "70 in cash and the claim's 30"
