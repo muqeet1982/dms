@@ -119,12 +119,11 @@ def test_billed_adds_up_and_same_named_reps_are_told_apart(api, tenant, world):
     with tenant_context(tenant, tenant.owner):
         SupplierRep.objects.create(supplier=naveed.supplier, code="R-2", name="NAVEED", phone="03002220000")
     data = api.get("/api/v1/reports/sales_by_rep").data
-    assert data["column_labels"]["billed"] == "Billed (Incl. Tax)"
-    assert data["columns"].index("billed") == data["columns"].index("credit_sales") + 1
+    assert not {"billed", "credited"} & {*data["columns"], *data["totals"]}, "worked out, not shown (owner, 25 Nov 2026)"
     for r in data["rows"]:
         assert D(r["billed"]) == D(r["credited"]) + D(r["received"]) + D(r["outstanding"]), r
     assert {r["label"] for r in data["rows"]} == {"NAVEED (R-1)", "No Sale Person"}, "two of the same name carry their code"
-    assert D(data["totals"]["billed"]) == D("420")
+    assert sum(D(r["billed"]) for r in data["rows"]) == D("420")
 
 
 def test_sales_by_customer_takes_returns_off(api, tenant, world):

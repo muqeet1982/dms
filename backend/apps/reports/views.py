@@ -10,7 +10,7 @@ from apps.core.permissions import IsTenantUser, has_tenant_perm
 from apps.core.plan_limits import PlanLimitService, effective_features
 from apps.core.viewsets import TenantModelViewSet
 
-from .exporters import to_csv, to_pdf, to_xlsx
+from .exporters import plain_figures, to_csv, to_pdf, to_xlsx, without_columns
 from .models import ReportSchedule, SavedReportFilter
 from .registry import REPORTS, catalog, may_see
 
@@ -57,7 +57,7 @@ class ReportRunView(APIView):
             elif p["type"] == "number":
                 v = int(v)
             params[p["name"]] = v
-        result = spec["query"](**params)
+        result = plain_figures(spec["query"](**params))
         fmt = request.query_params.get("format", "json")
         # a report about one thing names it in its heading (the daily sheet of one sale person, owner 8 Nov 2026)
         title = f"{spec['title']}: {result['title_suffix']}" if result.get("title_suffix") else spec["title"]
@@ -67,6 +67,10 @@ class ReportRunView(APIView):
             raise DomainError("You cannot export reports.", status_code=403)
         if fmt == "xlsx" and not effective_features(request.tenant).get("excel_export"):
             raise DomainError("Excel export is not enabled for your plan.", status_code=403)
+        # the columns unticked for this file; the page itself always shows them all
+        hide = [c for c in request.query_params.get("hide_columns", "").split(",") if c]
+        if hide:
+            result = without_columns(result, hide)
         if fmt == "csv":
             data, ct = to_csv(result, title), "text/csv"
         elif fmt == "xlsx":

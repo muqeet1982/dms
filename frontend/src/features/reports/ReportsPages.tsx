@@ -8,6 +8,7 @@ import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, PageHeader, Spinner, StatCard } from "@/components/ui/Bits";
 import { EntitySelect } from "@/components/ui/EntitySelect";
+import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/DataTable";
 
 // columns that hold codes, not amounts, however they look (a UPC, an NTN, a phone number) — exporters.IDENT_COL
@@ -50,6 +51,23 @@ function RepSelect({ value, onChange }: { value: string; onChange: (v: string) =
   );
 }
 
+type Out = "print" | "pdf" | "xlsx" | "csv";
+const OUT_LABEL: Record<Out, string> = { print: "Print", pdf: "Download PDF", xlsx: "Download Excel", csv: "Download CSV" };
+
+/** Which columns go in the file (owner, 25 Nov 2026, Sales by Sale Person). Opens on what was left out last time. */
+function ColumnPicker({ out, reportKey, columns, onClose, onGo }: { out: Out; reportKey: string; columns: { key: string; label: string }[]; onClose: () => void; onGo: (hide: string[]) => void }) {
+  const LS = `report.hide.${reportKey}`;
+  const [hide, setHide] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem(LS) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const left = columns.filter((c) => !hide.includes(c.key));
+  const go = () => { try { localStorage.setItem(LS, JSON.stringify(hide)); } catch { /* private window: not remembered */ } onGo(columns.filter((c) => hide.includes(c.key)).map((c) => c.key)); };
+  return (
+    <Modal open title="Columns" onClose={onClose} size="md" footer={<><button type="button" className="btn btn-light" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={!left.length} onClick={go}>{OUT_LABEL[out]}</button></>}>
+      <div className="d-flex gap-2 mb-3"><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setHide([])}>Select all</button><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setHide(columns.map((c) => c.key))}>Clear all</button><span className="ms-auto text-muted fs-12 align-self-center">{left.length} of {columns.length}</span></div>
+      <div className="row g-2">{columns.map((c) => <div className="col-sm-6" key={c.key}><div className="form-check"><input className="form-check-input" type="checkbox" id={`col-${c.key}`} checked={!hide.includes(c.key)} onChange={(e) => setHide(e.target.checked ? hide.filter((k) => k !== c.key) : [...hide, c.key])} /><label className="form-check-label" htmlFor={`col-${c.key}`}>{c.label}</label></div></div>)}</div>
+    </Modal>
+  );
+}
+
 export function ReportViewPage() {
   const { key } = useParams();
   const [sp, setSp] = useSearchParams();
@@ -62,6 +80,7 @@ export function ReportViewPage() {
   const [picked, setPicked] = useState("");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
+  const [picking, setPicking] = useState<Out | null>(null);
   const form = draft || params;
   const q = useQuery({ queryKey: ["report", key, params], queryFn: () => api.get(`/api/v1/reports/${key}`, params), enabled: Boolean(spec) });
   if (catalog.isLoading) return <Spinner />;
@@ -72,8 +91,16 @@ export function ReportViewPage() {
   // on the 1st This Month and Today are the same dates: keep the one that was picked
   const preset = picked && fits(picked) ? picked : DATE_PRESETS.find(fits) || "";
   const pickPreset = (name: string) => { if (!name) return; const [date_from, date_to] = presetRange(name); setPicked(name); run({ ...form, date_from, date_to }); };
-  const dl = (fmt: string) => api.download(`/api/v1/reports/${key}`, `${key}.${fmt}`, { ...params, format: fmt });
   const cols: string[] = q.data?.columns || [];
+  // a column under a heading is named with it: "Developer 60 ml", "Keratin Straight Pack"
+  const colHeads: string[] = (q.data?.header_groups || []).flatMap((g: any) => Array(g.span).fill(g.label || ""));
+  const pickable = cols.map((c, i) => ({ key: c, label: `${colHeads[i] || ""} ${q.data?.column_labels?.[c] ?? titleCase(c)}`.trim() }));
+  const send = (out: Out, hide: string[] = []) => {
+    const query = { ...params, format: out === "print" ? "pdf" : out, ...(hide.length ? { hide_columns: hide.join(",") } : {}) };
+    if (out === "print") api.printDoc(`/api/v1/reports/${key}?${new URLSearchParams(query).toString()}`);
+    else api.download(`/api/v1/reports/${key}`, `${key}.${out}`, query);
+  };
+  const ask = (out: Out) => (spec.pick_columns && cols.length ? setPicking(out) : send(out));
   const pageCount = Math.max(1, Math.ceil((q.data?.rows.length || 0) / size));
   const isNum = (v: any) => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) && v.length < 20);
   // words left, figures right, by column (owner, 8 Nov 2026) — the same rule as the PDF (exporters.numeric_columns)
@@ -85,7 +112,8 @@ export function ReportViewPage() {
   const fmtCell = (v: any, c?: string) => (v === null || v === undefined ? "" : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? date(v) : isNum(v) ? (/\.\d{3}$/.test(v) || qtyCol(c) ? qty(v) : money(v)) : typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "object" ? JSON.stringify(v) : String(v));
   return (
     <>
-      <PageHeader title={q.data?.title || spec.title} crumbs={[{ label: "Reports", to: "/app/reports" }, { label: spec.title }]} actions={pageRights("reports").extras.export && <><button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/reports/${key}?${new URLSearchParams({ ...params, format: "pdf" }).toString()}`)}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => dl("pdf")}><i className="ti ti-file-type-pdf me-1" />PDF</button><button className="btn btn-outline-success" onClick={() => dl("xlsx")}><i className="ti ti-file-type-xls me-1" />Excel</button><button className="btn btn-outline-secondary" onClick={() => dl("csv")}><i className="ti ti-file-type-csv me-1" />CSV</button></>} />
+      <PageHeader title={q.data?.title || spec.title} crumbs={[{ label: "Reports", to: "/app/reports" }, { label: spec.title }]} actions={pageRights("reports").extras.export && <><button className="btn btn-outline-secondary" onClick={() => ask("print")}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => ask("pdf")}><i className="ti ti-file-type-pdf me-1" />PDF</button><button className="btn btn-outline-success" onClick={() => ask("xlsx")}><i className="ti ti-file-type-xls me-1" />Excel</button><button className="btn btn-outline-secondary" onClick={() => ask("csv")}><i className="ti ti-file-type-csv me-1" />CSV</button></>} />
+      {picking && <ColumnPicker out={picking} reportKey={spec.key} columns={pickable} onClose={() => setPicking(null)} onGo={(hide) => { const out = picking; setPicking(null); send(out, hide); }} />}
       {spec.params.length > 0 && <div className="card mb-3"><div className="card-body py-2"><form className="row g-2 align-items-end" onSubmit={(e) => { e.preventDefault(); run(); }}>
         {hasRange && <div className="col-md-2 col-6"><label className="form-label fs-11 mb-1">Preset</label><select className="form-select form-select-sm" value={preset} onChange={(e) => pickPreset(e.target.value)}><option value="">Custom</option>{DATE_PRESETS.map((n) => <option key={n} value={n}>{n}</option>)}</select></div>}
         {spec.params.map((p: any) => <div className="col-md-2 col-6" key={p.name}><label className="form-label fs-11 mb-1">{p.label ?? titleCase(p.name)}</label>{p.type === "date" ? <DateInput className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} /> : p.type === "number" ? <input type="number" className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} /> : p.type === "select" ? <select className="form-select form-select-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })}>{p.options.map((o: string) => <option key={o} value={o}>{o || "all"}</option>)}</select> : p.type === "rep" ? <RepSelect value={form[p.name] || ""} onChange={(v) => setDraft({ ...form, [p.name]: v })} /> : ENTITY_ENDPOINTS[p.type] ? <EntitySelect endpoint={ENTITY_ENDPOINTS[p.type].endpoint} query={ENTITY_ENDPOINTS[p.type].query} mapOption={ENTITY_ENDPOINTS[p.type].map} value={form[p.name] || null} onChange={(v) => setDraft({ ...form, [p.name]: v || "" })} size="sm" placeholder="all" /> : <input className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} />}</div>)}

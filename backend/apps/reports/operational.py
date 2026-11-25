@@ -243,9 +243,10 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     _net_of_returns(out, date_from, date_to, by_type={},
                     key_of=lambda l: (str(_sale_person(l.credit_note.invoice)[0]), names.get(str(_sale_person(l.credit_note.invoice)[0]), _sale_person(l.credit_note.invoice)[1])) if l.credit_note.invoice_id else ("None", "No Sale Person"),
                     blank={k: "0" for k in ("cash_sales", "credit_sales", "billed", "credited", "received", "outstanding")})
-    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"]
-    out["column_labels"].update({"qty": "Net Qty", "net_sales": "Net Sales", "billed": "Billed (Incl. Tax)", "credited": "Credited (Incl. Tax)", "cogs": "COGS"})
-    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "billed", "credited", "received", "outstanding", "cogs", "gross_margin")}
+    # Billed and Credited (both incl. tax) are worked out but not shown (owner, 25 Nov 2026: hide them)
+    out["columns"] = ["label", "qty", "sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin", "margin_pct", "invoices"]
+    out["column_labels"].update({"qty": "Net Qty", "net_sales": "Net Sales", "cogs": "COGS"})
+    out["totals"] = {k: str(sum((Decimal(r[k]) for r in out["rows"]), Z)) for k in ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "cogs", "gross_margin")}
     return out
 
 

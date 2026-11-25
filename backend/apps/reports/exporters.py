@@ -100,6 +100,57 @@ def _footer_totals(result):
     return {} if result.get("totals_in_rows") else (result.get("totals") or {})
 
 
+# how Python writes a figure with many decimals: 0E-7 (always a capital E and a sign, which no code in the catalogue has)
+_SCIENTIFIC = re.compile(r"^-?\d(\.\d+)?E[+-]\d+$")
+
+
+def plain_figures(v, column=""):
+    """
+    A report's figures, never in scientific notation. A cost that nets to exactly zero (all of it came back) is 3 decimals
+    of quantity × 4 of cost, and Python writes that zero as 0E-7: COGS and Gross Margin of Sales by Sale Person showed it
+    (owner, 25 Nov 2026). Excel kept it as text and the column lost its right alignment as well.
+    """
+    if isinstance(v, dict):
+        return {k: plain_figures(x, str(k)) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [plain_figures(x, column) for x in v]
+    if isinstance(v, (str, Decimal)) and _SCIENTIFIC.match(str(v)) and not IDENT_COL.search(column):
+        d = Decimal(str(v))
+        text = f"{d:f}" if d else "0"
+        return text if isinstance(v, str) else Decimal(text)
+    return v
+
+
+def without_columns(result, hide):
+    """
+    The report without the columns unticked for this file (owner, 25 Nov 2026, Sales by Sale Person). A column's figure
+    under the table goes with it: a sheet printed without COGS must not carry its total at the bottom. A heading over
+    several columns spans the ones left, and a total row keeps its name when the column that held it is left out.
+    """
+    from apps.core.exceptions import DomainError
+
+    hide = set(hide)
+    cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
+    out = {**result, "columns": [c for c in cols if c not in hide]}
+    if result.get("export_columns"):
+        out["export_columns"] = [c for c in result["export_columns"] if c not in hide]
+    if not out["columns"] or out.get("export_columns") == []:
+        raise DomainError("Keep at least one column.", status_code=400, code="no_columns")
+    if result.get("header_groups"):
+        groups, at = [], 0
+        for g in result["header_groups"]:
+            span = sum(1 for c in cols[at:at + g["span"]] if c not in hide)
+            at += g["span"]
+            if span:
+                groups.append({**g, "span": span})
+        out["header_groups"] = groups if any(g["label"] for g in groups) else None
+    out["totals"] = {k: v for k, v in (result.get("totals") or {}).items() if k not in hide}
+    first = out["columns"][0]
+    if cols[0] in hide:
+        out["rows"] = [{**r, first: r[cols[0]]} if r.get("kind") == "subtotal" and r.get(cols[0]) and not r.get(first) else r for r in result["rows"]]
+    return out
+
+
 def to_csv(result, title=""):
     buf = io.StringIO()
     w = csv.writer(buf)
