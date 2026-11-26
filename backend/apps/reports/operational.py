@@ -360,7 +360,12 @@ def product_by_rep(date_from=None, date_to=None, rep=None, **_):
                     key_of=lambda l: (f"{person(l.credit_note.invoice)[0]}|{l.variant_id}", l.variant.name,
                                       {"sale_person": called(l.credit_note.invoice), "codes": codes(l.variant), "item_code": l.variant.product.item_code}),
                     keep=(lambda l: str(person(l.credit_note.invoice)[0]) == str(rep)) if rep else None)
-    out["rows"].sort(key=lambda r: (r["sale_person"].lower(), -Decimal(r["net_sales"])))
+    # the biggest seller first, each one's best product first (owner, 27 Nov 2026): by name, Aliza Saleem — whose one sale this
+    # month all came back — led the report, and its first rows read Returns = Sales
+    by_person = defaultdict(lambda: Z)
+    for r in out["rows"]:
+        by_person[r["sale_person"]] += Decimal(r["net_sales"])
+    out["rows"].sort(key=lambda r: (-by_person[r["sale_person"]], r["sale_person"].lower(), -Decimal(r["net_sales"]), r["label"].lower()))
     out["columns"] = ["sale_person", *SALES_COLUMNS]
     out["totals"] = _sales_totals(out, SALES_TOTALS)
     out["column_labels"] = {**MARGIN_LABELS, "sale_person": "Sale Person", "label": "Product Name"}

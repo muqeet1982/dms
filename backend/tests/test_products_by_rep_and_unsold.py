@@ -80,3 +80,29 @@ def test_items_not_sold(api, tenant):
     assert {"name": "days", "type": "number", "default": 30, "label": "Not Sold In Last (Days)"} in spec["params"]
     for fmt in ("csv", "xlsx", "pdf"):
         assert api.get("/api/v1/reports/items_not_sold", {"format": fmt}).status_code == 200
+
+
+def test_the_biggest_seller_comes_first(api, tenant):
+    """27 Nov 2026: by name, a sale person whose one sale all came back led the report — every first row Returns = Sales."""
+    from apps.partners.models import SupplierRep
+    from apps.sales.models import SalesInvoice
+    from apps.sales.services import CreditNoteService
+
+    wh, sup, v, cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        aliza = SupplierRep.objects.create(supplier=sup, code="R-1", name="Aliza Saleem", phone="03001110000")
+        naveed = SupplierRep.objects.create(supplier=sup, code="R-2", name="NAVEED", phone="03001110001")
+    back = _sell(api, wh, cust, aliza, [(v, "1")])
+    _sell(api, wh, cust, naveed, [(v, "3")])
+    with tenant_context(tenant, tenant.owner):
+        inv = SalesInvoice.objects.get(pk=back["id"])
+        order_id = str(inv.order_id)
+    assert api.post(f"/api/v1/sales-orders/{order_id}/mark-delivered", {}, format="json").status_code == 200
+    with tenant_context(tenant, tenant.owner):
+        inv = SalesInvoice.objects.get(pk=back["id"])
+        line = inv.lines.first()
+        CreditNoteService.post(CreditNoteService.create(customer=cust, invoice=inv, reason="all back", lines=[
+            {"variant": v, "qty": "1", "unit_price": str(line.unit_price), "unit_cost": str(line.unit_cost), "condition": "good", "restock": True}]))
+    rows = api.get("/api/v1/reports/product_by_rep").data["rows"]
+    assert [r["sale_person"] for r in rows] == ["NAVEED", "Aliza Saleem"], rows
+    assert D(rows[1]["sales"]) == D(rows[1]["returns"]) and D(rows[1]["net_sales"]) == 0, "all of hers came back"
