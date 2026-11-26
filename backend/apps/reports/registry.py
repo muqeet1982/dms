@@ -120,7 +120,7 @@ REPORTS = {
 # The Reports page opens every report on today; these period statements open on the month so far (owner, 24 Nov
 # 2026), and so does Sales by Sale Person (owner, 25 Nov). Only the page's starting dates: the API without dates is unchanged.
 OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary", "sales_tax_register", "advance_tax_register",
-                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep", "product_by_rep"}
+                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep"}   # Products by Sale Person opens on today (owner, 27 Nov 2026)
 assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
 # These ask which columns to leave out before they print or download (owner, 25 Nov 2026: Sales by Sale Person and the
 # daily sheet a name on it opens).

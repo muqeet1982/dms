@@ -52,7 +52,7 @@ def test_products_by_sale_person(api, tenant):
     one = api.get("/api/v1/reports/product_by_rep", {"rep": str(anza.id)}).data
     assert [(r["sale_person"], r["label"]) for r in one["rows"]] == [("Anza", shade.name)]
     spec = {r["key"]: r for r in api.get("/api/v1/reports").data}["product_by_rep"]
-    assert spec["opens_on"] == "month" and spec["pick_columns"]
+    assert spec["opens_on"] == "today" and spec["pick_columns"], "opens on today (owner, 27 Nov 2026)"
     for fmt in ("csv", "xlsx", "pdf"):
         assert api.get("/api/v1/reports/product_by_rep", {"format": fmt}).status_code == 200
 
