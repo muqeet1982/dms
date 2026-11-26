@@ -20,7 +20,7 @@ credit went: onto the invoice, refunded, or kept for the customer's next one.
 <table class="grid">
   <tr>
     <td><span class="k">Return date</span>{{ cn.date }}</td>
-    <td><span class="k">Against invoice</span>{{ cn.invoice.number|default:"—" }}{% if cn.invoice %}<span class="sku">{{ cn.invoice.date }}</span>{% endif %}</td>
+    <td><span class="k">Against invoice</span>{{ cn.invoice.number|default:"—" }}{% if cn.invoice %} · {{ cn.invoice.date }}{% endif %}</td>
     <td><span class="k">Sales person</span>{{ sale_person|default:"—" }}</td>
   </tr>
   <tr>
