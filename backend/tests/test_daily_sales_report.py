@@ -57,9 +57,9 @@ def test_the_daily_sale_report(api, world):
     ra, rb = rows[a["number"]], rows[b["number"]]
     assert (ra["type"], ra["sale_person"], ra["payment_status"], D(ra["total"]), D(ra["discount"]), D(ra["tax"]), D(ra["grand_total"])) == ("Sale", "NAVEED", "Partially Paid", D("300"), D("30"), D("0"), D("270"))
     assert (rb["sale_person"], rb["payment_status"], D(rb["grand_total"])) == ("No Sale Person", "Unpaid", D("150"))
-    assert ra["href"] == f"/app/sales/invoices/{a['id']}?view=1" and data["links"] == {"invoice": {"href": "href"}}
+    assert "href" not in ra and not data.get("links"), "the number is not a link (owner, 26 Nov 2026)"
     # owner, 26 Nov 2026: Discount % beside the Discount, and a PDF of the invoice where View was
-    assert (ra["discount_pct"], rb["discount_pct"], data["column_labels"]["discount_pct"]) == ("10.00", "0", "Discount %")
+    assert (ra["discount_pct"], rb["discount_pct"], data["column_labels"]["discount_pct"]) == ("10.00", "", "Discount %"), "blank where there is none"
     assert ra["pdf_url"] == f"/api/v1/invoices/{a['id']}/pdf" and data["downloads"] == {"pdf": {"url": "pdf_url"}}
     pdf = api.get(ra["pdf_url"])
     assert pdf.status_code == 200 and pdf["Content-Type"] == "application/pdf"
@@ -69,7 +69,7 @@ def test_the_daily_sale_report(api, world):
     assert D(cards["Sales"]["value"]) == D("420") and D(cards["Received"]["value"]) == D("100") and D(cards["Outstanding"]["value"]) == D("320")
     assert D(cards["Returns"]["value"]) == 0 and D(cards["Net sales"]["value"]) == D("420")
     assert D(data["totals"]["grand_total"]) == D("420") and D(data["totals"]["discount"]) == D("30")
-    assert "pdf" not in data["export_columns"] and "href" not in data["export_columns"], "no link column in the spreadsheet"
+    assert "pdf" not in data["export_columns"], "no button column in the spreadsheet"
     assert [r["invoice"] for r in api.get("/api/v1/reports/daily_sales", {"rep": str(naveed.id)}).data["rows"]] == [a["number"]]
     assert [r["invoice"] for r in api.get("/api/v1/reports/daily_sales", {"payment_status": "Unpaid"}).data["rows"]] == [b["number"]]
     tomorrow = (timezone.localdate() + timezone.timedelta(days=1)).isoformat()
@@ -94,7 +94,7 @@ def test_the_daily_sale_report_shows_the_days_returns(api, tenant, world):
     data = api.get("/api/v1/reports/daily_sales").data
     ret = [r for r in data["rows"] if r["type"] == "Return"]
     assert len(ret) == 1 and ret[0]["invoice"] == cn.number and D(ret[0]["grand_total"]) == D("-150"), ret
-    assert ret[0]["payment_status"] == f"Return of {b['number']}" and ret[0]["href"] == f"/app/sales/credit-notes/{cn.pk}"
+    assert ret[0]["payment_status"] == f"Return of {b['number']}"
     pdf = api.get(ret[0]["pdf_url"])                                    # the return's own PDF (owner, 26 Nov 2026)
     assert ret[0]["pdf_url"] == f"/api/v1/credit-notes/{cn.pk}/pdf" and pdf.status_code == 200 and pdf["Content-Type"] == "application/pdf"
     assert pdf.content.startswith(b"%PDF-")

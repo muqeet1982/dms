@@ -163,3 +163,34 @@ def test_customers_of_the_same_name_carry_their_code(api, tenant, shop):
         Customer.objects.create(code="C-TWIN", name=cust.name, credit_limit=D("1000"))
     _invoice(tenant, cust, v, "5")
     assert _report(api)["rows"][0]["customer"] == f"{cust.name} ({cust.code})"
+
+
+def test_invoice_wise(api, tenant, shop):
+    """Owner, 26 Nov 2026: "also need this report invoice wise" — one row per invoice or return, the same totals."""
+    from apps.catalog.models import UnitOfMeasure
+    from apps.catalog.services import ProductService
+    from apps.sales.models import SalesInvoice, SalesInvoiceLine
+    from apps.sales.services import InvoiceService
+
+    _sup, v, cust = shop
+    with tenant_context(tenant, tenant.owner):
+        p = ProductService.create_product(tenant, {"sku": "DEV-20", "name": "Developer 20 Vol", "base_uom": UnitOfMeasure.objects.get(code="PC"), "cost_price": D("40"), "sale_price": D("50"), "supplier": _sup})
+        v2 = p.variants.first()
+        inv = SalesInvoice.objects.create(number="INV-D-TWO", customer=cust, discount_pct=D("5"), subtotal=D("1500"), discount=D("75"), total=D("1425"), status="draft")
+        SalesInvoiceLine.objects.create(invoice=inv, variant=v, description=v.name, qty=D("10"), unit_price=D("100"), unit_cost=D("60"), discount_amount=D("50"), line_total=D("950"))
+        SalesInvoiceLine.objects.create(invoice=inv, variant=v2, description=v2.name, qty=D("10"), unit_price=D("50"), unit_cost=D("40"), discount_amount=D("25"), line_total=D("475"))
+        inv = InvoiceService.post(inv)
+    _return(tenant, inv, "4")
+    items = _report(api)
+    data = _report(api, show="Invoice wise")
+    assert data["columns"] == ["date", "invoice", "customer", "items", "gross", "discount_pct", "discount", "distributor_share", "company_share", "rule", "company"]
+    sale, back = data["rows"]
+    assert (sale["invoice"], sale["items"], D(sale["gross"]), sale["discount_pct"], D(sale["discount"]), D(sale["distributor_share"]), D(sale["company_share"])) == \
+        ("INV-D-TWO", 2, D("1500"), "5.00", D("75"), D("45"), D("30"))
+    assert back["invoice"].startswith(("CN", "ALPH-CN")) or back["rule"].startswith("Return Of"), back
+    assert data["totals"] == items["totals"], "the same totals either way"
+    assert len(items["rows"]) == 3 and len(data["rows"]) == 2
+    spec = {r["key"]: r for r in api.get("/api/v1/reports").data}["discount_sharing"]
+    assert {"name": "show", "type": "select", "options": ["Item wise", "Invoice wise"], "default": "Item wise"} in spec["params"]
+    for fmt in ("csv", "xlsx", "pdf"):
+        assert api.get("/api/v1/reports/discount_sharing", {"show": "Invoice wise", "format": fmt}).status_code == 200

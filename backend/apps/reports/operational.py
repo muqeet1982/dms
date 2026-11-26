@@ -339,7 +339,8 @@ def _pct_off(pct, discount, subtotal):
     """A document's discount as a %: its own Discount %, else the discount over the subtotal (a product's own discount)."""
     if pct:
         return str(Decimal(pct).quantize(Decimal("0.01")))
-    return str((Decimal(discount) / Decimal(subtotal) * 100).quantize(Decimal("0.01"))) if discount and subtotal else "0"
+    # nothing where there is no discount: a column of 0.00 read as a column that does not work (owner, 26 Nov 2026)
+    return str((Decimal(discount) / Decimal(subtotal) * 100).quantize(Decimal("0.01"))) if discount and subtotal else ""
 
 
 PAYMENT_STATUS = {"posted": "Unpaid", "partially_paid": "Partially Paid", "paid": "Paid", "overdue": "Overdue", "returned": "Returned"}
@@ -377,7 +378,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
                          "payment_status": PAYMENT_STATUS[inv.status], "total": str(inv.subtotal), "discount": str(inv.discount),
                          "discount_pct": _pct_off(inv.discount_pct, inv.discount, inv.subtotal),
                          "tax": str(inv.total - (inv.subtotal - inv.discount)), "grand_total": str(inv.total), "pdf": "PDF",
-                         "href": f"/app/sales/invoices/{inv.pk}?view=1", "pdf_url": f"/api/v1/invoices/{inv.pk}/pdf", "_order": 0})
+                         "pdf_url": f"/api/v1/invoices/{inv.pk}/pdf", "_order": 0})
             sold += inv.total
             received += inv.cash_paid
             pending += inv.balance
@@ -395,7 +396,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
                          "payment_status": f"Return of {cn.invoice.number}" if cn.invoice_id else "Return", "total": str(-cn.subtotal), "discount": str(-cn.discount),
                          "discount_pct": _pct_off(None, cn.discount, cn.subtotal),
                          "tax": str(-(cn.total - (cn.subtotal - cn.discount))), "grand_total": str(-cn.total), "pdf": "PDF",
-                         "href": f"/app/sales/credit-notes/{cn.pk}", "pdf_url": f"/api/v1/credit-notes/{cn.pk}/pdf", "_order": 1})
+                         "pdf_url": f"/api/v1/credit-notes/{cn.pk}/pdf", "_order": 1})
             back += cn.total
             n_back += 1
     rows.sort(key=lambda r: (r["date"], r.pop("_order"), r["invoice"]))
@@ -414,7 +415,7 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
     return {"columns": cols, "rows": rows, "summary": summary, "totals": {k: str(v) for k, v in tot.items()},
             "column_labels": {"invoice": "Invoice / Return No", "sale_person": "Sale Person", "payment_status": "Payment Status", "discount_pct": "Discount %",
                               "grand_total": "Grand Total", "pdf": "PDF"},
-            "links": {"invoice": {"href": "href"}}, "downloads": {"pdf": {"url": "pdf_url"}},
+            "downloads": {"pdf": {"url": "pdf_url"}},   # the number is plain text, not a link (owner, 26 Nov 2026)
             "export_columns": cols[:-1]}
 
 
@@ -834,7 +835,7 @@ def stock_position(today=None):
 CUSTOMER_TYPES = {"Salon": "salon", "Retailer": "retailer", "Wholesaler": "wholesaler", "LMT": "lmt", "Other": "other"}
 
 
-def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=None, supplier=None, **_):
+def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=None, supplier=None, show=None, **_):
     """
     Who bore every discount given (owner, 8 Nov 2026: salon discount sharing, "need report for this as well"): per
     invoice line, the list price (a salon's R.P), the T.P, the discount, and the distributor's and the company's
@@ -908,6 +909,8 @@ def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=
             add(l, cn.number, cn.date, cn.customer, -1, unfunded[l.pk], before_tax(sold.get((cn.invoice_id, l.variant_id))), f"Return Of {cn.invoice.number}" if cn.invoice_id else "Return")
     rows.sort(key=lambda r: r["date"])      # a day's returns after its sales
     tot["distributor_share"] = tot["discount"] - tot["company_share"]
+    if show == "Invoice wise":
+        return _sharing_by_invoice(rows, tot)
     return {
         "columns": ["date", "invoice", "customer", "label", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
         "rows": rows, "totals": {k: str(tot[k]) for k in ("discount", "distributor_share", "company_share")},
@@ -916,6 +919,40 @@ def discount_sharing(date_from=None, date_to=None, customer_type=None, customer=
         "column_styles": {"label": "bold"}, "notes": {"label": "codes", "customer": "customer_type", "invoice": "tax_note"},
         "export_columns": ["date", "invoice", "tax_note", "customer", "customer_type", "label", "codes", "qty", "list_price", "trade_price", "discount_pct", "price_after", "discount", "distributor_share", "company_share", "rule", "company"],
         "text_columns": ["codes"],
+    }
+
+
+def _sharing_by_invoice(rows, tot):
+    """
+    Discount sharing, one row per invoice or return (owner, 26 Nov 2026: "also need this report invoice wise"): what it
+    sold before the discount, the discount and its %, and who bore it — the item rows added up, so the totals are the same.
+    """
+    by = {}
+    for r in rows:
+        b = by.get(r["invoice"])
+        if b is None:
+            b = by[r["invoice"]] = {"date": r["date"], "invoice": r["invoice"], "tax_note": r["tax_note"], "customer": r["customer"], "customer_type": r["customer_type"],
+                                    "items": 0, "gross": Z, "discount": Z, "distributor_share": Z, "company_share": Z, "rules": {}, "companies": {}}
+        b["items"] += 1
+        b["gross"] += Decimal(r["qty"]) * Decimal(r["list_price"])
+        for k in ("discount", "distributor_share", "company_share"):
+            b[k] += Decimal(r[k])
+        b["rules"][r["rule"]] = None
+        if r["company"]:
+            b["companies"][r["company"]] = None
+    out = []
+    for b in by.values():
+        pct = (b["discount"] / b["gross"] * 100).quantize(Decimal("0.01")) if b["gross"] else Z
+        out.append({"date": b["date"], "invoice": b["invoice"], "tax_note": b["tax_note"], "customer": b["customer"], "customer_type": b["customer_type"], "items": b["items"],
+                    "gross": str(b["gross"]), "discount_pct": str(pct), "discount": str(b["discount"]), "distributor_share": str(b["distributor_share"] or Z),
+                    "company_share": str(b["company_share"] or Z), "rule": " / ".join(b["rules"]), "company": ", ".join(b["companies"])})
+    cols = ["date", "invoice", "customer", "items", "gross", "discount_pct", "discount", "distributor_share", "company_share", "rule", "company"]
+    return {
+        "columns": cols, "rows": out, "totals": {k: str(tot[k]) for k in ("discount", "distributor_share", "company_share")},
+        "column_labels": {"invoice": "Invoice / Return No", "gross": "Total Before Discount", "discount_pct": "Discount %", "discount": "Total Discount",
+                          "distributor_share": "Distributor Share", "company_share": "Company Share"},
+        "notes": {"customer": "customer_type", "invoice": "tax_note"},
+        "export_columns": ["date", "invoice", "tax_note", "customer", "customer_type", *cols[3:]],
     }
 
 

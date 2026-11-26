@@ -131,7 +131,9 @@ export function ReportViewPage() {
   // always reads 1,234.56 (owner, 27 Oct 2026), a quantity keeps its own shape (12, 1.5)
   // a column of units or counts keeps its shape too ("12", never "12.00") — same rule as the PDF (exporters.QTY_COL)
   const qtyCol = (c?: string) => !!c && /(^|_)(qty|quantity|per_box|packing|count|units|boxes|pieces|days|lines|stops|orders|invoices)(_|$)/i.test(c);
-  const fmtCell = (v: any, c?: string) => (v === null || v === undefined ? "" : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? date(v) : isNum(v) ? (/\.\d{3}$/.test(v) || qtyCol(c) ? qty(v) : money(v)) : typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "object" ? JSON.stringify(v) : String(v));
+  // a percentage column reads 7% (owner, 26 Nov 2026: Discount % read 7.00 beside amounts, and a run of 0.00 as broken)
+  const pctCol = (c?: string) => !!c && /(^|_)pct$/.test(c);
+  const fmtCell = (v: any, c?: string) => (v === null || v === undefined ? "" : pctCol(c) && isNum(v) ? `${Number(Number(v).toFixed(2))}%` : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? date(v) : isNum(v) ? (/\.\d{3}$/.test(v) || qtyCol(c) ? qty(v) : money(v)) : typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "object" ? JSON.stringify(v) : String(v));
   return (
     <>
       <PageHeader title={q.data?.title || spec.title} crumbs={[{ label: "Reports", to: "/app/reports" }, { label: spec.title }]} actions={pageRights("reports").extras.export && <><button className="btn btn-outline-secondary" onClick={() => ask("print")}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => ask("pdf")}><i className="ti ti-file-type-pdf me-1" />PDF</button><button className="btn btn-outline-success" onClick={() => ask("xlsx")}><i className="ti ti-file-type-xls me-1" />Excel</button><button className="btn btn-outline-secondary" onClick={() => ask("csv")}><i className="ti ti-file-type-csv me-1" />CSV</button></>} />
