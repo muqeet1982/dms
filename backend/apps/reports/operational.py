@@ -366,12 +366,14 @@ def product_by_rep(date_from=None, date_to=None, rep=None, **_):
     for r in out["rows"]:
         by_person[r["sale_person"]] += Decimal(r["net_sales"])
     out["rows"].sort(key=lambda r: (-by_person[r["sale_person"]], r["sale_person"].lower(), -Decimal(r["net_sales"]), r["label"].lower()))
-    out["columns"] = ["sale_person", *SALES_COLUMNS]
-    out["totals"] = _sales_totals(out, SALES_TOTALS)
+    # no Company Share column here (owner, 27 Nov 2026); the margin still counts it, as every sales report's does
+    cols = [c for c in SALES_COLUMNS if c != "company_share"]
+    out["columns"] = ["sale_person", *cols]
+    out["totals"] = {k: v for k, v in _sales_totals(out, SALES_TOTALS).items() if k != "company_share"}
     out["column_labels"] = {**MARGIN_LABELS, "sale_person": "Sale Person", "label": "Product Name"}
     out["column_styles"] = {"label": "bold"}
     out["notes"] = {"label": "codes"}
-    out["export_columns"] = ["sale_person", "label", "item_code", *SALES_COLUMNS[1:]]
+    out["export_columns"] = ["sale_person", "label", "item_code", *cols[1:]]
     out["text_columns"] = ["item_code"]
     return out
 

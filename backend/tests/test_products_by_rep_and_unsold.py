@@ -43,7 +43,9 @@ def test_products_by_sale_person(api, tenant):
     _sell(api, wh, cust, naveed, [(v, "2"), (shade, "3")])
     _sell(api, wh, cust, anza, [(shade, "1")])
     data = api.get("/api/v1/reports/product_by_rep").data
-    assert data["columns"][:3] == ["sale_person", "label", "qty"] and data["column_labels"]["label"] == "Product Name"
+    assert data["columns"] == ["sale_person", "label", "qty", "sales", "returns", "net_sales", "cogs", "gross_margin", "margin_pct", "invoices"]
+    assert "company_share" not in data["totals"] and data["column_labels"]["label"] == "Product Name", "no Company Share (owner, 27 Nov 2026)"
+    assert data["totals"]["gross_margin"] == api.get("/api/v1/reports/sales_by_rep").data["totals"]["gross_margin"], "the margin still counts it"
     got = {(r["sale_person"], r["label"]): D(r["qty"]) for r in data["rows"]}
     assert got == {("Anza", shade.name): 1, ("NAVEED", v.name): 2, ("NAVEED", shade.name): 3}
     assert data["totals"]["net_sales"] == api.get("/api/v1/reports/sales_by_rep").data["totals"]["net_sales"], "adds up to Sales by Sale Person"
