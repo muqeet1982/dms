@@ -19,6 +19,14 @@ import { DocTabs } from "@/components/documents/DocTabs";
 import { EditLine, LinesEditor } from "@/components/documents/LinesEditor";
 import { CreditChoice, CreditOptions, creditBody, emptyCreditChoice } from "@/components/documents/CreditOptions";
 
+/** An invoice's discount as a %: its own Discount %, else the discount over the subtotal (a product's own discount), to one decimal. */
+function discountPctOf(i: any): number {
+  const pct = Number(i.discount_pct) || 0;
+  if (pct > 0) return Math.round(pct * 100) / 100;
+  const sub = Number(i.subtotal) || 0, disc = Number(i.discount) || 0;
+  return sub > 0 && disc > 0 ? Math.round((disc / sub) * 1000) / 10 : 0;
+}
+
 /** Invoices and Tax invoices are separate pages, each its own series — INV and STI (owner, 1 Nov 2026). */
 export function InvoicesPage({ tax = false }: { tax?: boolean }) {
   // the cards count what the table shows: its search and filters ride along (owner, 10 Nov 2026: "count is not correct")
@@ -28,7 +36,8 @@ export function InvoicesPage({ tax = false }: { tax?: boolean }) {
   const cols: Column<any>[] = [
     { key: "number", header: "Invoice #", sortKey: "number", render: (i) => <span className="fw-semibold text-dark">{i.number}</span> },
     { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
-    { key: "customer_name", header: "Customer", render: (i) => <>{i.customer_name}<div className="text-muted fs-11">{i.customer_code}</div></> },
+    // the discount as a pill beside the name (owner, 26 Nov 2026, "10% off"): the invoice's %, else what a product's own discount came to
+    { key: "customer_name", header: "Customer", render: (i) => <>{i.customer_name}{discountPctOf(i) > 0 && <span className="badge bg-success-light text-success fs-11 ms-2">{discountPctOf(i)}% off</span>}<div className="text-muted fs-11">{i.customer_code}</div></> },
     { key: "order_number", header: "Order / DN", render: (i) => <>{i.order_number}<div className="text-muted fs-11">{i.delivery_note_number}</div></> },
     { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
     { key: "total", header: "Total", num: true, sortKey: "total", render: (i) => money(i.total) },

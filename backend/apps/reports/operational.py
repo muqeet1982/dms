@@ -1075,11 +1075,18 @@ def collection_report(date_from=None, date_to=None, **_):
 
 
 def overdue_list(**_):
+    """Every invoice past its due date with money still owed, the oldest first — with who sold it (owner, 26 Nov 2026)."""
     from apps.sales.models import SalesInvoice
 
     today = timezone.localdate()
-    rows = [{"invoice": i.number, "date": i.date, "due_date": i.due_date, "days_overdue": (today - i.due_date).days if i.due_date else 0, "customer": i.customer.name, "phone": i.customer.phone, "balance": str(i.total - i.paid_amount)} for i in SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "overdue"], due_date__lt=today).select_related("customer").order_by("due_date")]
-    return {"columns": ["invoice", "date", "due_date", "days_overdue", "customer", "phone", "balance"], "rows": rows, "totals": {"balance": str(sum((Decimal(r["balance"]) for r in rows), Z))}}
+    names = _rep_names()
+    rows = []
+    for i in SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "overdue"], due_date__lt=today).select_related("customer", *[f[len("invoice__"):] for f in SALE_PERSON_RELATED]).order_by("due_date"):
+        rep_id, person = _sale_person(i)
+        rows.append({"invoice": i.number, "date": i.date, "due_date": i.due_date, "days_overdue": (today - i.due_date).days if i.due_date else 0, "customer": i.customer.name,
+                     "sale_person": names.get(str(rep_id), person) if rep_id else person, "phone": i.customer.phone, "balance": str(i.total - i.paid_amount)})
+    return {"columns": ["invoice", "date", "due_date", "days_overdue", "customer", "sale_person", "phone", "balance"], "rows": rows,
+            "totals": {"balance": str(sum((Decimal(r["balance"]) for r in rows), Z))}, "column_labels": {"sale_person": "Sale Person"}}
 
 
 def cheque_register(cheque_status=None, **_):
