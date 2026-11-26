@@ -795,6 +795,10 @@ class DeliveryService:
             # Billed, it waits for the invoice's credit note, which cancels it; the stock stays free (owner's step 3).
             if not billed and get_current_tenant().setting("reserve_stock_on_confirm"):
                 OrderService.reserve(order)
+        # a balance note cancelled after its item came off the order (TDN-SO-00599, 26 Nov 2026): what is left may all be
+        # delivered, and the order read Partially Delivered with Mark Delivered and Close Balance that had nothing to do
+        if order.status in ("partially_delivered", "delivered"):
+            OrderService.refresh_delivery_status(order)
         return dn
 
     @staticmethod

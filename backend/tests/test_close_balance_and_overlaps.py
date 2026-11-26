@@ -145,3 +145,50 @@ def test_an_order_already_issued_is_not_named(api, tenant):
     w = api.get("/api/v1/sales-orders/overlaps", {"customer": str(cust.id), "variants": str(v.id)}).data
     assert [x["number"] for x in w] == [waiting["number"]], "the submitted one only"
     assert w[0]["items"][0]["left"] == "3"
+
+
+
+def test_a_balance_taken_off_the_order_leaves_it_delivered(api, tenant):
+    """TDN-SO-00599 (owner, 26 Nov 2026): its balance of 1 pc went out on TDN-DN-00599-2 with TDN-INV-00599-2; the item was
+    taken off that invoice and the note cancelled, and the order — everything left on it delivered — still read Partially
+    Delivered, with Mark Delivered and Close Balance that had nothing to do."""
+    from apps.delivery.models import DeliveryNote
+    from apps.delivery.services import DeliveryService
+    from apps.sales.models import SalesInvoice, SalesOrder
+    from apps.sales.services import InvoiceService
+
+    wh, _s, v, cust = seed_basic(tenant)
+    shade = _shade(tenant, wh)
+    a = _partly_delivered(api, tenant, wh, v, shade, cust)            # 5 delivered, the shade's 4 still owed
+    _issue(api, a["id"])                                              # the balance goes out on a second note
+    with tenant_context(tenant, tenant.owner):
+        dn2 = DeliveryNote.objects.filter(order_id=a["id"]).exclude(status="delivered").get()
+        inv2 = SalesInvoice.objects.filter(delivery_note=dn2).first()
+    if inv2 is None:
+        r = api.post(f"/api/v1/sales-orders/{a['id']}/invoice", {"post": False}, format="json")
+        assert r.status_code == 201, r.content
+    with tenant_context(tenant, tenant.owner):
+        inv2 = SalesInvoice.objects.get(delivery_note=dn2)
+        if inv2.status != "draft":
+            InvoiceService.reopen(inv2, reason="as TDN-INV-00599-2")
+        InvoiceService._remove_line(inv2, inv2.lines.get())           # the item off the invoice, the order and the note
+        assert SalesOrder.objects.get(pk=a["id"]).status == "partially_delivered", "as TDN's stood"
+        DeliveryService.cancel_note(DeliveryNote.objects.get(pk=dn2.pk), reason="taken off")
+    data = api.get(f"/api/v1/sales-orders/{a['id']}").data
+    assert data["status"] == "delivered", data["status"]
+    r = api.post(f"/api/v1/sales-orders/{a['id']}/close-balance", {"reason": "x"}, format="json")
+    assert r.status_code == 422 and r.data["type"] == "no_balance"
+
+
+def test_cancelling_a_balance_note_with_its_item_still_owed_stays_partly_delivered(api, tenant):
+    from apps.delivery.models import DeliveryNote
+    from apps.delivery.services import DeliveryService
+
+    wh, _s, v, cust = seed_basic(tenant)
+    shade = _shade(tenant, wh)
+    a = _partly_delivered(api, tenant, wh, v, shade, cust)
+    _issue(api, a["id"])
+    with tenant_context(tenant, tenant.owner):
+        dn2 = DeliveryNote.objects.filter(order_id=a["id"]).exclude(status="delivered").get()
+        DeliveryService.cancel_note(dn2, reason="not today")
+    assert api.get(f"/api/v1/sales-orders/{a['id']}").data["status"] == "partially_delivered", "the 4 are still owed"

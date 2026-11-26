@@ -1300,6 +1300,9 @@ class InvoiceService:
         inv.save(update_fields=["date", "due_date", "notes", "updated_at"])
         InvoiceService.recompute(inv)
         InvoiceService.sync_order(inv)
+        # an item taken off a balance invoice comes off the order: what is left may all be delivered (TDN-SO-00599)
+        if inv.order_id and inv.order.status in ("partially_delivered", "delivered"):
+            OrderService.refresh_delivery_status(SalesOrder.objects.get(pk=inv.order_id))
         AuditService.log("invoice.corrected", inv, after={"total": str(inv.total)})
         return inv
 
