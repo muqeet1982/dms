@@ -109,6 +109,24 @@ class SupplierViewSet(TenantModelViewSet):
         return Response(PurchaseBillSerializer(PurchaseBill.objects.filter(supplier_id=pk).order_by("-bill_date")[:200], many=True).data)
 
 
+def sale_person_ids():
+    """
+    The reps who sell (owner, 27 Nov 2026: "only Sale Person will show" in the reports' Sale Person dropdown): whose login
+    has a Sales or Rep role — TDN's Sales and Sales Coordinator, a Manufacturer Rep — or who has no login at all. A Manager
+    or a Supplier who also has a rep record (TDN's Muhammad Imran, Irfan Aleem) is not one.
+    """
+    import re
+
+    from apps.accounts.models import TenantMembership
+    from apps.core.tenancy import get_current_tenant
+
+    selling = re.compile(r"sale|\brep\b|representative", re.I)
+    by_user = {}
+    for m in TenantMembership.objects.filter(tenant=get_current_tenant()).prefetch_related("groups"):
+        by_user[m.user_id] = by_user.get(m.user_id, False) or any(selling.search(g.name.split(":", 1)[-1]) for g in m.groups.all())
+    return [r.pk for r in SupplierRep.objects.only("pk", "user_id") if r.user_id is None or by_user.get(r.user_id, False)]
+
+
 class SupplierRepViewSet(TenantModelViewSet):
     serializer_class = SupplierRepSerializer
     perm_map = page_perms("supplier_reps", {"performance": "suppliers.view_supplier_rep", "ledger": extra_perm("suppliers", "ledger")})
@@ -125,6 +143,8 @@ class SupplierRepViewSet(TenantModelViewSet):
         already exists". Better not to offer it.
         """
         qs = super().get_queryset()
+        if (self.request.query_params.get("sale_persons") or "").lower() in ("1", "true"):
+            qs = qs.filter(pk__in=sale_person_ids())
         has_login = (self.request.query_params.get("has_login") or "").lower()
         if has_login in ("false", "0"):
             return qs.filter(user__isnull=True)

@@ -37,9 +37,9 @@ const ENTITY_ENDPOINTS: Record<string, { endpoint: string; query?: Record<string
 };
 
 /** The sale person filter: a dropdown like the report's other filters (owner, 24 Nov 2026), searchable by name or code
- *  (25 Nov). Two of the same name read with their code, as the reports name them. */
+ *  (25 Nov), of sale persons only — not a manager or supplier with a rep record (27 Nov). Two of the same name read with their code. */
 function RepSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const reps = useQuery({ queryKey: ["report-reps"], queryFn: () => api.list("/api/v1/supplier-reps", { is_active: true, page_size: 500 }), staleTime: 60_000 });
+  const reps = useQuery({ queryKey: ["report-reps"], queryFn: () => api.list("/api/v1/supplier-reps", { is_active: true, sale_persons: 1, page_size: 500 }), staleTime: 60_000 });
   const active = reps.data?.results || [];
   // someone no longer active, opened from a name on the summary: the filter still says who it is
   const one = useQuery({ queryKey: ["report-rep", value], queryFn: () => api.get(`/api/v1/supplier-reps/${value}`), enabled: Boolean(value && reps.data && !active.some((r: any) => r.id === value)), staleTime: 60_000, retry: false });

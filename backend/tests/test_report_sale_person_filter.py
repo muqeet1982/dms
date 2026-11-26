@@ -63,3 +63,31 @@ def test_the_daily_sheet_of_one_person_still_names_them_in_its_title_only(api, e
     _order(excel_on, w, on, w["rep"], [(w["tinta"], "4")])
     assert api.get("/api/v1/reports/rep_daily_sheet", {"date_from": on.isoformat(), "date_to": on.isoformat(), "rep": str(w["rep"].id), "format": "pdf"}).status_code == 200
     assert set(printed["params"]) == {"date_from", "date_to"} and printed["title"].endswith("Talha")
+
+
+def test_the_dropdown_lists_sale_persons_only(api, tenant):
+    """Owner, 27 Nov 2026: "only Sale Person will show" — TDN's list carried Muhammad Imran (a Manager, twice) and Irfan
+    Aleem (a Supplier), who have rep records but do not sell."""
+    from django.contrib.auth.models import Group
+
+    from apps.accounts.models import TenantMembership, User
+    from apps.core.tenancy import tenant_context
+    from apps.partners.models import SupplierRep
+
+    from .conftest import seed_basic
+
+    _wh, sup, _v, _c = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        made = {}
+        for name, role in (("Talha", "Sales"), ("Farhan", "Sales Coordinator"), ("Keune Man", "Manufacturer Rep"), ("Imran", "Manager"), ("Irfan", "SUPPLIER"), ("No Login", None)):
+            rep = SupplierRep.objects.create(supplier=sup, code=f"R-{len(made)}", name=name, phone=f"0300111000{len(made)}")
+            if role:
+                user = User.objects.create_user(username=f"u{len(made)}", email=f"u{len(made)}@x.pk", password="x-12345678")
+                rep.user = user
+                rep.save(update_fields=["user"])
+                m = TenantMembership.objects.create(user=user, tenant=tenant, supplier_rep=rep)
+                m.groups.add(Group.objects.get_or_create(name=f"{tenant.slug}:{role}")[0])
+            made[name] = rep
+    names = {r["name"] for r in api.get("/api/v1/supplier-reps", {"sale_persons": 1, "page_size": 100}).data["results"]}
+    assert {"Talha", "Farhan", "Keune Man", "No Login"} <= names and not {"Imran", "Irfan"} & names, names
+    assert {"Imran", "Irfan"} <= {r["name"] for r in api.get("/api/v1/supplier-reps", {"page_size": 100}).data["results"]}, "the reps page still lists everyone"
