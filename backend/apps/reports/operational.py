@@ -187,7 +187,7 @@ def sales_by_supplier(date_from=None, date_to=None, **_):
     return _with_returns(out, date_from, date_to, maker)
 
 
-def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
+def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None, keep=None):
     """
     Returns in the same period, by credit-note date (as the ledger's Sales Returns), taken off each row's sales: Returns
     and Net Sales, the returned qty off Qty, the returned goods' cost off COGS and the company's share of their discount off
@@ -203,6 +203,8 @@ def _net_of_returns(out, date_from, date_to, by_type, key_of=None, blank=None):
         "variant__product__brand", "variant__product__supplier", "credit_note__customer__territory", "credit_note__customer__route",
         "credit_note__invoice__rep", "credit_note__invoice__order__rep", "credit_note__invoice__order__trip__rep",
         "credit_note__invoice__delivery_note__trip__rep"), "credit_note__date", date_from, date_to)
+    if keep is not None:
+        cnl = [l for l in cnl if keep(l)]
     unfunded = _returned_shares(cnl)
     back = defaultdict(lambda: {"value": Z, "share": Z, "cost": Z, "qty": Z, "name": "", "extra": {}})
     for l in cnl:
@@ -335,6 +337,86 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     out["column_labels"].update(MARGIN_LABELS)
     out["totals"] = _sales_totals(out, ("sales", "returns", "net_sales", "cash_sales", "credit_sales", "received", "outstanding", "company_share", "cogs", "gross_margin"))
     return out
+
+
+def product_by_rep(date_from=None, date_to=None, rep=None, **_):
+    """
+    What each sale person sold, product by product (owner, 27 Nov 2026: "also need product by sale person"): one row per
+    sale person and product — Net Qty, Sales, Returns, Net Sales, the company's share, COGS and the margin, as Sales by
+    product reads, with the sale person beside the name. The Sale Person filter narrows it to one.
+    """
+    names = _rep_names()
+    person = lambda inv: _sale_person(inv) if inv is not None else (None, "No Sale Person")  # noqa: E731
+    called = lambda inv: names.get(str(person(inv)[0]), person(inv)[1])  # noqa: E731
+
+    def codes(v):
+        p = v.product
+        return " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x)
+
+    lines = [l for l in _inv_lines(date_from, date_to).select_related("invoice__order", *SALE_PERSON_RELATED) if not rep or str(person(l.invoice)[0]) == str(rep)]
+    out = _group(lines, lambda l: f"{person(l.invoice)[0]}|{l.variant_id}", lambda l: l.variant.name,
+                 lambda l: {"sale_person": called(l.invoice), "codes": codes(l.variant), "item_code": l.variant.product.item_code})
+    _net_of_returns(out, date_from, date_to, by_type={},
+                    key_of=lambda l: (f"{person(l.credit_note.invoice)[0]}|{l.variant_id}", l.variant.name,
+                                      {"sale_person": called(l.credit_note.invoice), "codes": codes(l.variant), "item_code": l.variant.product.item_code}),
+                    keep=(lambda l: str(person(l.credit_note.invoice)[0]) == str(rep)) if rep else None)
+    out["rows"].sort(key=lambda r: (r["sale_person"].lower(), -Decimal(r["net_sales"])))
+    out["columns"] = ["sale_person", *SALES_COLUMNS]
+    out["totals"] = _sales_totals(out, SALES_TOTALS)
+    out["column_labels"] = {**MARGIN_LABELS, "sale_person": "Sale Person", "label": "Product Name"}
+    out["column_styles"] = {"label": "bold"}
+    out["notes"] = {"label": "codes"}
+    out["export_columns"] = ["sale_person", "label", "item_code", *SALES_COLUMNS[1:]]
+    out["text_columns"] = ["item_code"]
+    return out
+
+
+def items_not_sold(days=30, supplier=None, show=None, **_):
+    """
+    Every active item with no sale in the last N days (owner, 27 Nov 2026: "an item not sold in last 30 days"): when it last
+    sold (or Never), how long ago, and the stock and money sitting in it — the most money first. A sale is a posted invoice
+    line; Show In stock only leaves out what is not on the shelf anyway.
+    """
+    from django.db.models import Max
+
+    from apps.catalog.models import ProductVariant
+    from apps.inventory.models import StockLevel
+    from apps.sales.models import SalesInvoiceLine
+
+    try:
+        days = max(1, int(days or 30))
+    except (TypeError, ValueError):
+        days = 30
+    today = timezone.localdate()
+    since = today - timezone.timedelta(days=days - 1)
+    last = dict(SalesInvoiceLine.objects.filter(invoice__status__in=["posted", "partially_paid", "paid", "overdue", "returned"], qty__gt=0)
+                .values("variant_id").annotate(d=Max("invoice__date")).values_list("variant_id", "d"))
+    stock = dict(StockLevel.objects.values("variant_id").annotate(q=Sum("qty_on_hand")).values_list("variant_id", "q"))
+    qs = ProductVariant.objects.filter(is_active=True, product__status="active").select_related("product__brand", "product__supplier", "product__brand__supplier")
+    if supplier:
+        qs = qs.filter(Q(product__supplier_id=supplier) | Q(product__supplier__isnull=True, product__brand__supplier_id=supplier))
+    rows = []
+    for v in qs:
+        sold = last.get(v.pk)
+        if sold is not None and sold >= since:
+            continue
+        on_hand = stock.get(v.pk) or Z
+        if show == "In stock only" and on_hand <= 0:
+            continue
+        p = v.product
+        maker = p.supplier or (p.brand.supplier if p.brand_id else None)
+        cost = v.avg_cost or v.cost_price or Z
+        rows.append({"label": v.name, "codes": " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x),
+                     "item_code": p.item_code, "brand": p.brand.name if p.brand_id else "", "company": maker.name if maker else "", "tp": str(v.sale_price or Z),
+                     "last_sold": sold if sold else "Never", "days_since": (today - sold).days if sold else "", "on_hand": str(on_hand),
+                     "stock_value": str((on_hand * cost).quantize(Decimal("0.01")) if on_hand > 0 else Z)})
+    rows.sort(key=lambda r: (-Decimal(r["stock_value"]), r["label"].lower()))
+    cols = ["label", "brand", "company", "tp", "last_sold", "days_since", "on_hand", "stock_value"]
+    return {"columns": cols, "rows": rows,
+            "totals": {"products": len(rows), "on_hand": str(sum((Decimal(r["on_hand"]) for r in rows if Decimal(r["on_hand"]) > 0), Z)), "stock_value": str(sum((Decimal(r["stock_value"]) for r in rows), Z))},
+            "column_labels": {"label": "Product Name", "company": "Company", "tp": "T.P", "last_sold": "Last Sold", "days_since": "Days Since Sold", "on_hand": "Stock On Hand", "stock_value": "Stock Value"},
+            "column_styles": {"label": "bold"}, "notes": {"label": "codes"}, "text_columns": ["item_code"],
+            "export_columns": ["label", "item_code", *cols[1:]], "print_params": {"Not sold in the last": f"{days} days"}}
 
 
 def _pct_off(pct, discount, subtotal):

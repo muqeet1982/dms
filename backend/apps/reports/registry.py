@@ -38,6 +38,7 @@ REPORTS = {
     "sales_by_territory": {"title": "Sales by territory", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_territory, "perm": OPS},
     "sales_by_route": {"title": "Sales by route", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_route, "perm": OPS},
     "sales_by_rep": {"title": "Sales by Sale Person", "area": "sales", "params": DATE_RANGE, "query": ops.sales_by_rep, "perm": OPS},
+    "product_by_rep": {"title": "Products by Sale Person", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep", "label": "Sale Person"}], "query": ops.product_by_rep, "perm": OPS},
     "rep_daily_sheet": {"title": "Sales by Sale Person — daily sheet", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep", "label": "Sale Person"}], "query": rep_daily.daily_sheet, "perm": OPS},
     "out_of_area_activity": {"title": "Out-of-area activity (working areas)", "area": "sales", "params": DATE_RANGE + [{"name": "rep", "type": "rep", "label": "Sale Person"}], "query": ops.out_of_area_activity, "perm": OPS},
     "area_coverage": {"title": "Working areas — coverage", "area": "sales", "params": [], "query": ops.area_coverage, "perm": OPS},
@@ -66,6 +67,9 @@ REPORTS = {
     "stock_ageing": {"title": "Stock ageing (days in stock)", "area": "inventory", "params": WAREHOUSE, "query": ops.stock_ageing, "perm": OPS},
     "expiry_report": {"title": "Expiry report", "area": "inventory", "params": WAREHOUSE + [{"name": "days", "type": "number", "default": 90}], "query": ops.expiry_report, "perm": OPS},
     "low_stock": {"title": "Low stock / reorder", "area": "inventory", "params": [], "query": ops.low_stock, "perm": OPS},
+    "items_not_sold": {"title": "Items not sold", "area": "inventory", "params": [{"name": "days", "type": "number", "default": 30, "label": "Not Sold In Last (Days)"},
+                       {"name": "supplier", "type": "supplier", "label": "Company"}, {"name": "show", "type": "select", "options": ["All active items", "In stock only"], "default": "All active items"}],
+                       "query": ops.items_not_sold, "perm": OPS},
     "dead_stock": {"title": "Dead stock", "area": "inventory", "params": [], "query": ops.dead_stock, "perm": OPS},
     "wastage_by_reason": {"title": "Wastage & loss by reason", "area": "inventory", "params": DATE_RANGE, "query": ops.wastage_by_reason, "perm": OPS},
     "transfer_register": {"title": "Transfer register", "area": "inventory", "params": DATE_RANGE, "query": ops.transfer_register, "perm": OPS},
@@ -116,11 +120,11 @@ REPORTS = {
 # The Reports page opens every report on today; these period statements open on the month so far (owner, 24 Nov
 # 2026), and so does Sales by Sale Person (owner, 25 Nov). Only the page's starting dates: the API without dates is unchanged.
 OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary", "sales_tax_register", "advance_tax_register",
-                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep"}
+                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep", "product_by_rep"}
 assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
 # These ask which columns to leave out before they print or download (owner, 25 Nov 2026: Sales by Sale Person and the
 # daily sheet a name on it opens).
-PICK_COLUMNS = {"sales_by_rep", "rep_daily_sheet"}
+PICK_COLUMNS = {"sales_by_rep", "rep_daily_sheet", "product_by_rep"}
 
 
 def catalog():
