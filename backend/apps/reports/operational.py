@@ -8,6 +8,8 @@ from django.utils import timezone
 
 Z = Decimal("0")
 
+from .exporters import phone_shape  # noqa: E402
+
 def boxes_loose(units, packing):
     """A quantity as a warehouse counts it: (boxes, loose) where one box holds `packing` units."""
     units = Decimal(str(units or 0))
@@ -1133,7 +1135,7 @@ def overdue_list(**_):
     for i in SalesInvoice.objects.filter(status__in=["posted", "partially_paid", "overdue"], due_date__lt=today).select_related("customer", *[f[len("invoice__"):] for f in SALE_PERSON_RELATED]).order_by("due_date"):
         rep_id, person = _sale_person(i)
         rows.append({"invoice": i.number, "date": i.date, "due_date": i.due_date, "days_overdue": (today - i.due_date).days if i.due_date else 0, "customer": i.customer.name,
-                     "sale_person": names.get(str(rep_id), person) if rep_id else person, "phone": i.customer.phone, "balance": str(i.total - i.paid_amount)})
+                     "sale_person": names.get(str(rep_id), person) if rep_id else person, "phone": phone_shape(i.customer.phone), "balance": str(i.total - i.paid_amount)})
     return {"columns": ["invoice", "date", "due_date", "days_overdue", "customer", "sale_person", "phone", "balance"], "rows": rows,
             "totals": {"balance": str(sum((Decimal(r["balance"]) for r in rows), Z))}, "column_labels": {"sale_person": "Sale Person"}}
 

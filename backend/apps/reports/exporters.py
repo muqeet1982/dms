@@ -104,6 +104,23 @@ def _footer_totals(result):
 _SCIENTIFIC = re.compile(r"^-?\d(\.\d+)?E[+-]\d+$")
 
 
+def phone_shape(v):
+    """
+    A Pakistani mobile number the one way, 0323 4833862, however it was typed (owner, 26 Nov 2026: Overdue invoices read
+    03358351090 as the amount 3,358,351,090.00 and +92 323 4833862 beside it): +92 323 4833862, 923234833862 and
+    3234833862 all read 0323 4833862. Anything else — a landline, a placeholder, two digits — is shown as typed.
+    """
+    raw = str(v or "").strip().rstrip(",").strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 12 and digits.startswith("92"):
+        digits = "0" + digits[2:]
+    elif len(digits) == 10 and digits.startswith("3"):
+        digits = "0" + digits
+    if len(digits) == 11 and digits.startswith("03"):
+        return f"{digits[:4]} {digits[4:]}"
+    return raw
+
+
 def plain_figures(v, column=""):
     """
     A report's figures, never in scientific notation. A cost that nets to exactly zero (all of it came back) is 3 decimals
@@ -208,7 +225,7 @@ def to_xlsx(result, title=""):
             # whole file with a 500 (Journal entries, 14 Nov 2026)
             if v is not None and not isinstance(v, (str, bool, int, float, Decimal, datetime.date)):
                 v = str(v)
-            if isinstance(v, str) and c not in text_cols:
+            if isinstance(v, str) and c not in text_cols and not IDENT_COL.search(str(c)):   # 03358351090 kept its 0
                 try:
                     if v and (v.replace(".", "", 1).replace("-", "", 1).isdigit()):
                         v = float(Decimal(v))

@@ -6,6 +6,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from .models import GL_LIVE, Account, JournalEntry, JournalLine
+from apps.reports.exporters import phone_shape
 
 Z = Decimal("0")
 
@@ -356,7 +357,7 @@ def ar_ageing(as_of=None, customer=None, **_):
         names[inv.customer_id] = inv.customer
     for cid, b in per.items():
         c = names[cid]
-        rows.append({"customer_id": str(cid), "customer": c.name, "code": c.code, "phone": c.phone, "credit_limit": str(c.credit_limit), **{k: str(b[k]) for k in ("current", "1-30", "31-60", "61-90", "90+", "total")}})
+        rows.append({"customer_id": str(cid), "customer": c.name, "code": c.code, "phone": phone_shape(c.phone), "credit_limit": str(c.credit_limit), **{k: str(b[k]) for k in ("current", "1-30", "31-60", "61-90", "90+", "total")}})
         for k in ("current", "1-30", "31-60", "61-90", "90+", "total"):
             tot[k] += b[k]
     rows.sort(key=lambda r: -Decimal(r["total"]))
