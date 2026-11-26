@@ -1,5 +1,5 @@
 import { DateInput } from "@/components/ui/DateInput";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -8,7 +8,6 @@ import { pageRights, usePerms } from "@/lib/perms";
 import { toast } from "@/lib/toast";
 import { Alert, PageHeader, Spinner, StatCard } from "@/components/ui/Bits";
 import { EntitySelect } from "@/components/ui/EntitySelect";
-import { Modal } from "@/components/ui/Modal";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Pagination } from "@/components/ui/DataTable";
 
@@ -51,19 +50,35 @@ function RepSelect({ value, onChange }: { value: string; onChange: (v: string) =
 }
 
 type Out = "print" | "pdf" | "xlsx" | "csv";
-const OUT_LABEL: Record<Out, string> = { print: "Print", pdf: "Download PDF", xlsx: "Download Excel", csv: "Download CSV" };
 
-/** Which columns go in the file (owner, 25 Nov 2026, Sales by Sale Person). Opens on what was left out last time. */
-function ColumnPicker({ out, reportKey, columns, onClose, onGo }: { out: Out; reportKey: string; columns: { key: string; label: string }[]; onClose: () => void; onGo: (hide: string[]) => void }) {
-  const LS = `report.hide.${reportKey}`;
-  const [hide, setHide] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem(LS) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
-  const left = columns.filter((c) => !hide.includes(c.key));
-  const go = () => { try { localStorage.setItem(LS, JSON.stringify(hide)); } catch { /* private window: not remembered */ } onGo(columns.filter((c) => hide.includes(c.key)).map((c) => c.key)); };
+/** The columns left out of a report — on the page and in every file (owner, 26 Nov 2026: "columns selection … should also
+ *  effect the table … give this option above table at right side"; until then it asked only before a download). Kept per
+ *  browser, per report. */
+const hiddenKey = (reportKey?: string) => `report.hide.${reportKey}`;
+function loadHidden(reportKey?: string): string[] {
+  try { const v = JSON.parse(localStorage.getItem(hiddenKey(reportKey)) || "[]"); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+}
+
+function ColumnSwitch({ columns, hidden, onChange }: { columns: { key: string; label: string }[]; hidden: string[]; onChange: (hide: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+  const left = columns.filter((c) => !hidden.includes(c.key)).length;
   return (
-    <Modal open title="Columns" onClose={onClose} size="md" footer={<><button type="button" className="btn btn-light" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={!left.length} onClick={go}>{OUT_LABEL[out]}</button></>}>
-      <div className="d-flex gap-2 mb-3"><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setHide([])}>Select all</button><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setHide(columns.map((c) => c.key))}>Clear all</button><span className="ms-auto text-muted fs-12 align-self-center">{left.length} of {columns.length}</span></div>
-      <div className="row g-2">{columns.map((c) => <div className="col-sm-6" key={c.key}><div className="form-check"><input className="form-check-input" type="checkbox" id={`col-${c.key}`} checked={!hide.includes(c.key)} onChange={(e) => setHide(e.target.checked ? hide.filter((k) => k !== c.key) : [...hide, c.key])} /><label className="form-check-label" htmlFor={`col-${c.key}`}>{c.label}</label></div></div>)}</div>
-    </Modal>
+    <div className="position-relative" ref={box}>
+      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setOpen(!open)}><i className="ti ti-columns me-1" />Columns <span className="badge bg-light text-dark ms-1">{left}/{columns.length}</span></button>
+      {open && <div className="card shadow position-absolute end-0 mt-1" style={{ zIndex: 1050, width: 300 }}><div className="card-body p-2">
+        <div className="d-flex gap-2 mb-2"><button type="button" className="btn btn-sm btn-light" onClick={() => onChange([])}>Select all</button><button type="button" className="btn btn-sm btn-light" onClick={() => onChange(columns.slice(1).map((c) => c.key))}>Clear all</button></div>
+        <div style={{ maxHeight: 360, overflowY: "auto" }}>{columns.map((c) => { const on = !hidden.includes(c.key); return (
+          <div className="form-check" key={c.key}><input className="form-check-input" type="checkbox" id={`col-${c.key}`} checked={on} disabled={on && left <= 1}
+            onChange={(e) => onChange(e.target.checked ? hidden.filter((k) => k !== c.key) : [...hidden, c.key])} /><label className="form-check-label" htmlFor={`col-${c.key}`}>{c.label}</label></div>); })}</div>
+      </div></div>}
+    </div>
   );
 }
 
@@ -79,7 +94,7 @@ export function ReportViewPage() {
   const [picked, setPicked] = useState("");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
-  const [picking, setPicking] = useState<Out | null>(null);
+  const [hiddenBy, setHiddenBy] = useState<Record<string, string[]>>({});
   const form = draft || params;
   const q = useQuery({ queryKey: ["report", key, params], queryFn: () => api.get(`/api/v1/reports/${key}`, params), enabled: Boolean(spec) });
   if (catalog.isLoading) return <Spinner />;
@@ -94,12 +109,20 @@ export function ReportViewPage() {
   // a column under a heading is named with it: "Developer 60 ml", "Keratin Straight Pack"
   const colHeads: string[] = (q.data?.header_groups || []).flatMap((g: any) => Array(g.span).fill(g.label || ""));
   const pickable = cols.map((c, i) => ({ key: c, label: `${colHeads[i] || ""} ${q.data?.column_labels?.[c] ?? titleCase(c)}`.trim() }));
+  // the columns switched off (a report that offers the switch): off the table, its totals and every file
+  const hidden = spec.pick_columns ? (hiddenBy[spec.key] ?? loadHidden(spec.key)).filter((c) => cols.includes(c)) : [];
+  const setHidden = (hide: string[]) => { setHiddenBy({ ...hiddenBy, [spec.key]: hide }); try { localStorage.setItem(hiddenKey(spec.key), JSON.stringify(hide)); } catch { /* private window: not remembered */ } };
+  const shown = cols.filter((c) => !hidden.includes(c));
+  // a heading over several columns spans the ones left (the daily sheet's families)
+  const groupOf: number[] = (q.data?.header_groups || []).flatMap((g: any, gi: number) => Array(g.span).fill(gi));
+  const shownGroups: { label: string; span: number }[] = [];
+  cols.forEach((c, i) => { if (hidden.includes(c)) return; const gi = groupOf[i]; const last = shownGroups[shownGroups.length - 1] as any; if (last && last._gi === gi) last.span += 1; else shownGroups.push({ label: q.data?.header_groups?.[gi]?.label || "", span: 1, _gi: gi } as any); });
   const send = (out: Out, hide: string[] = []) => {
     const query = { ...params, format: out === "print" ? "pdf" : out, ...(hide.length ? { hide_columns: hide.join(",") } : {}) };
     if (out === "print") api.printDoc(`/api/v1/reports/${key}?${new URLSearchParams(query).toString()}`);
     else api.download(`/api/v1/reports/${key}`, `${key}.${out}`, query);
   };
-  const ask = (out: Out) => (spec.pick_columns && cols.length ? setPicking(out) : send(out));
+  const ask = (out: Out) => send(out, hidden);
   const pageCount = Math.max(1, Math.ceil((q.data?.rows.length || 0) / size));
   const isNum = (v: any) => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) && v.length < 20);
   // words left, figures right, by column (owner, 8 Nov 2026) — the same rule as the PDF (exporters.numeric_columns)
@@ -112,18 +135,18 @@ export function ReportViewPage() {
   return (
     <>
       <PageHeader title={q.data?.title || spec.title} crumbs={[{ label: "Reports", to: "/app/reports" }, { label: spec.title }]} actions={pageRights("reports").extras.export && <><button className="btn btn-outline-secondary" onClick={() => ask("print")}><i className="ti ti-printer me-1" />Print</button><button className="btn btn-outline-secondary" onClick={() => ask("pdf")}><i className="ti ti-file-type-pdf me-1" />PDF</button><button className="btn btn-outline-success" onClick={() => ask("xlsx")}><i className="ti ti-file-type-xls me-1" />Excel</button><button className="btn btn-outline-secondary" onClick={() => ask("csv")}><i className="ti ti-file-type-csv me-1" />CSV</button></>} />
-      {picking && <ColumnPicker out={picking} reportKey={spec.key} columns={pickable} onClose={() => setPicking(null)} onGo={(hide) => { const out = picking; setPicking(null); send(out, hide); }} />}
       {spec.params.length > 0 && <div className="card mb-3"><div className="card-body py-2"><form className="row g-2 align-items-end" onSubmit={(e) => { e.preventDefault(); run(); }}>
         {hasRange && <div className="col-md-2 col-6"><label className="form-label fs-11 mb-1">Preset</label><select className="form-select form-select-sm" value={preset} onChange={(e) => pickPreset(e.target.value)}><option value="">Custom</option>{DATE_PRESETS.map((n) => <option key={n} value={n}>{n}</option>)}</select></div>}
         {spec.params.map((p: any) => <div className="col-md-2 col-6" key={p.name}><label className="form-label fs-11 mb-1">{p.label ?? titleCase(p.name)}</label>{p.type === "date" ? <DateInput className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} /> : p.type === "number" ? <input type="number" className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} /> : p.type === "select" ? <select className="form-select form-select-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })}>{p.options.map((o: string) => <option key={o} value={o}>{o || "all"}</option>)}</select> : p.type === "rep" ? <RepSelect value={form[p.name] || ""} onChange={(v) => setDraft({ ...form, [p.name]: v })} /> : ENTITY_ENDPOINTS[p.type] ? <EntitySelect endpoint={ENTITY_ENDPOINTS[p.type].endpoint} query={ENTITY_ENDPOINTS[p.type].query} mapOption={ENTITY_ENDPOINTS[p.type].map} value={form[p.name] || null} onChange={(v) => setDraft({ ...form, [p.name]: v || "" })} size="sm" placeholder="all" /> : <input className="form-control form-control-sm" value={form[p.name] || ""} onChange={(e) => setDraft({ ...form, [p.name]: e.target.value })} />}</div>)}
         <div className="col-auto d-flex gap-1"><button className="btn btn-primary btn-sm" type="submit"><i className="ti ti-player-play me-1" />Run</button></div>
       </form></div></div>}
       {/* a report that leads with its own cards does not repeat its totals as a second row of them (owner, 24 Nov 2026) */}
-      {q.data?.totals && !q.data.totals_in_rows && !q.data.summary?.length && Object.keys(q.data.totals).length > 0 && <div className="d-flex flex-wrap gap-2 mb-3">{Object.entries(q.data.totals).map(([k, v]) => <div key={k} className="border rounded bg-white px-3 py-2"><div className="fs-11 text-muted">{q.data.column_labels?.[k] ?? titleCase(k)}</div><div className={`fw-bold ${k === "balanced" ? (v ? "text-success" : "text-danger") : ""}`}>{fmtCell(v, k)}</div></div>)}</div>}
+      {q.data?.totals && !q.data.totals_in_rows && !q.data.summary?.length && Object.keys(q.data.totals).length > 0 && <div className="d-flex flex-wrap gap-2 mb-3">{Object.entries(q.data.totals).filter(([k]) => !hidden.includes(k)).map(([k, v]) => <div key={k} className="border rounded bg-white px-3 py-2"><div className="fs-11 text-muted">{q.data.column_labels?.[k] ?? titleCase(k)}</div><div className={`fw-bold ${k === "balanced" ? (v ? "text-success" : "text-danger") : ""}`}>{fmtCell(v, k)}</div></div>)}</div>}
       {/* a report can lead with a few figures (Pending payments, 24 Nov 2026) */}
       {q.data?.summary?.length ? <div className="row g-3 mb-3">{q.data.summary.map((c: any) => <div className="col-6 col-md" key={c.label}><StatCard label={labelCase(c.label)} value={money(c.value)} sub={c.sub ?? (c.count != null ? `${c.count} invoice${c.count === 1 ? "" : "s"}` : undefined)} icon={c.tone === "danger" ? "ti-alert-triangle" : c.tone === "warning" ? "ti-calendar-due" : "ti-coins"} color={c.tone || "primary"} /></div>)}</div> : null}
-      <div className="card"><div className="card-body p-0">{q.isLoading ? <Spinner /> : <div className="table-responsive"><table className={`table table-sm table-hover report-table mb-0 ${q.data.header_groups && !q.data.plain_header ? "report-grouped" : ""}`}><thead className={q.data.header_groups && !q.data.plain_header ? "" : "table-light"}>{q.data.header_groups && (() => { const seps: number[] = []; let at = 0; q.data.header_groups.forEach((g: any) => { if (at > 0 && g.span > 1) seps.push(at); at += g.span; }); (q.data as any)._seps = seps; return <tr className="rg-top">{q.data.header_groups.map((g: any, i: number) => <th key={i} colSpan={g.span} className={`text-center ${g.span > 1 && i > 0 ? "rg-sep" : ""}`}>{g.label}</th>)}</tr>; })()}<tr className={q.data.header_groups ? "rg-sub" : ""}>{cols.map((c, i) => <th key={c} className={`${numCols.has(c) ? "num" : ""} ${((q.data as any)._seps || []).includes(i) ? "rg-sep" : ""}`}>{q.data.column_labels?.[c] ?? titleCase(c)}</th>)}</tr></thead>
-        <tbody>{q.data?.rows.slice((Math.min(page, pageCount) - 1) * size, Math.min(page, pageCount) * size).map((r: any, i: number) => <tr key={i} className={r.is_group ? "fw-semibold table-light" : ""}>{cols.map((c, ci) => <td key={c} className={`${numCols.has(c) ? "num" : ""} ${q.data.faint_zeros && isNum(r[c]) && Number(r[c]) === 0 ? "opacity-25" : ""} ${((q.data as any)._seps || []).includes(ci) ? "rg-sep" : ""} ${({ success: "text-success", danger: "text-danger", bold: "fw-bold" } as any)[q.data.column_styles?.[c]] || ""}`} style={c === "name" && r.level ? { paddingLeft: 8 + (r.level - 1) * 16 } : undefined}>{q.data.links?.[c] && (r[q.data.links[c].href] || r[q.data.links[c].id]) ? <Link target="_blank" rel="noopener noreferrer" to={q.data.links[c].href ? r[q.data.links[c].href] : `${q.data.links[c].to}${r[q.data.links[c].id]}${q.data.links[c].query ? `?${q.data.links[c].query}` : ""}`}>{c === "view" ? <><i className="ti ti-eye me-1" />{r[c]}</> : fmtCell(r[c], c)}</Link> : c === "journal" && r.journal_id ? <Link to={`/app/accounting/journals/${r.journal_id}`}>{r[c]}</Link> : c === "name" && r.account_id && !r.is_group ? <Link to={`/app/accounting/accounts/${r.account_id}`}>{r[c]}</Link> : c === q.data.drill?.column && r.key && r.key !== "None" ? <Link to={`/app/reports/${q.data.drill.report}?${new URLSearchParams({ ...params, [q.data.drill.param]: r.key }).toString()}`}>{fmtCell(r[c], c)}</Link> : fmtCell(r[c], c)}{q.data.notes?.[c] && r[q.data.notes[c]] ? <div className="text-muted fs-11">{r[q.data.notes[c]]}</div> : null}</td>)}</tr>)}{q.data && !q.data.rows.length && <tr><td colSpan={cols.length || 1} className="text-muted text-center py-4">No data for these parameters</td></tr>}</tbody></table></div>}
+      {spec.pick_columns && cols.length > 0 && <div className="d-flex justify-content-end mb-2"><ColumnSwitch columns={pickable} hidden={hidden} onChange={setHidden} /></div>}
+      <div className="card"><div className="card-body p-0">{q.isLoading ? <Spinner /> : <div className="table-responsive"><table className={`table table-sm table-hover report-table mb-0 ${q.data.header_groups && !q.data.plain_header ? "report-grouped" : ""}`}><thead className={q.data.header_groups && !q.data.plain_header ? "" : "table-light"}>{q.data.header_groups && (() => { const seps: number[] = []; let at = 0; shownGroups.forEach((g: any) => { if (at > 0 && g.span > 1) seps.push(at); at += g.span; }); (q.data as any)._seps = seps; return <tr className="rg-top">{shownGroups.map((g: any, i: number) => <th key={i} colSpan={g.span} className={`text-center ${g.span > 1 && i > 0 ? "rg-sep" : ""}`}>{g.label}</th>)}</tr>; })()}<tr className={q.data.header_groups ? "rg-sub" : ""}>{shown.map((c, i) => <th key={c} className={`${numCols.has(c) ? "num" : ""} ${((q.data as any)._seps || []).includes(i) ? "rg-sep" : ""}`}>{q.data.column_labels?.[c] ?? titleCase(c)}</th>)}</tr></thead>
+        <tbody>{q.data?.rows.slice((Math.min(page, pageCount) - 1) * size, Math.min(page, pageCount) * size).map((r: any, i: number) => <tr key={i} className={r.is_group ? "fw-semibold table-light" : ""}>{shown.map((c, ci) => <td key={c} className={`${numCols.has(c) ? "num" : ""} ${q.data.faint_zeros && isNum(r[c]) && Number(r[c]) === 0 ? "opacity-25" : ""} ${((q.data as any)._seps || []).includes(ci) ? "rg-sep" : ""} ${({ success: "text-success", danger: "text-danger", bold: "fw-bold" } as any)[q.data.column_styles?.[c]] || ""}`} style={c === "name" && r.level ? { paddingLeft: 8 + (r.level - 1) * 16 } : undefined}>{q.data.downloads?.[c] && r[q.data.downloads[c].url] ? <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2" onClick={() => api.download(r[q.data.downloads[c].url])}><i className="ti ti-file-type-pdf me-1" />{r[c]}</button> : q.data.links?.[c] && (r[q.data.links[c].href] || r[q.data.links[c].id]) ? <Link target="_blank" rel="noopener noreferrer" to={q.data.links[c].href ? r[q.data.links[c].href] : `${q.data.links[c].to}${r[q.data.links[c].id]}${q.data.links[c].query ? `?${q.data.links[c].query}` : ""}`}>{c === "view" ? <><i className="ti ti-eye me-1" />{r[c]}</> : fmtCell(r[c], c)}</Link> : c === "journal" && r.journal_id ? <Link to={`/app/accounting/journals/${r.journal_id}`}>{r[c]}</Link> : c === "name" && r.account_id && !r.is_group ? <Link to={`/app/accounting/accounts/${r.account_id}`}>{r[c]}</Link> : c === q.data.drill?.column && r.key && r.key !== "None" ? <Link to={`/app/reports/${q.data.drill.report}?${new URLSearchParams({ ...params, [q.data.drill.param]: r.key }).toString()}`}>{fmtCell(r[c], c)}</Link> : fmtCell(r[c], c)}{q.data.notes?.[c] && r[q.data.notes[c]] ? <div className="text-muted fs-11">{r[q.data.notes[c]]}</div> : null}</td>)}</tr>)}{q.data && !q.data.rows.length && <tr><td colSpan={shown.length || 1} className="text-muted text-center py-4">No data for these parameters</td></tr>}</tbody></table></div>}
         {(q.data?.rows.length || 0) > size && <Pagination page={Math.min(page, pageCount)} pages={pageCount} count={q.data.rows.length} pageSize={size} onPage={setPage} onPageSize={(n) => { setSize(n); setPage(1); }} />}</div></div>
       {q.data?.compare && <div className="card mt-3"><div className="card-header"><strong>Comparison period</strong></div><div className="card-body"><div className="d-flex flex-wrap gap-2">{Object.entries(q.data.compare.totals).map(([k, v]) => <div key={k} className="border rounded px-3 py-2"><div className="fs-11 text-muted">{titleCase(k)}</div><div className="fw-bold">{fmtCell(v, k)}</div></div>)}</div></div></div>}
     </>

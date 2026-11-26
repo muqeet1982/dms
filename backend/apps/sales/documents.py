@@ -62,3 +62,21 @@ def invoice_pdf(request, inv):
     issuer = invoice_issuer(getattr(request, "tenant", None), bool(extra.get("tax_on")))
     return render_doc(request, "sales/invoice.html", {"inv": inv, "lines": lines, "issuer": issuer, "logo_url": issuer.get("logo_url"), **extra}, f"{inv.number} - {inv.customer.name}",
                       title=doc_title, ref=inv.number)
+
+
+def credit_note_pdf(request, cn):
+    """A return as a document (owner, 26 Nov 2026: the Daily sale report's PDF of a return row)."""
+    from apps.reports.operational import _sale_person
+
+    lines = list(cn.lines.select_related("variant__product").order_by("id"))
+    for l in lines:
+        l.tax = Decimal(str(l.tax1_amount or 0)) + Decimal(str(l.tax2_amount or 0))
+    tax_total = Decimal(str(cn.tax1_total or 0)) + Decimal(str(cn.tax2_total or 0)) + Decimal(str(getattr(cn, "fed_total", 0) or 0)) \
+        + Decimal(str(getattr(cn, "extra_tax_total", 0) or 0)) + Decimal(str(getattr(cn, "further_tax_total", 0) or 0))
+    tax_on = bool(cn.invoice and cn.invoice.force_tax_type_id) or tax_total > 0
+    issuer = invoice_issuer(getattr(request, "tenant", None), tax_on)
+    person = _sale_person(cn.invoice)[1] if cn.invoice_id else ""
+    return render_doc(request, "sales/credit_note.html", {
+        "cn": cn, "lines": lines, "issuer": issuer, "logo_url": issuer.get("logo_url"), "tax_on": tax_on, "tax_total": tax_total,
+        "sale_person": "" if person == "No Sale Person" else person, "credit_left": cn.available_credit,
+    }, f"{cn.number} - {cn.customer.name}", title="CREDIT NOTE", ref=cn.number)

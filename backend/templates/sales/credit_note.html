@@ -1,0 +1,90 @@
+{% extends "_doc.html" %}{% load docs %}
+{% comment %}
+A return (credit note) as a document (owner, 26 Nov 2026: the Daily sale report downloads a PDF of every row, a return's
+too). What came back, at what the invoice charged for it — its price, its share of the discount, its tax — and where the
+credit went: onto the invoice, refunded, or kept for the customer's next one.
+{% endcomment %}
+{% block doc_title %}CREDIT NOTE{% endblock %}
+{% block doc_ref %}{{ cn.number }}{% endblock %}
+{% block watermark %}{% if cn.status == 'draft' %}<div class="mark">DRAFT</div>{% elif cn.status == 'cancelled' %}<div class="mark">CANCELLED</div>{% endif %}{% endblock %}
+
+{% block company %}
+    {% if issuer.logo_url %}<img src="{{ issuer.logo_url }}" alt="{{ issuer.name }}">{% endif %}
+    <div class="co">{{ issuer.name }}</div>
+    <div class="muted">{% if issuer.address %}{{ issuer.address|linebreaksbr }}{% endif %}
+      {% if issuer.phone %}<br>Tel {{ issuer.phone }}{% endif %}{% if issuer.email %} · {{ issuer.email }}{% endif %}
+      {% for k, v in issuer.tax_lines %}<br>{{ k }}: {{ v }}{% endfor %}</div>
+{% endblock %}
+
+{% block meta %}
+<table class="grid">
+  <tr>
+    <td><span class="k">Return date</span>{{ cn.date }}</td>
+    <td><span class="k">Against invoice</span>{{ cn.invoice.number|default:"—" }}{% if cn.invoice %}<span class="sku">{{ cn.invoice.date }}</span>{% endif %}</td>
+    <td><span class="k">Sales person</span>{{ sale_person|default:"—" }}</td>
+  </tr>
+  <tr>
+    <td><span class="k">Reason</span>{{ cn.reason|default:"—" }}</td>
+    <td><span class="k">Delivery note</span>{{ cn.delivery_note.number|default:"—" }}</td>
+    <td><span class="k">Warehouse</span>{{ cn.warehouse.name|default:"—" }}</td>
+  </tr>
+</table>
+{% endblock %}
+
+{% block parties %}
+<div class="parties">
+  <div class="party">
+    <h2>Customer</h2>
+    <div class="who">{{ cn.customer.business_name|default:cn.customer.name }}</div>
+    {% if cn.customer.business_name and cn.customer.business_name != cn.customer.name %}<div class="muted">{{ cn.customer.name }}</div>{% endif %}
+    {% if cn.customer.address %}<div>{{ cn.customer.address|linebreaksbr }}</div>{% endif %}
+    {% if cn.customer.city %}<div>{{ cn.customer.city }}</div>{% endif %}
+    <div class="muted">{% if cn.customer.phone %}Tel {{ cn.customer.phone }}{% endif %}{% if cn.customer.contact_person %} · {{ cn.customer.contact_person }}{% endif %}</div>
+    {% if cn.customer.ntn %}<div class="muted">NTN: {{ cn.customer.ntn }}</div>{% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block lines %}
+<table class="lines">
+  <thead><tr>
+    <th style="width:6mm">#</th><th>Item</th>
+    <th class="r" style="width:13mm">Qty</th>
+    <th class="r" style="width:17mm">Rate</th>
+    <th class="r" style="width:16mm">Disc</th>
+    {% if tax_on %}<th class="r" style="width:16mm">Tax</th>{% endif %}
+    <th class="r" style="width:21mm">Amount</th>
+    <th style="width:18mm">Condition</th>
+  </tr></thead>
+  <tbody>
+  {% for l in lines %}<tr>
+    <td>{{ forloop.counter }}</td>
+    <td>{{ l.variant.name }}<span class="sku">{{ l.variant.product.item_code|default:l.variant.sku }}{% if l.reason %} · {{ l.reason }}{% endif %}</span></td>
+    <td class="r">{{ l.qty|qty }}</td>
+    <td class="r">{{ l.unit_price|num }}</td>
+    <td class="r">{% if l.discount_amount %}{{ l.discount_amount|num }}{% else %}—{% endif %}</td>
+    {% if tax_on %}<td class="r">{% if l.tax %}{{ l.tax|num }}{% else %}—{% endif %}</td>{% endif %}
+    <td class="r b">{{ l.line_total|num }}</td>
+    <td>{% if l.stock_back or l.restock and l.condition == 'good' %}Back to stock{% else %}{{ l.get_condition_display }}{% endif %}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block words %}{% if cn.total %}<div class="words"><strong>Amount in words:</strong> {{ cn.total|in_words }}</div>{% endif %}{% endblock %}
+
+{% block notes %}
+{% if cn.notes %}<div class="note"><strong>Notes:</strong> {{ cn.notes }}</div>{% endif %}
+<div class="note">{% if cn.applied_amount %}{{ cn.applied_amount|num }} settled against invoices. {% endif %}{% if cn.refunded_amount %}{{ cn.refunded_amount|num }} refunded. {% endif %}{% if credit_left %}{{ credit_left|num }} kept as credit for the next invoice.{% endif %}</div>
+{% endblock %}
+
+{% block totals %}
+<table class="totals">
+  <tr><td class="l">Sub Total</td><td class="r">{{ cn.subtotal|num }}</td></tr>
+  {% if cn.discount %}<tr><td class="l">Discount</td><td class="r">&minus;{{ cn.discount|num }}</td></tr>{% endif %}
+  {% if tax_total %}<tr><td class="l">Tax</td><td class="r">{{ tax_total|num }}</td></tr>{% endif %}
+  {% if cn.advance_tax_total %}<tr><td class="l">Advance Income Tax<span class="sec">236G/H</span></td><td class="r">{{ cn.advance_tax_total|num }}</td></tr>{% endif %}
+  {% if cn.wht_total %}<tr><td class="l">Less: WHT (sales tax withheld at source)</td><td class="r">&minus;{{ cn.wht_total|num }}</td></tr>{% endif %}
+  <tr class="sum"><td>Total Credit</td><td class="r">{{ cn.total|num }}</td></tr>
+</table>
+{% endblock %}

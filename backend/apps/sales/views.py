@@ -639,11 +639,18 @@ class CreditNoteViewSet(DocumentViewSet):
     serializer_class = CreditNoteSerializer
     # destroy needs either switch here; perform_destroy then holds a draft to the page's Delete, a posted return to its own
     perm_map = page_perms("credit_notes", {"post": "sales.add_credit_note", "apply": "sales.add_credit_note", "refund": "sales.add_credit_note",
-                                           "destroy": ["sales.delete_credit_note", "sales.delete_posted_credit_note"]})
+                                           "destroy": ["sales.delete_credit_note", "sales.delete_posted_credit_note"], "pdf": "sales.view_credit_note"})
     filterset_fields = ["status", "customer", "invoice"]
     search_fields = ["number", "customer__name", "reason"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     queryset = CreditNote.objects.select_related("customer", "invoice", "warehouse", "journal").prefetch_related("lines__variant")
+
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        """The return as a document (owner, 26 Nov 2026: Daily sale report downloads a PDF of every row)."""
+        from apps.sales.documents import credit_note_pdf
+
+        return credit_note_pdf(request, self.get_object())
 
     def perform_update(self, serializer):
         """A return keeps its customer, invoice and lines (review, 30 Oct 2026): a posted one changes only its words;

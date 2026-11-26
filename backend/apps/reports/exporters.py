@@ -239,6 +239,7 @@ def to_pdf(result, title="", tenant=None, params=None, param_labels=None):
     cols = result.get("columns") or (list(result["rows"][0].keys()) if result["rows"] else [])
     if "view" in (result.get("links") or {}):
         cols = [c for c in cols if c != "view"]   # a link to click: nothing to print
+    cols = [c for c in cols if c not in (result.get("downloads") or {})]   # a button that downloads a file: nothing to print either
     rows = [{"cells": [_qty_shape(c, cell(r.get(c, ""))) for c in cols], "kind": r.get("kind", "")} for r in result["rows"]]
     from apps.core.documents import logo_url
 

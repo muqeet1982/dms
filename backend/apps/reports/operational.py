@@ -335,14 +335,21 @@ def sales_by_rep(date_from=None, date_to=None, **_):
     return out
 
 
+def _pct_off(pct, discount, subtotal):
+    """A document's discount as a %: its own Discount %, else the discount over the subtotal (a product's own discount)."""
+    if pct:
+        return str(Decimal(pct).quantize(Decimal("0.01")))
+    return str((Decimal(discount) / Decimal(subtotal) * 100).quantize(Decimal("0.01"))) if discount and subtotal else "0"
+
+
 PAYMENT_STATUS = {"posted": "Unpaid", "partially_paid": "Partially Paid", "paid": "Paid", "overdue": "Overdue", "returned": "Returned"}
 
 
 def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, show=None, **_):
     """
     Daily sale report (owner, 24 Nov 2026): the day's invoices AND its returns (credit notes), one row each — Date, Type,
-    Invoice / Return No, Customer, Sale Person, Payment Status, Total (before discount), Discount, Tax, Grand Total and a
-    read-only View. Total − Discount + Tax = Grand Total on every row: a tax invoice's Grand Total carries its GST and
+    Invoice / Return No, Customer, Sale Person, Payment Status, Total (before discount), Discount, Discount %, Tax, Grand
+    Total and the document's PDF (26 Nov 2026; a View link until then). Total − Discount + Tax = Grand Total on every row: a tax invoice's Grand Total carries its GST and
     advance income tax, which is why it could exceed Total with no Tax column to show it. A return reads in minus, so the
     totals are the net. Cards on top: Sales, Returns, Net Sales, and what is Received / still Outstanding on the day's invoices.
     Opens on today; filters: sale person, payment status (sales only), Show sales and returns / sales only / returns only.
@@ -368,8 +375,9 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
                 continue
             rows.append({"date": inv.date, "type": "Sale", "invoice": inv.number, "customer": inv.customer.name, "sale_person": names.get(str(rep_id), person),
                          "payment_status": PAYMENT_STATUS[inv.status], "total": str(inv.subtotal), "discount": str(inv.discount),
-                         "tax": str(inv.total - (inv.subtotal - inv.discount)), "grand_total": str(inv.total), "view": "View",
-                         "href": f"/app/sales/invoices/{inv.pk}?view=1", "_order": 0})
+                         "discount_pct": _pct_off(inv.discount_pct, inv.discount, inv.subtotal),
+                         "tax": str(inv.total - (inv.subtotal - inv.discount)), "grand_total": str(inv.total), "pdf": "PDF",
+                         "href": f"/app/sales/invoices/{inv.pk}?view=1", "pdf_url": f"/api/v1/invoices/{inv.pk}/pdf", "_order": 0})
             sold += inv.total
             received += inv.cash_paid
             pending += inv.balance
@@ -385,8 +393,9 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
                 continue
             rows.append({"date": cn.date, "type": "Return", "invoice": cn.number, "customer": cn.customer.name, "sale_person": names.get(str(rep_id), person),
                          "payment_status": f"Return of {cn.invoice.number}" if cn.invoice_id else "Return", "total": str(-cn.subtotal), "discount": str(-cn.discount),
-                         "tax": str(-(cn.total - (cn.subtotal - cn.discount))), "grand_total": str(-cn.total), "view": "View",
-                         "href": f"/app/sales/credit-notes/{cn.pk}", "_order": 1})
+                         "discount_pct": _pct_off(None, cn.discount, cn.subtotal),
+                         "tax": str(-(cn.total - (cn.subtotal - cn.discount))), "grand_total": str(-cn.total), "pdf": "PDF",
+                         "href": f"/app/sales/credit-notes/{cn.pk}", "pdf_url": f"/api/v1/credit-notes/{cn.pk}/pdf", "_order": 1})
             back += cn.total
             n_back += 1
     rows.sort(key=lambda r: (r["date"], r.pop("_order"), r["invoice"]))
@@ -399,10 +408,13 @@ def daily_sales(date_from=None, date_to=None, rep=None, payment_status=None, sho
         {"label": "Received", "value": str(received), "sub": "on these invoices"},
         {"label": "Outstanding", "value": str(pending), "sub": "still owed on them", "tone": "danger"},
     ]
-    cols = ["date", "type", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "tax", "grand_total", "view"]
+    # Discount % beside the Discount (owner, 26 Nov 2026); the last column downloads the invoice's or the return's PDF,
+    # where a View link was (owner, 26 Nov 2026: "no need for view column … instead give pdf download")
+    cols = ["date", "type", "invoice", "customer", "sale_person", "payment_status", "total", "discount", "discount_pct", "tax", "grand_total", "pdf"]
     return {"columns": cols, "rows": rows, "summary": summary, "totals": {k: str(v) for k, v in tot.items()},
-            "column_labels": {"invoice": "Invoice / Return No", "sale_person": "Sale Person", "payment_status": "Payment Status", "grand_total": "Grand Total", "view": "View"},
-            "links": {"invoice": {"href": "href"}, "view": {"href": "href"}},
+            "column_labels": {"invoice": "Invoice / Return No", "sale_person": "Sale Person", "payment_status": "Payment Status", "discount_pct": "Discount %",
+                              "grand_total": "Grand Total", "pdf": "PDF"},
+            "links": {"invoice": {"href": "href"}}, "downloads": {"pdf": {"url": "pdf_url"}},
             "export_columns": cols[:-1]}
 
 
