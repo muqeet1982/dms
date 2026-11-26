@@ -356,12 +356,15 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     company_claims_total = serializers.SerializerMethodField()
     delivery_status = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+    order_status = serializers.CharField(source="order.status", read_only=True, default="")
 
     def get_delivery_status(self, obj):
         """Where the goods actually are — the invoice's own status stays the payment state."""
         dn = obj.delivery_note
         if dn is None:
             return ""
+        if dn.status == "cancelled":
+            return "Delivery Cancelled"   # read "Issued, awaiting dispatch" (TDN-INV-00091, 26 Nov 2026)
         if dn.status in ("delivered", "partially_delivered", "returned", "failed"):
             return dn.get_status_display()
         if dn.trip_id:
@@ -403,7 +406,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "customer_advance_tax_rate", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "customer_advance_tax_rate", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "order_status", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 

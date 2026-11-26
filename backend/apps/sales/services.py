@@ -1989,6 +1989,10 @@ class InvoiceService:
     def post(inv):
         if inv.status != "draft":
             raise DomainError("Invoice already posted.")
+        # an order cancelled before 29 Oct 2026 left its invoice behind, and its draft could still be posted: TDN-INV-00091
+        # went to the books on 25 Nov for goods that came home in October (owner, 26 Nov 2026)
+        if inv.order_id and inv.order.status == "cancelled":
+            raise DomainError(f"Its order {inv.order.number} is cancelled — cancel {inv.number} instead.", code="order_cancelled")
         from apps.accounting.services import PostingService
 
         # it goes to the books at the customer's advance income tax rate as it stands now, whatever the draft held

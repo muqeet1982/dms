@@ -70,6 +70,7 @@ export function InvoiceDetailPage() {
   const inv = q.data;
   if (!inv) return null;
   const open = ["posted", "partially_paid", "overdue"].includes(inv.status);
+  const orderCancelled = inv.order_status === "cancelled";
   // credit brought from another return goes back to it, so only money received or a return of these goods stops a reversal
   const reversible = Number(inv.cash_paid ?? inv.paid_amount) === 0 && !Number(inv.returns_count);
   return (
@@ -108,16 +109,19 @@ export function InvoiceDetailPage() {
             : <button className="btn btn-outline-info" disabled={!!busy || !inv.fbr_setup?.configured}
                 title={inv.fbr_setup?.configured ? undefined : "Set up FBR first under Settings → FBR e-invoicing"}
                 onClick={() => run("fbr-validate", {}, { success: "FBR passed it — ready to post" })}><i className="ti ti-building-bank me-1" />Validate with FBR</button>)}
-          {inv.status === "draft" && page.can("discount") && (inv.force_tax_type
+          {inv.status === "draft" && !orderCancelled && page.can("discount") && (inv.force_tax_type
             ? <button className="btn btn-outline-warning" disabled={!!busy} onClick={() => run("tax", { apply: false }, { success: "Tax removed" })}><i className="ti ti-percentage me-1" />Tax off</button>
             : <button className="btn btn-outline-success" disabled={!!busy} title="Each item at its FBR rate from its HS classification — unclassified items carry no tax" onClick={() => run("tax", { apply: true }, { success: "Tax on — recalculated on every line" })}><i className="ti ti-percentage me-1" />Tax on</button>)}
-          {inv.status === "draft" && page.add && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
+          {inv.status === "draft" && page.add && !orderCancelled && <button className="btn btn-success" disabled={!!busy} onClick={() => run("post", {}, { success: `${inv.number} posted` })}><i className="ti ti-check me-1" />Post to ledger</button>}
+          {/* a draft left on a cancelled order is cancelled, never posted (TDN-INV-00091, 26 Nov 2026) */}
+          {inv.status === "draft" && orderCancelled && page.add && <button className="btn btn-outline-danger" disabled={!!busy} onClick={() => { if (window.confirm(`Cancel ${inv.number}? Its order ${inv.order_number} is cancelled; the invoice was never on the books.`)) run("cancel", { reason: `Order ${inv.order_number} cancelled` }, { success: `${inv.number} cancelled` }); }}><i className="ti ti-x me-1" />Cancel invoice</button>}
           </>}
           {inv.force_tax_type && inv.fbr?.status === "submitted" && <button className="btn btn-outline-info" onClick={() => setFbrView(true)}><i className="ti ti-file-code me-1" />FBR invoice & JSON</button>}
           <button className="btn btn-outline-secondary" onClick={() => api.printDoc(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-printer me-1" />Print</button>
           <button className="btn btn-outline-secondary" onClick={() => api.download(`/api/v1/invoices/${inv.id}/pdf`)}><i className="ti ti-file-type-pdf me-1" />PDF</button>
         </>} />
-      {inv.status === "draft" && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
+      {inv.status === "draft" && orderCancelled && <Alert kind="danger"><strong>Order {inv.order_number} is cancelled.</strong> This draft is not on the books.</Alert>}
+      {inv.status === "draft" && !orderCancelled && <Alert kind="warning"><strong>Draft — not on the books yet.</strong> Review it{page.can("discount") ? <>, switch the tax on or off</> : null}, then <strong>Post to ledger</strong>. The customer owes nothing on it until it is posted.</Alert>}
       {["posted", "overdue", "partially_paid", "paid"].includes(inv.status) && inv.force_tax_type && !inv.fbr && <Alert kind="info"><strong>Tax invoice — not filed with FBR yet.</strong> {inv.fbr_setup?.configured ? <>Press <strong>{inv.fbr?.status === "validated" ? "Post to FBR" : "Validate with FBR"}</strong>{inv.fbr_setup.sandbox ? " (FBR is set to its sandbox — a test filing)" : ""}; FBR's number and QR then print on the invoice.</> : <>Set up FBR under Settings → FBR e-invoicing to file it.</>}</Alert>}
       {inv.fbr && <Alert kind={inv.fbr.status === "submitted" ? "success" : inv.fbr.status === "failed" ? "danger" : "info"}>
         <i className="ti ti-building-bank me-1" />FBR: <strong>{inv.fbr.status}</strong>{inv.fbr.sandbox ? " (SANDBOX — not a legal filing)" : ""}{inv.fbr.fbr_invoice_number ? <> · № <span className="font-monospace">{inv.fbr.fbr_invoice_number}</span></> : null}{Number(inv.advance_tax_total) > 0 && <> · filed {money(Number(inv.total) - Number(inv.advance_tax_total))}, advance income tax {money(inv.advance_tax_total)} is not part of FBR's sales-tax filing</>}{inv.fbr.error ? <> — {inv.fbr.error}</> : null}
