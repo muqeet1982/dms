@@ -230,3 +230,14 @@ def test_every_role_that_could_close_a_trip_still_can():
     importlib.import_module("apps.accounts.migrations.0013_close_trip_switch").split(global_apps, None)
     assert keep.permissions.filter(codename="delivery.close_trip").exists()
     assert not rider.permissions.filter(codename="delivery.close_trip").exists()
+
+
+def test_a_vague_fix_counts_as_none(api, tenant, no_google):
+    """Mobile AI, 27 Nov 2026: a fix worse than ~100 m is missing — the shop's pin stands in."""
+    trip, _shops = _setup(api, tenant, [NEAR, MIDDLE])
+    api.post(f"/api/v1/trips/{trip['id']}/start", {"gps": {"lat": WAREHOUSE[0], "lng": WAREHOUSE[1], "accuracy_m": 15}}, format="json")
+    _t, stops = _stops(api, trip["id"])
+    r = api.post(f"/api/v1/delivery-notes/{stops[0]['id']}/arrive", {"gps": {"lat": 31.9, "lng": 74.9, "accuracy_m": 900}}, format="json").data
+    assert r["arrived_at"] and r["arrived_distance_m"] is None, "arrived, but the vague point is not kept"
+    d = api.post(f"/api/v1/delivery-notes/{stops[0]['id']}/deliver", {"receiver_name": "x", "gps": {"lat": 31.9, "lng": 74.9, "accuracy_m": 900}}, format="json").data
+    assert float(d["actual_km"]) == pytest.approx(_road(WAREHOUSE, NEAR), abs=0.01), "measured to the shop's pin"

@@ -71,9 +71,13 @@ def pin_of(note):
     return _pt(c.gps_lat, c.gps_lng)
 
 
+GOOD_FIX_M = 100   # a phone fix vaguer than this is no fix at all: the shop's pin stands in (mobile AI, 27 Nov 2026)
+
+
 def point_of(note):
     """Where a visited stop really was: where the phone said Arrived, else where it delivered, else the shop's pin."""
-    return _pt(note.arrived_lat, note.arrived_lng) or _pt(note.gps_lat, note.gps_lng) or pin_of(note)
+    delivered = _pt(note.gps_lat, note.gps_lng) if note.gps_accuracy_m is None or note.gps_accuracy_m <= GOOD_FIX_M else None
+    return _pt(note.arrived_lat, note.arrived_lng) or delivered or pin_of(note)
 
 
 def _tour_km(origin, points, order, dest):
@@ -329,7 +333,10 @@ def after_stop(trip, origin=None):
 
 
 def gps_of(data):
-    """{lat, lng} from a request body: `gps: {lat, lng}` (JSON or a JSON string) or `gps_lat` / `gps_lng`."""
+    """
+    (lat, lng) from a request body: `gps: {lat, lng, accuracy_m}` (JSON or a JSON string) or `gps_lat` / `gps_lng`. A fix
+    vaguer than GOOD_FIX_M is treated as none.
+    """
     gps = data.get("gps")
     if isinstance(gps, str):
         try:
@@ -339,6 +346,11 @@ def gps_of(data):
     if not gps and data.get("gps_lat"):
         gps = {"lat": data.get("gps_lat"), "lng": data.get("gps_lng")}
     try:
-        return (float(gps["lat"]), float(gps["lng"])) if gps and gps.get("lat") not in (None, "") else None
-    except (TypeError, ValueError, KeyError):
+        if not gps or gps.get("lat") in (None, ""):
+            return None
+        accuracy = gps.get("accuracy_m", gps.get("accuracy"))
+        if accuracy not in (None, "") and float(accuracy) > GOOD_FIX_M:
+            return None
+        return (float(gps["lat"]), float(gps["lng"]))
+    except (TypeError, ValueError, KeyError, AttributeError):
         return None
