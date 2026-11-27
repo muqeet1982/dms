@@ -22,7 +22,7 @@ WAREHOUSE = (31.5204, 74.3587)
 FAR, NEAR, MIDDLE = (31.6000, 74.3587), (31.5300, 74.3587), (31.5600, 74.3587)   # due north, 9 / 1 / 4 km
 
 
-def _setup(api, tenant, pins):
+def _setup(api, tenant, pins, warehouse_pin=None):
     """One issued, invoiced order per shop, all on one trip; `pins` gives each shop's pin (None = no pin)."""
     from apps.delivery.models import Driver, Vehicle
     from apps.partners.models import Customer
@@ -31,6 +31,9 @@ def _setup(api, tenant, pins):
 
     wh, _sup, v, _c = seed_basic(tenant)
     with tenant_context(tenant, tenant.owner):
+        if warehouse_pin:
+            wh.gps_lat, wh.gps_lng = D(str(warehouse_pin[0])), D(str(warehouse_pin[1]))
+            wh.save(update_fields=["gps_lat", "gps_lng"])
         driver = Driver.objects.create(name="Akram", phone="03001234567")
         vehicle = Vehicle.objects.create(reg_no="LEB-1001")
         shops = [Customer.objects.create(code=f"R-{i}", name=f"Shop {i}", credit_limit=D("100000"),
@@ -92,8 +95,8 @@ def test_the_trip_starts_from_the_rider_and_the_stops_go_in_the_best_order(api, 
 
 
 def test_googles_road_route_is_used_when_the_key_allows_it(api, tenant, settings, monkeypatch):
-    settings.GOOGLE_ROUTES_API_KEY = "test-key"
     trip, _shops = _setup(api, tenant, [FAR, NEAR, MIDDLE])
+    settings.GOOGLE_ROUTES_API_KEY = "test-key"
     sent = {}
 
     class Resp(io.BytesIO):
@@ -124,8 +127,8 @@ def test_googles_road_route_is_used_when_the_key_allows_it(api, tenant, settings
 def test_google_refusing_never_stops_the_trip(api, tenant, settings, monkeypatch):
     import urllib.error
 
-    settings.GOOGLE_ROUTES_API_KEY = "test-key"
     trip, _shops = _setup(api, tenant, [FAR, NEAR])
+    settings.GOOGLE_ROUTES_API_KEY = "test-key"
 
     def refuse(req, timeout=None):
         raise urllib.error.HTTPError(req.full_url, 403, "Permission denied", {}, io.BytesIO(b"{}"))
@@ -242,3 +245,47 @@ def test_a_vague_fix_counts_as_none(api, tenant, no_google):
     assert r["arrived_at"] and r["arrived_distance_m"] is None, "arrived, but the vague point is not kept"
     d = api.post(f"/api/v1/delivery-notes/{stops[0]['id']}/deliver", {"receiver_name": "x", "gps": {"lat": 31.9, "lng": 74.9, "accuracy_m": 900}}, format="json").data
     assert float(d["actual_km"]) == pytest.approx(_road(WAREHOUSE, NEAR), abs=0.01), "measured to the shop's pin"
+
+
+def test_a_trip_is_planned_from_the_warehouse_as_soon_as_it_is_made(api, tenant, no_google):
+    """Owner, 27 Nov 2026 ("do optional"): the printed dispatch sheet is already in the best order."""
+    trip, _shops = _setup(api, tenant, [FAR, NEAR, MIDDLE], warehouse_pin=WAREHOUSE)
+    t, stops = _stops(api, trip["id"])
+    assert t["route_planned_at"] and t["status"] == "planned" and t["warehouse_gps"] == {"lat": WAREHOUSE[0], "lng": WAREHOUSE[1]}
+    assert [s["customer_name"] for s in stops] == ["Shop 1", "Shop 2", "Shop 0"], "nearest the warehouse first"
+    assert float(stops[0]["planned_km"]) == pytest.approx(_road(WAREHOUSE, NEAR), abs=0.01)
+    assert float(t["planned_km"]) == pytest.approx(2 * _road(WAREHOUSE, FAR), abs=0.03), "out and back to the warehouse"
+    # the dispatch sheet prints them in that order
+    from apps.delivery.models import DeliveryTrip
+    from apps.delivery.views import dispatch_sheet_context
+
+    with tenant_context(tenant, tenant.owner):
+        sheet = dispatch_sheet_context(DeliveryTrip.objects.get(pk=trip["id"]), tenant)
+    assert [st["note"].customer.name for st in sheet["stops"]] == ["Shop 1", "Shop 2", "Shop 0"]
+
+
+def test_taking_an_order_off_the_trip_plans_it_again(api, tenant, no_google):
+    trip, _shops = _setup(api, tenant, [FAR, NEAR, MIDDLE], warehouse_pin=WAREHOUSE)
+    _t, stops = _stops(api, trip["id"])
+    near = next(s for s in stops if s["customer_name"] == "Shop 1")
+    assert api.post(f"/api/v1/trips/{trip['id']}/remove-order", {"order_id": near["order"]}, format="json").status_code == 200
+    t, stops = _stops(api, trip["id"])
+    assert [s["customer_name"] for s in stops] == ["Shop 2", "Shop 0"] and [s["sequence"] for s in stops] == [1, 2]
+    assert float(stops[0]["planned_km"]) == pytest.approx(_road(WAREHOUSE, MIDDLE), abs=0.01)
+
+
+def test_a_web_start_with_no_gps_plans_from_the_warehouse(api, tenant, no_google):
+    trip, _shops = _setup(api, tenant, [FAR, NEAR], warehouse_pin=WAREHOUSE)
+    assert api.post(f"/api/v1/trips/{trip['id']}/start", {}, format="json").status_code == 200
+    t, stops = _stops(api, trip["id"])
+    assert t["start_gps"] is None and [s["customer_name"] for s in stops] == ["Shop 1", "Shop 0"]
+    assert float(stops[0]["planned_km"]) == pytest.approx(_road(WAREHOUSE, NEAR), abs=0.01)
+
+
+def test_the_warehouse_form_keeps_its_pin(api, tenant):
+    from .conftest import seed_basic
+
+    wh, *_ = seed_basic(tenant)
+    r = api.patch(f"/api/v1/settings/warehouses/{wh.id}", {"gps_lat": "31.5204000", "gps_lng": "74.3587000"}, format="json")
+    assert r.status_code == 200, r.content
+    assert D(api.get(f"/api/v1/settings/warehouses/{wh.id}").data["gps_lat"]) == D("31.5204")

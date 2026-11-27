@@ -53,10 +53,11 @@ export function StorePinPicker({ lat, lng, name, onChange, compact, radius, onRa
           cursor={point ? undefined : "crosshair"}
           height={compact ? 300 : 360}
         />
-        <div className="form-text">
+        {/* a shop's words; a warehouse pin (no order radius) goes without them */}
+        {onRadiusChange && <div className="form-text">
           {point ? <>Drag the pin to the shop door; drag the circle's edge to widen the order radius. Zoom with +/−.</>
                  : <>Zoom in with +/− and click where the shop is — or use the search, coordinates or a pasted link on the right.</>}
-        </div>
+        </div>}
       </div>
       <div className="col-md-5">
         {label("Search address")}
@@ -97,9 +98,9 @@ export function StorePinPicker({ lat, lng, name, onChange, compact, radius, onRa
             <i className="ti ti-current-location me-1" />My location
           </button>
           {point ? <button type="button" className="btn btn-outline-danger" onClick={() => onChange(null, null)}><i className="ti ti-trash me-1" />Clear pin</button>
-                 : <button type="button" className="btn btn-outline-secondary" onClick={() => onChange(null, null)} title="Save the shop without a pin — the rep's app offers 'Save where I am' on their first visit"><i className="ti ti-clock me-1" />Pin later</button>}
+                 : onRadiusChange ? <button type="button" className="btn btn-outline-secondary" onClick={() => onChange(null, null)} title="Save the shop without a pin — the rep's app offers 'Save where I am' on their first visit"><i className="ti ti-clock me-1" />Pin later</button> : null}
         </div>
-        {!point && <div className="form-text mt-2">No pin — the shop can be saved now and pinned later: the rep's app offers "Save where I am" on their first visit.</div>}
+        {!point && onRadiusChange && <div className="form-text mt-2">No pin — the shop can be saved now and pinned later: the rep's app offers "Save where I am" on their first visit.</div>}
       </div>
     </div>
   );

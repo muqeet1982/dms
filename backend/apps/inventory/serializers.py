@@ -25,7 +25,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Warehouse
-        fields = ["id", "code", "name", "type", "address", "vehicle", "vehicle_reg", "manager", "manager_name", "allow_negative_stock", "is_default", "is_active", "bins", "created_at"]
+        fields = ["id", "code", "name", "type", "address", "gps_lat", "gps_lng", "vehicle", "vehicle_reg", "manager", "manager_name", "allow_negative_stock", "is_default", "is_active", "bins", "created_at"]
 
 
 class BatchSerializer(serializers.ModelSerializer):

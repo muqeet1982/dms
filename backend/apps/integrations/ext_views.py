@@ -1266,7 +1266,7 @@ class ExtShopInvoicesView(ExtBase):
         limit = str(Decimal(str(get_current_tenant().setting("settlement_discount_limit") or 0)))
         today = timezone.localdate()
         rows = []
-        for inv in qs.order_by("date", "created_at")[:200]:
+        for inv in qs.order_by("date", "created_at", "number")[:200]:   # the order a collection is allocated in
             balance = inv.total - inv.paid_amount
             if str(request.query_params.get("open", "")).lower() in ("1", "true", "yes") and balance <= 0:
                 continue

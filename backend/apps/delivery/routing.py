@@ -153,6 +153,22 @@ def start_point(trip):
     return _pt(trip.start_lat, trip.start_lng)
 
 
+def warehouse_point(trip):
+    """The warehouse's pin: where a trip leaves from before the rider's phone says otherwise."""
+    w = trip.warehouse
+    return _pt(getattr(w, "gps_lat", None), getattr(w, "gps_lng", None)) if w else None
+
+
+def home_point(trip):
+    """Where the trip comes back to: the warehouse, else where the rider started."""
+    return warehouse_point(trip) or start_point(trip)
+
+
+def provisional(trip):
+    """A plan with nothing real to start from — no rider position, no warehouse pin — only guesses the first shop."""
+    return start_point(trip) is None and warehouse_point(trip) is None
+
+
 def _last_ping(trip, within=timedelta(hours=2)):
     from apps.partners.models import LocationPing
 
@@ -182,8 +198,8 @@ def plan_route(trip, origin=None):
     pinned = [(n, pin_of(n)) for n in todo if pin_of(n)]
     unpinned = [n for n in todo if not pin_of(n)]
     last_seen = point_of(done[-1]) if done else None
-    origin = origin or last_seen or start_point(trip) or _last_ping(trip) or (pinned[0][1] if pinned else None)
-    dest = start_point(trip) or origin
+    origin = origin or last_seen or start_point(trip) or warehouse_point(trip) or _last_ping(trip) or (pinned[0][1] if pinned else None)
+    dest = home_point(trip) or origin
     points = [p for _, p in pinned]
     route = google_route(origin, points, dest) if points else None
     if route:
@@ -256,7 +272,7 @@ def actuals(trip, road=False):
     end = trip.completed_at or timezone.now()
     pings = list(LocationPing.objects.filter(user_id=user_id, at__gte=trip.started_at - timedelta(minutes=5), at__lte=end + timedelta(minutes=5))
                  .order_by("at").values_list("at", "lat", "lng", "accuracy_m")) if user_id and trip.started_at else []
-    start = start_point(trip)
+    start = start_point(trip) or warehouse_point(trip)
     prev_pt, prev_t, legs, sources = start, trip.started_at, {}, set()
     for n in notes:
         pt, t = point_of(n), n.arrived_at or n.delivered_at
@@ -270,12 +286,13 @@ def actuals(trip, road=False):
         sources.add(src)
         prev_pt, prev_t = pt or prev_pt, t
     last = point_of(notes[-1])
-    back = estimate(last, start)[0] if (start and last) else 0.0
+    home = home_point(trip) or start
+    back = estimate(last, home)[0] if (home and last) else 0.0
     if road and "gps" not in sources:
         stops = [point_of(n) for n in notes]
         if all(stops):
             # from the start through every stop and back; with no start, from the first stop to the last
-            route = google_route(start, stops, start, optimize=False) if start else google_route(stops[0], stops[1:-1], stops[-1], optimize=False)
+            route = google_route(start, stops, home or start, optimize=False) if start else google_route(stops[0], stops[1:-1], stops[-1], optimize=False)
             if route:
                 ks = [k for k, _ in route["legs"]]
                 for i, n in enumerate(notes):
@@ -314,7 +331,10 @@ def after_stop(trip, origin=None):
         with transaction.atomic():
             trip = DeliveryTrip.objects.get(pk=trip.pk)
             refresh_actuals(trip)
-            if trip.route_planned_at is None and trip.delivery_notes.filter(status__in=OPEN).exists():
+            left = trip.delivery_notes.filter(status__in=OPEN).exists()
+            first_done = trip.delivery_notes.exclude(status__in=OPEN).exclude(status="cancelled").count() == 1
+            # planned when made but with nothing to start from: the first shop reached is the real start
+            if left and (trip.route_planned_at is None or (first_done and provisional(trip))):
                 plan_route(trip, origin=origin)
     except Exception:  # noqa: BLE001
         log.exception("trip figures for %s", trip.pk)
@@ -330,6 +350,17 @@ def after_stop(trip, origin=None):
                 log.exception("road km for %s", pk)
 
         transaction.on_commit(measure)
+
+
+def replan_quietly(trip):
+    """A trip not yet left, its stops changed: planned again from the warehouse. Never stops the change itself."""
+    if trip.status not in ("planned", "loading"):
+        return
+    try:
+        with transaction.atomic():
+            plan_route(trip)
+    except Exception:  # noqa: BLE001
+        log.exception("route for %s", trip.pk)
 
 
 def gps_of(data):

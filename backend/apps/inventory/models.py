@@ -13,6 +13,10 @@ class Warehouse(TenantModel):
     name = models.CharField(max_length=100)
     type = models.CharField(max_length=12, choices=TYPES, default="main")
     address = models.TextField(blank=True)
+    # where trips leave from and come back to: a trip's route is planned from here before the rider's phone says where
+    # they are (owner, 27 Nov 2026)
+    gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     vehicle = models.OneToOneField("delivery.Vehicle", null=True, blank=True, on_delete=models.SET_NULL, related_name="van_warehouse")
     manager = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     allow_negative_stock = models.BooleanField(default=False)

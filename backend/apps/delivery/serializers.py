@@ -190,6 +190,12 @@ class DeliveryTripSerializer(serializers.ModelSerializer):
     def get_start_gps(self, obj):
         return {"lat": float(obj.start_lat), "lng": float(obj.start_lng)} if obj.start_lat is not None else None
 
+    warehouse_gps = serializers.SerializerMethodField()
+
+    def get_warehouse_gps(self, obj):
+        w = obj.warehouse
+        return {"lat": float(w.gps_lat), "lng": float(w.gps_lng)} if w and w.gps_lat is not None and w.gps_lng is not None else None
+
     def get_total_minutes(self, obj):
         return _trip_minutes(obj, detail=True)
 
@@ -202,7 +208,7 @@ class DeliveryTripSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DeliveryTrip
-        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "customer_names", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "start_gps", "route_source", "route_planned_at", "route_polyline", "planned_km", "planned_minutes", "actual_km", "actual_km_source", "total_minutes", "delivery_notes", "order_ids", "orders_value", "created_at"]
+        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "customer_names", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "start_gps", "warehouse_gps", "route_source", "route_planned_at", "route_polyline", "planned_km", "planned_minutes", "actual_km", "actual_km_source", "total_minutes", "delivery_notes", "order_ids", "orders_value", "created_at"]
         read_only_fields = ["id", "number", "version", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "created_at"]
 
     def get_orders_value(self, obj):

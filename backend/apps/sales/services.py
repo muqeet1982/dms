@@ -2843,7 +2843,9 @@ class RepCollectionService:
             raise DomainError("Customer is not assigned to this rep.")
         allocs = []
         remaining = amount
-        open_inv = SalesInvoice.objects.filter(customer=customer, status__in=["posted", "partially_paid", "overdue"]).order_by("date")
+        # oldest first, in the same order the phone lists them (GET /ext/v1/customers/{id}/invoices): with two of one day
+        # a bare "date" left it to the database which one the money reached last — and which one settle_short closed
+        open_inv = SalesInvoice.objects.filter(customer=customer, status__in=["posted", "partially_paid", "overdue"]).order_by("date", "created_at", "number")
         if allocations:
             for a in allocations:
                 inv = SalesInvoice.objects.get(pk=a["invoice"], customer=customer)

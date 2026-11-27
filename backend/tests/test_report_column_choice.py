@@ -166,3 +166,19 @@ def test_without_columns_leaves_the_report_it_was_given_alone():
     out = without_columns(result, ["b"])
     assert out["columns"] == ["a"] and out["export_columns"] == ["a"] and out["totals"] == {}
     assert result["columns"] == ["a", "b"] and result["totals"] == {"b": "2"}
+
+
+@pytest.mark.parametrize("key,params,hide,label", [
+    ("trial_balance", {"date_from": "2026-11-01", "date_to": "2026-11-30"}, "opening_debit", "Opening Debit"),
+    ("profit_and_loss", {"date_from": "2026-11-01", "date_to": "2026-11-30"}, "code", "Code"),
+    ("balance_sheet", {"as_of": "2026-11-30"}, "code", "Code"),
+    ("general_ledger", {"date_from": "2026-11-01", "date_to": "2026-11-30"}, "type", "Type"),
+])
+def test_the_statements_leave_out_a_column_switched_off(api, excel_on, key, params, hide, label):
+    """The 4 Accounting statement pages got the switch too (owner, 27 Nov 2026, "do optional")."""
+    full = api.get(f"/api/v1/reports/{key}", {**params, "format": "csv"})
+    assert full.status_code == 200 and label in full.content.decode("utf-8-sig").splitlines()[0]
+    less = api.get(f"/api/v1/reports/{key}", {**params, "format": "csv", "hide_columns": hide})
+    assert less.status_code == 200, less.content
+    assert label not in less.content.decode("utf-8-sig").splitlines()[0].split(",")
+    assert api.get(f"/api/v1/reports/{key}", {**params, "format": "pdf", "hide_columns": hide}).content.startswith(b"%PDF-")

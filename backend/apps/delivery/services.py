@@ -1091,6 +1091,10 @@ class TripService:
         trip.stops_count = trip.delivery_notes.count()
         trip.save(update_fields=["stops_count", "updated_at"])
         AuditService.log("trip.orders_assigned", trip, after={"orders": [o.number for o in orders]})
+        # the printed dispatch sheet goes in the best order from the start (owner, 27 Nov 2026)
+        from .routing import replan_quietly
+
+        replan_quietly(trip)
         return trip
 
     @staticmethod
@@ -1122,6 +1126,9 @@ class TripService:
         order.save(update_fields=["trip"])
         trip.stops_count = trip.delivery_notes.count()
         trip.save(update_fields=["stops_count"])
+        from .routing import replan_quietly
+
+        replan_quietly(trip)
         return trip
 
     @staticmethod
