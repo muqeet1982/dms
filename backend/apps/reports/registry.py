@@ -125,7 +125,7 @@ OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary"
 assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
 # These ask which columns to leave out before they print or download (owner, 25 Nov 2026: Sales by Sale Person and the
 # daily sheet a name on it opens).
-PICK_COLUMNS = {"sales_by_rep", "rep_daily_sheet", "product_by_rep"}
+PICK_COLUMNS = {"sales_by_rep", "rep_daily_sheet", "product_by_rep", "stock_valuation"}
 
 
 def catalog():

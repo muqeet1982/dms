@@ -104,7 +104,7 @@ def test_at_least_one_column_stays(api, excel_on, world):
 
 
 def test_only_these_two_reports_ask(api, tenant):
-    assert {r["key"] for r in api.get("/api/v1/reports").data if r["pick_columns"]} == {"sales_by_rep", "rep_daily_sheet", "product_by_rep"}
+    assert {r["key"] for r in api.get("/api/v1/reports").data if r["pick_columns"]} == {"sales_by_rep", "rep_daily_sheet", "product_by_rep", "stock_valuation"}
 
 
 def test_a_row_whose_cost_nets_to_nothing_reads_zero(api, excel_on, world):

@@ -844,13 +844,39 @@ def movement_summary(date_from=None, date_to=None, warehouse=None, **_):
 
 
 def stock_valuation(warehouse=None, **_):
-    from apps.inventory.services import StockService
+    """
+    The stock on hand at its D.P, its T.P and its R.P (owner, 27 Nov 2026: "inventory valuation. give me in DP, TP and RP
+    value"): one row per item and warehouse, the batches added up, with each price and the value at it. What the books
+    carry (the moving average cost) is Inventory valuation vs GL.
+    """
+    from apps.inventory.models import StockLevel
 
-    from apps.inventory.models import Warehouse
-
-    wh = Warehouse.objects.filter(pk=warehouse).first() if warehouse else None
-    v = StockService.valuation(wh)
-    return {"columns": ["warehouse", "sku", "name", "batch", "qty", "avg_cost", "value"], "rows": v["rows"], "totals": {"value": v["total"]}}
+    qs = StockLevel.objects.filter(qty_on_hand__gt=0).select_related("variant__product__brand", "warehouse")
+    if warehouse:
+        qs = qs.filter(warehouse_id=warehouse)
+    by = {}
+    for lv in qs:
+        k = (lv.warehouse_id, lv.variant_id)
+        if k not in by:
+            v, p = lv.variant, lv.variant.product
+            by[k] = {"warehouse": lv.warehouse.name, "label": v.name, "item_code": p.item_code, "brand": p.brand.name if p.brand_id else "",
+                     "codes": " · ".join(x for x in (f"Item Code: {p.item_code}" if p.item_code else "", f"UPC: {p.upc}" if p.upc else "") if x),
+                     "qty": Z, "dp": v.cost_price or Z, "tp": v.sale_price or Z, "rp": v.retail_price or Z}
+        by[k]["qty"] += lv.qty_on_hand
+    rows, tot = [], {"qty": Z, "dp_value": Z, "tp_value": Z, "rp_value": Z}
+    for r in by.values():
+        q = r["qty"]
+        vals = {"dp_value": (q * r["dp"]).quantize(Decimal("0.01")), "tp_value": (q * r["tp"]).quantize(Decimal("0.01")), "rp_value": (q * r["rp"]).quantize(Decimal("0.01"))}
+        for k, x in vals.items():
+            tot[k] += x
+        tot["qty"] += q
+        rows.append({**r, "qty": str(q), "dp": str(r["dp"]), "tp": str(r["tp"]), "rp": str(r["rp"]), **{k: str(x) for k, x in vals.items()}})
+    rows.sort(key=lambda r: (r["warehouse"].lower(), -Decimal(r["dp_value"]), r["label"].lower()))
+    cols = ["warehouse", "label", "brand", "qty", "dp", "dp_value", "tp", "tp_value", "rp", "rp_value"]
+    return {"columns": cols, "rows": rows, "totals": {k: str(x) for k, x in tot.items()},
+            "column_labels": {"label": "Product Name", "qty": "Qty On Hand", "dp": "D.P", "dp_value": "D.P Value", "tp": "T.P", "tp_value": "T.P Value", "rp": "R.P", "rp_value": "R.P Value"},
+            "column_styles": {"label": "bold"}, "notes": {"label": "codes"}, "text_columns": ["item_code"],
+            "export_columns": ["warehouse", "label", "item_code", *cols[2:]]}
 
 
 def stock_ageing(warehouse=None, **_):

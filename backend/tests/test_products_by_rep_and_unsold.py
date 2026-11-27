@@ -108,3 +108,21 @@ def test_the_biggest_seller_comes_first(api, tenant):
     rows = api.get("/api/v1/reports/product_by_rep").data["rows"]
     assert [r["sale_person"] for r in rows] == ["NAVEED", "Aliza Saleem"], rows
     assert D(rows[1]["sales"]) == D(rows[1]["returns"]) and D(rows[1]["net_sales"]) == 0, "all of hers came back"
+
+
+def test_stock_valuation_at_dp_tp_and_rp(api, tenant):
+    """Owner, 27 Nov 2026: "inventory valuation. give me in DP, TP and RP value"."""
+    wh, _sup, v, _cust = seed_basic(tenant)
+    with tenant_context(tenant, tenant.owner):
+        v.cost_price, v.sale_price, v.retail_price = D("100"), D("150"), D("200")
+        v.save(update_fields=["cost_price", "sale_price", "retail_price"])
+        from apps.inventory.models import StockLevel
+
+        on_hand = sum((lv.qty_on_hand for lv in StockLevel.objects.filter(variant=v)), D(0))
+    data = api.get("/api/v1/reports/stock_valuation").data
+    assert data["columns"] == ["warehouse", "label", "brand", "qty", "dp", "dp_value", "tp", "tp_value", "rp", "rp_value"]
+    row = next(r for r in data["rows"] if r["label"] == v.name)
+    assert (D(row["qty"]), D(row["dp_value"]), D(row["tp_value"]), D(row["rp_value"])) == (on_hand, on_hand * 100, on_hand * 150, on_hand * 200)
+    assert data["column_labels"]["dp_value"] == "D.P Value" and D(data["totals"]["rp_value"]) >= on_hand * 200
+    for fmt in ("csv", "xlsx", "pdf"):
+        assert api.get("/api/v1/reports/stock_valuation", {"format": fmt}).status_code == 200
