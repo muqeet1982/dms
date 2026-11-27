@@ -1222,6 +1222,62 @@ def driver_performance(date_from=None, date_to=None, **_):
     return {"columns": ["driver", "stops", "delivered", "failed", "success_rate", "returned_qty"], "rows": rows, "totals": {}}
 
 
+def rider_performance(date_from=None, date_to=None, rider=None, **_):
+    """
+    Delivery Rider Performance (owner, 27 Nov 2026: "calculate time and distance as well"): per rider per day — trips, stops
+    delivered, refused and shop closed, km planned against km actually driven, hours on the road, minutes at a shop, cash.
+    Times and km count only for a trip run from the phone (routing.rode): one confirmed on the web days later would read
+    hundreds of hours on the road.
+    """
+    from apps.delivery.models import DeliveryTrip
+    from apps.delivery.routing import actuals, rode
+
+    qs = _window(DeliveryTrip.objects.exclude(status="cancelled"), "date", date_from, date_to).select_related("delivery_rep", "driver").prefetch_related("delivery_notes__customer")
+    if rider:
+        qs = qs.filter(delivery_rep_id=rider)
+    out = {}
+    for t in qs:
+        who = (t.delivery_rep.full_name if t.delivery_rep_id else "") or (t.driver.name if t.driver_id else "") or "(none)"
+        r = out.setdefault((t.date, who), {"date": t.date, "rider": who, "trips": 0, "stops": 0, "delivered": 0, "refused": 0, "shop_closed": 0,
+                                            "planned_km": 0.0, "actual_km": 0.0, "minutes": 0, "stop_minutes": [], "cash_collected": Z})
+        r["trips"] += 1
+        notes = [n for n in t.delivery_notes.all() if n.status != "cancelled"]
+        r["stops"] += len(notes)
+        r["delivered"] += sum(1 for n in notes if n.status in ("delivered", "partially_delivered"))
+        r["refused"] += sum(1 for n in notes if n.status == "returned")
+        r["shop_closed"] += sum(1 for n in notes if n.status == "failed")
+        r["cash_collected"] += sum((n.cash_collected or Z for n in notes), Z)
+        r["planned_km"] += float(t.planned_km or 0)
+        km = t.actual_km if t.actual_km is not None else actuals(t)["km"]
+        r["actual_km"] += float(km or 0)
+        if t.started_at and t.completed_at and t.completed_at >= t.started_at and rode(t):
+            r["minutes"] += (t.completed_at - t.started_at).total_seconds() / 60
+        r["stop_minutes"] += [(n.delivered_at - n.arrived_at).total_seconds() / 60 for n in notes if n.arrived_at and n.delivered_at and n.delivered_at >= n.arrived_at]
+    rows = []
+    for (_d, _w), r in sorted(out.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True):
+        mins = r.pop("stop_minutes")
+        r["planned_km"] = _q2(r["planned_km"]) if r["planned_km"] else ""
+        r["actual_km"] = _q2(r["actual_km"]) if r["actual_km"] else ""
+        r["hours"] = _q2(r.pop("minutes") / 60) if r.get("minutes") else ""
+        r.pop("minutes", None)
+        r["avg_minutes_per_stop"] = round(sum(mins) / len(mins)) if mins else ""
+        r["cash_collected"] = str(r["cash_collected"])
+        rows.append(r)
+    cols = ["date", "rider", "trips", "stops", "delivered", "refused", "shop_closed", "planned_km", "actual_km", "hours", "avg_minutes_per_stop", "cash_collected"]
+    total = lambda k: sum((Decimal(str(r[k])) for r in rows if r[k] != ""), Z)  # noqa: E731
+    return {
+        "columns": cols, "rows": rows,
+        "column_labels": {"rider": "Delivery Rider", "shop_closed": "Shop Closed", "planned_km": "Planned Km", "actual_km": "Actual Km", "avg_minutes_per_stop": "Minutes Per Stop", "cash_collected": "Cash Collected"},
+        "text_columns": ["rider"],
+        "totals": {"trips": int(total("trips")), "stops": int(total("stops")), "delivered": int(total("delivered")), "refused": int(total("refused")), "shop_closed": int(total("shop_closed")),
+                   "planned_km": _q2(total("planned_km")), "actual_km": _q2(total("actual_km")), "hours": _q2(total("hours")), "cash_collected": str(total("cash_collected"))},
+    }
+
+
+def _q2(v):
+    return Decimal(str(v)).quantize(Decimal("0.01"))
+
+
 def vehicle_usage(date_from=None, date_to=None, **_):
     from apps.delivery.models import VehicleLog
 

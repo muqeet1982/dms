@@ -110,6 +110,17 @@ class DeliveryTrip(DocumentModel):
     expense_amount = models.DecimalField(**MONEY)
     loaded_value = models.DecimalField(**MONEY)
     reconciliation = models.JSONField(default=dict, blank=True)
+    # the best order of the stops and what it costs to drive (owner, 27 Nov 2026: "our system will calculate the best route
+    # for delivery ... calculate time and distance as well"). Planned from the rider's position when the trip starts.
+    start_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    start_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    route_source = models.CharField(max_length=10, blank=True, help_text="google = road route; straight = estimated from straight lines")
+    route_planned_at = models.DateTimeField(null=True, blank=True)
+    route_polyline = models.TextField(blank=True)
+    planned_km = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True, help_text="Start, every stop, back to the start")
+    planned_minutes = models.PositiveIntegerField(null=True, blank=True)
+    actual_km = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    actual_km_source = models.CharField(max_length=10, blank=True, help_text="gps = the phone's trail; stops = road distance through the stops in the order visited")
 
     class Meta:
         ordering = ["-date", "-created_at"]
@@ -144,6 +155,15 @@ class DeliveryNote(DocumentModel):
     gps_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     gps_accuracy_m = models.FloatField(null=True, blank=True)
+    # the rider reached the shop (the phone within ~100 m of its pin, or the Arrived button); minutes at the shop run from here
+    arrived_at = models.DateTimeField(null=True, blank=True)
+    arrived_lat = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    arrived_lng = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    arrived_distance_m = models.FloatField(null=True, blank=True, help_text="How far from the shop's pin the phone said Arrived")
+    # the leg into this stop: planned from the route, actual from the order the stops were really visited in
+    planned_km = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    planned_minutes = models.PositiveIntegerField(null=True, blank=True)
+    actual_km = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     failure_reason = models.CharField(max_length=200, blank=True)
     remarks = models.CharField(max_length=300, blank=True, help_text="What the customer or the driver said on delivery")
     cash_collected = models.DecimalField(**MONEY)

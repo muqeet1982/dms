@@ -35,6 +35,8 @@ export function ReportsPage() {
 const ENTITY_ENDPOINTS: Record<string, { endpoint: string; query?: Record<string, any>; map: (r: any) => { id: string; label: string; sub?: string } }> = {
   warehouse: { endpoint: "/api/v1/settings/warehouses", map: (w) => ({ id: w.id, label: w.name }) }, customer: { endpoint: "/api/v1/customers", map: (c) => ({ id: c.id, label: c.name, sub: c.code }) }, supplier: { endpoint: "/api/v1/suppliers", map: (s) => ({ id: s.id, label: s.name }) },
   variant: { endpoint: "/api/v1/variants", map: (v) => ({ id: v.id, label: v.name, sub: v.sku }) }, category: { endpoint: "/api/v1/categories", map: (c) => ({ id: c.id, label: c.name }) }, account: { endpoint: "/api/v1/accounting/accounts", query: { is_group: false }, map: (a) => ({ id: a.id, label: `${a.code} ${a.name}` }) }, cost_centre: { endpoint: "/api/v1/accounting/cost-centres", map: (c) => ({ id: c.id, label: c.name }) }, rep: { endpoint: "/api/v1/supplier-reps", map: (r) => ({ id: r.id, label: r.name, sub: r.code }) },
+  // a delivery rider (Delivery Rider Performance, 27 Nov 2026): a login, picked by name
+  person: { endpoint: "/api/v1/people", map: (u) => ({ id: u.user_id || u.id, label: u.full_name || u.email }) },
 };
 
 /** The sale person filter: a dropdown like the report's other filters (owner, 24 Nov 2026), searchable by name or code

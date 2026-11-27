@@ -517,7 +517,8 @@ class PeoplePickViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     permission_classes = [IsTenantUser]
-    perm_map = {"list": ["users.view_user", "delivery.add_trip", "delivery.change_trip"],
+    # a report's Delivery Rider filter names them too
+    perm_map = {"list": ["users.view_user", "delivery.add_trip", "delivery.change_trip", "reports.view_report"],
                 "retrieve": ["users.view_user", "delivery.add_trip", "delivery.change_trip", "delivery.view_trip"]}
     search_fields = ["user__full_name", "user__email", "user__phone"]
     lookup_field = "user_id"

@@ -36,7 +36,7 @@ CATALOG = {
         ("view_invoice", "View invoices"), ("add_credit_note", "Add credit notes / sales returns"),
     ]),
     "delivery": ("Delivery", [
-        ("create_delivery", "Create pick lists & trips"), ("assign_driver", "Assign driver/vehicle"), ("start_trip", "Start trips (dispatch)"),
+        ("create_delivery", "Create pick lists & trips"), ("assign_driver", "Assign driver/vehicle"), ("start_trip", "Start trips (dispatch)"), ("close_trip", "Close trips (returns back, cash counted)"),
         ("complete_delivery", "Complete deliveries / mark delivered"), ("record_delivery_return", "Record delivery returns"),
         ("view_all_trips", "View all trips"), ("manage_vehicles", "Manage vehicles"), ("manage_drivers", "Manage drivers"),
     ]),

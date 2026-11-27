@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 
 from django.db import transaction
@@ -503,6 +504,10 @@ class DeliveryService:
             delivered = [{"line_id": str(l.pk), "qty_delivered": "0", "qty_returned": str(l.qty_loaded), "return_reason": "rejected", "return_condition": "good"} for l in dn.lines.all()]
             failed = False
             dn.failure_reason = failure_reason or "Customer refused the delivery"
+        if gps:   # where the stop was, delivered or not: the trip's distance is measured through it
+            dn.gps_lat, dn.gps_lng = gps.get("lat"), gps.get("lng")
+            accuracy = gps.get("accuracy_m")
+            dn.gps_accuracy_m = float(accuracy) if accuracy not in (None, "") else None
         if failed:
             dn.status = "failed"
             dn.failure_reason = failure_reason
@@ -517,8 +522,7 @@ class DeliveryService:
             dn.save()
             AuditService.log("delivery.failed", dn, after={"reason": failure_reason})
             emit("delivery.failed", delivery_note=dn, reason=failure_reason)
-            if dn.trip_id:
-                TripService.refresh_status(dn.trip)
+            DeliveryService._stop_done(dn)
             return dn
         by_id = {str(d["line_id"]): d for d in (delivered or [])}
         total_loaded = total_delivered = Decimal("0")
@@ -608,8 +612,36 @@ class DeliveryService:
                 dn.trip.save(update_fields=["cash_collected"])
         AuditService.log("delivery.completed", dn, after={"status": dn.status, "delivered": str(total_delivered), "invoice": invoice.number if invoice else None})
         emit("delivery.completed", delivery_note=dn, invoice=invoice)
-        if dn.trip_id:
-            TripService.refresh_status(dn.trip)
+        DeliveryService._stop_done(dn)
+        return dn
+
+    @staticmethod
+    def _stop_done(dn):
+        """A stop saved: the trip's status, then its time and distance (and its route, if it started unplanned)."""
+        if not dn.trip_id:
+            return
+        TripService.refresh_status(dn.trip)
+        from .routing import after_stop, point_of
+
+        after_stop(dn.trip, origin=point_of(dn))
+
+    @staticmethod
+    def arrive(dn, gps=None, at=None):
+        """
+        The rider reached the shop (owner, 27 Nov 2026): the phone within ~100 m of the pin, or the Arrived button. The first
+        call wins — a resent one, or one after the stop was saved, changes nothing. Minutes at the shop run from here.
+        """
+        from .routing import haversine_km, pin_of
+
+        if dn.arrived_at is not None or dn.status not in ("pending", "loaded", "dispatched"):
+            return dn
+        dn.arrived_at = at or timezone.now()
+        if gps:
+            dn.arrived_lat, dn.arrived_lng = Decimal(str(round(gps[0], 7))), Decimal(str(round(gps[1], 7)))
+            pin = pin_of(dn)
+            dn.arrived_distance_m = round(haversine_km(gps, pin) * 1000, 1) if pin else None
+        dn.save(update_fields=["arrived_at", "arrived_lat", "arrived_lng", "arrived_distance_m", "updated_at"])
+        AuditService.log("delivery.arrived", dn, after={"at": dn.arrived_at.isoformat(), "distance_m": dn.arrived_distance_m})
         return dn
 
     @staticmethod
@@ -647,8 +679,7 @@ class DeliveryService:
         OrderService.refresh_delivery_status(dn.order)
         OrderService.rejected_at_door(dn.order, dn, reason)
         AuditService.log("delivery.refused", dn, after={"reason": reason})
-        if dn.trip_id:
-            TripService.refresh_status(dn.trip)
+        DeliveryService._stop_done(dn)
         return dn
 
     @staticmethod
@@ -1120,8 +1151,11 @@ class TripService:
 
     @staticmethod
     @transaction.atomic
-    def start(trip, odometer_start=None):
-        """Trip start = the vehicle leaves with what the warehouse issued. It never takes stock of its own (owner, 5 Nov 2026)."""
+    def start(trip, odometer_start=None, gps=None):
+        """
+        Trip start = the vehicle leaves with what the warehouse issued. It never takes stock of its own (owner, 5 Nov 2026).
+        `gps` (lat, lng) is where the rider is: the route is planned from there (owner, 27 Nov 2026).
+        """
         if trip.status not in ("planned", "loading"):
             raise DomainError("Trip already started.")
         if not trip.delivery_notes.exists():
@@ -1152,15 +1186,24 @@ class TripService:
         trip.status = "out_for_delivery"
         trip.started_at = timezone.now()
         trip.odometer_start = odometer_start
+        if gps:
+            trip.start_lat, trip.start_lng = Decimal(str(round(gps[0], 7))), Decimal(str(round(gps[1], 7)))
         # what is on the vehicle, at cost. Start used to count only the stock it took itself, so issued goods read 0.
         trip.loaded_value = sum(((l.qty_loaded * l.unit_cost).quantize(Q4) for dn in notes for l in dn.lines.all()), Decimal("0"))
-        trip.save(update_fields=["status", "started_at", "odometer_start", "loaded_value", "updated_at"])
+        trip.save(update_fields=["status", "started_at", "odometer_start", "loaded_value", "start_lat", "start_lng", "updated_at"])
         if van is not None:
             from apps.accounting.services import PostingService
 
             PostingService.post_trip_dispatch(trip, value)
         AuditService.log("status.started", trip, after={"status": "out_for_delivery", "loaded_value": str(trip.loaded_value), "stops": trip.stops_count})
         emit("trip.started", trip=trip)
+        from .routing import plan_route
+
+        try:
+            with transaction.atomic():
+                plan_route(trip, origin=gps)
+        except Exception:  # noqa: BLE001 — a trip always starts, planned or not
+            logging.getLogger(__name__).exception("route for %s", trip.pk)
         return trip
 
     @staticmethod

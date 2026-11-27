@@ -51,7 +51,6 @@ class PickListSerializer(serializers.ModelSerializer):
     delivery_note_numbers = serializers.SerializerMethodField()
     order_numbers = serializers.SerializerMethodField()
     customer_names = serializers.SerializerMethodField()
-
     def get_customer_names(self, obj):
         seen = []
         for o in obj.orders.all():
@@ -114,6 +113,13 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     credit_note = serializers.SerializerMethodField()
     can_undo_return = serializers.SerializerMethodField()
     can_cancel = serializers.SerializerMethodField()
+    minutes_at_stop = serializers.SerializerMethodField()
+
+    def get_minutes_at_stop(self, obj):
+        """From Arrived to the stop saved (owner, 27 Nov 2026: "calculate time")."""
+        if obj.arrived_at and obj.delivered_at and obj.delivered_at >= obj.arrived_at:
+            return round((obj.delivered_at - obj.arrived_at).total_seconds() / 60)
+        return None
 
     def get_credit_note(self, obj):
         """The credit note this stop posted for what came back."""
@@ -129,7 +135,7 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DeliveryNote
-        fields = ["credit_note", "can_undo_return", "can_cancel", "id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
+        fields = ["credit_note", "can_undo_return", "can_cancel", "id", "number", "trip", "trip_number", "order", "picklist", "picklist_number", "status_label", "remarks", "order_number", "order_total", "customer", "customer_name", "customer_phone", "customer_address", "customer_gps", "warehouse", "sequence", "status", "delivered_at", "delivered_by_name", "receiver_name", "signature_url", "photo_url", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "arrived_at", "arrived_distance_m", "minutes_at_stop", "planned_km", "planned_minutes", "actual_km", "failure_reason", "cash_collected", "collected_by", "stock_out_done", "invoice_id", "invoice_number", "invoice_status", "invoice_total", "notes", "lines", "created_at"]
         read_only_fields = fields
 
     def get_gps(self, obj):
@@ -151,6 +157,16 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
         return self._url(obj.photo_file)
 
 
+def _trip_minutes(trip, detail=False):
+    """Trip start to its last stop (owner, 27 Nov 2026) — for a trip run from the phone only (routing.rode)."""
+    from .routing import rode
+
+    ran = rode(trip) if detail else trip.start_lat is not None
+    if ran and trip.started_at and trip.completed_at and trip.completed_at >= trip.started_at:
+        return round((trip.completed_at - trip.started_at).total_seconds() / 60)
+    return None
+
+
 class DeliveryTripSerializer(serializers.ModelSerializer):
     delivery_notes = DeliveryNoteSerializer(many=True, read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True)
@@ -168,6 +184,15 @@ class DeliveryTripSerializer(serializers.ModelSerializer):
     closed_by_name = serializers.CharField(source="closed_by.full_name", read_only=True, default="")
     customer_names = serializers.SerializerMethodField()
 
+    start_gps = serializers.SerializerMethodField()
+    total_minutes = serializers.SerializerMethodField()
+
+    def get_start_gps(self, obj):
+        return {"lat": float(obj.start_lat), "lng": float(obj.start_lng)} if obj.start_lat is not None else None
+
+    def get_total_minutes(self, obj):
+        return _trip_minutes(obj, detail=True)
+
     def get_customer_names(self, obj):
         seen = []
         for dn in obj.delivery_notes.all():
@@ -177,7 +202,7 @@ class DeliveryTripSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DeliveryTrip
-        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "customer_names", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "delivery_notes", "order_ids", "orders_value", "created_at"]
+        fields = ["id", "number", "version", "warehouse", "warehouse_name", "date", "driver", "driver_name", "driver_phone", "vehicle", "vehicle_reg", "rep", "rep_name", "delivery_rep", "delivery_rep_name", "loader", "loader_name", "helper", "helper_name", "picklist", "picklist_number", "route", "route_name", "customer_names", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "closed_by_name", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "notes", "start_gps", "route_source", "route_planned_at", "route_polyline", "planned_km", "planned_minutes", "actual_km", "actual_km_source", "total_minutes", "delivery_notes", "order_ids", "orders_value", "created_at"]
         read_only_fields = ["id", "number", "version", "status", "stops_count", "cash_collected", "started_at", "completed_at", "closed_at", "odometer_start", "odometer_end", "fuel_amount", "expense_amount", "loaded_value", "reconciliation", "created_at"]
 
     def get_orders_value(self, obj):
@@ -190,10 +215,14 @@ class DeliveryTripListSerializer(serializers.ModelSerializer):
     vehicle_reg = serializers.CharField(source="vehicle.reg_no", read_only=True, default="")
     rep_name = serializers.CharField(source="rep.name", read_only=True, default="")
     delivered_count = serializers.SerializerMethodField()
+    total_minutes = serializers.SerializerMethodField()
+
+    def get_total_minutes(self, obj):
+        return _trip_minutes(obj)
 
     class Meta:
         model = DeliveryTrip
-        fields = ["id", "number", "warehouse", "warehouse_name", "date", "driver", "driver_name", "vehicle", "vehicle_reg", "rep", "rep_name", "status", "stops_count", "delivered_count", "cash_collected", "loaded_value", "started_at", "closed_at", "created_at"]
+        fields = ["id", "number", "warehouse", "warehouse_name", "date", "driver", "driver_name", "vehicle", "vehicle_reg", "rep", "rep_name", "status", "stops_count", "delivered_count", "cash_collected", "loaded_value", "started_at", "closed_at", "planned_km", "actual_km", "total_minutes", "created_at"]
 
     def get_delivered_count(self, obj):
         return obj.delivery_notes.filter(status__in=["delivered", "partially_delivered"]).count()

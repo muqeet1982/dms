@@ -77,6 +77,7 @@ REPORTS = {
     # ---- delivery
     "trip_register": {"title": "Trip register", "area": "delivery", "params": DATE_RANGE, "query": ops.trip_register, "perm": OPS},
     "driver_performance": {"title": "Driver performance", "area": "delivery", "params": DATE_RANGE, "query": ops.driver_performance, "perm": OPS},
+    "rider_performance": {"title": "Delivery Rider Performance", "area": "delivery", "params": DATE_RANGE + [{"name": "rider", "type": "person", "label": "Delivery Rider"}], "query": ops.rider_performance, "perm": OPS},
     "vehicle_usage": {"title": "Vehicle usage & running cost", "area": "delivery", "params": DATE_RANGE, "query": ops.vehicle_usage, "perm": OPS},
     "delivery_success": {"title": "Delivery success rate & undelivered reasons", "area": "delivery", "params": DATE_RANGE, "query": ops.delivery_success, "perm": OPS},
     "cash_per_trip": {"title": "Cash collected per trip", "area": "delivery", "params": DATE_RANGE, "query": ops.cash_per_trip, "perm": OPS},

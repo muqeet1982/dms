@@ -306,7 +306,8 @@ class TripViewSet(DocumentViewSet):
         "reorder_stops": "delivery.change_trip",
         "load": "delivery.change_trip",
         "start": extra_perm("trips", "start"),
-        "close": extra_perm("trips", "start"),
+        "plan_route": [extra_perm("trips", "start"), "delivery.change_trip"],
+        "close": extra_perm("trips", "close"),
         "cancel": "delivery.delete_trip",
         "reconciliation": "delivery.view_trip",
         "dispatch_sheet": "delivery.view_trip",
@@ -377,15 +378,33 @@ class TripViewSet(DocumentViewSet):
     @action(detail=True, methods=["post"])
     @require_perm("delivery.start_trip")
     def start(self, request, pk=None):
-        return Response(DeliveryTripSerializer(TripService.start(self.get_object(), request.data.get("odometer_start")), context={"request": request}).data)
+        """`gps: {lat, lng}` — where the rider is; the stops are put in the best order from there (owner, 27 Nov 2026)."""
+        from .routing import gps_of
+
+        trip = TripService.start(self.get_object(), request.data.get("odometer_start"), gps=gps_of(request.data))
+        return Response(DeliveryTripSerializer(self.get_queryset().get(pk=trip.pk), context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="plan-route")
+    def plan_route(self, request, pk=None):
+        """The stops still to visit put in the best order again, from `gps` (the rider's position) or the last stop."""
+        from django.db import transaction
+
+        from .routing import gps_of, plan_route
+
+        trip = self.get_object()
+        if trip.status in ("closed", "cancelled"):
+            raise DomainError("This trip is over.", code="trip_over")
+        with transaction.atomic():
+            plan_route(trip, origin=gps_of(request.data))
+        return Response(DeliveryTripSerializer(self.get_queryset().get(pk=trip.pk), context={"request": request}).data)
 
     @action(detail=True, methods=["get"])
     def reconciliation(self, request, pk=None):
         return Response(TripService.reconciliation(self.get_object()))
 
     @action(detail=True, methods=["post"])
-    @require_perm("delivery.start_trip")
     def close(self, request, pk=None):
+        # the office's step: returns back on the shelf, cash counted (owner, 27 Nov 2026 — a rider starts trips, never closes them)
         m = request.membership
         override = bool(request.data.get("override")) and (m.has_perm("inventory.approve_adjustment") or m.is_owner)
         from apps.inventory.models import ReasonCode
@@ -421,6 +440,7 @@ class DeliveryNoteViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     perm_map = page_perms("delivery_notes", {
         "deliver": extra_perm("delivery_notes", "complete"),
+        "arrive": extra_perm("delivery_notes", "complete"),
         "deliver_again": extra_perm("delivery_notes", "complete"),
         "return_preview": extra_perm("delivery_notes", "complete"),
         "undo_return": extra_perm("delivery_notes", "complete"),
@@ -439,6 +459,18 @@ class DeliveryNoteViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
         if m is not None and m.supplier_rep_id:
             qs = qs.filter(order__rep_id=m.supplier_rep_id)
         return qs.distinct()
+
+    @action(detail=True, methods=["post"])
+    @require_perm("delivery.complete_delivery")
+    def arrive(self, request, pk=None):
+        """`{gps: {lat, lng}, at}` — the rider reached the shop. The first call wins; minutes at the shop run from it."""
+        from django.utils.dateparse import parse_datetime
+
+        from .routing import gps_of
+
+        at = parse_datetime(str(request.data.get("at") or "")) if request.data.get("at") else None
+        dn = DeliveryService.arrive(self.get_object(), gps=gps_of(request.data), at=at)
+        return Response(DeliveryNoteSerializer(self.get_queryset().get(pk=dn.pk), context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="deliver-again")
     @require_perm("delivery.complete_delivery")
