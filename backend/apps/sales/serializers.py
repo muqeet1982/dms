@@ -471,10 +471,19 @@ class RepCollectionSerializer(serializers.ModelSerializer):
     settlement_number = serializers.CharField(source="settlement.number", read_only=True, default="")
     recorded_by_name = serializers.CharField(source="recorded_by.full_name", read_only=True, default="")
     gps = serializers.DictField(write_only=True, required=False)
+    settled_amount = serializers.SerializerMethodField()
+    settled_invoice = serializers.SerializerMethodField()
+
+    def get_settled_amount(self, obj):
+        """What this collection let go to Settlement Discount (the rep app's "Invoice X closed — 4.00 settlement discount")."""
+        return str(sum((Decimal(str(a.get("settlement") or 0)) for a in obj.allocations or []), Decimal("0")))
+
+    def get_settled_invoice(self, obj):
+        return next((a.get("number") for a in obj.allocations or [] if Decimal(str(a.get("settlement") or 0)) > 0), None)
 
     class Meta:
         model = RepCollection
-        fields = ["id", "number", "rep", "rep_name", "customer", "customer_name", "date", "amount", "method", "reference", "allocations", "status", "journal", "settlement", "settlement_number", "recorded_by_name", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "notes", "created_at"]
+        fields = ["id", "number", "rep", "rep_name", "customer", "customer_name", "date", "amount", "method", "reference", "allocations", "status", "journal", "settlement", "settlement_number", "settled_amount", "settled_invoice", "recorded_by_name", "gps_lat", "gps_lng", "gps_accuracy_m", "gps", "notes", "created_at"]
         read_only_fields = ["id", "number", "status", "journal", "settlement", "gps_lat", "gps_lng", "gps_accuracy_m", "created_at"]
         extra_kwargs = {"rep": {"required": False}, "allocations": {"required": False}}
 

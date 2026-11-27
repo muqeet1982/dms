@@ -460,6 +460,14 @@ class PostingService:
         return PostingService.post(lines, date_=col.date, memo=f"Rep collection {col.number} – {col.customer.name} by {col.rep.name}", source=col)
 
     @staticmethod
+    def post_rep_settlement_discount(col, inv, amount):
+        """The few rupees a rep let go to close an invoice (owner, 27 Nov 2026): Settlement Discount against the customer."""
+        ar = inv.customer.account if inv.customer.account_id else account_for("ar", "rep_collection")
+        memo = f"Settlement discount {inv.number} — {col.number}"
+        return PostingService.post([Line(account_for("settlement_discount", "rep_collection"), debit=amount, description=memo),
+                                    Line(ar, credit=amount, description=memo, partner_type="customer", partner_id=inv.customer_id)], date_=col.date, memo=memo, source=col)
+
+    @staticmethod
     def post_rep_settlement(st):
         money = st.cash_account.account if st.cash_account_id else (st.bank_account.account if st.bank_account_id else account_for("cash", "rep_settlement"))
         lines = [Line(money, debit=st.amount, description=f"Settlement {st.number} from {st.rep.name}"), Line(account_for("rep_clearing", "rep_settlement"), credit=st.amount, description=f"Settlement {st.number}", partner_type="rep", partner_id=st.rep_id)]

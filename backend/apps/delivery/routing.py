@@ -120,7 +120,7 @@ def google_route(origin, points, dest, optimize=True):
     One Routes API call: {order, legs: [(km, minutes)…], polyline}, legs in visiting order and the last one back to `dest`.
     None when there is no key, too many stops, or Google says no — the caller estimates instead.
     """
-    key = getattr(settings, "GOOGLE_MAPS_API_KEY", "")
+    key = getattr(settings, "GOOGLE_ROUTES_API_KEY", "") or getattr(settings, "GOOGLE_MAPS_API_KEY", "")
     if not key or not points or len(points) > GOOGLE_MAX:
         return None
 

@@ -25,6 +25,8 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-change-me")
 # the browser key for Google Maps (map + place search): it reaches the browser by design — restrict it to this
 # site's address in Google Cloud. Lives in backend/.env, never in the repository.
 GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY", default="")
+# delivery routes (apps/delivery/routing.py) — its own key, limited to the Routes API; the maps key stands in without it
+GOOGLE_ROUTES_API_KEY = env("GOOGLE_ROUTES_API_KEY", default="")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL")

@@ -2830,7 +2830,12 @@ def _accuracy(gps):
 class RepCollectionService:
     @staticmethod
     @transaction.atomic
-    def record(*, rep, customer, amount, date=None, method="cash", reference="", allocations=None, notes="", gps=None):
+    def record(*, rep, customer, amount, date=None, method="cash", reference="", allocations=None, notes="", gps=None, settle_short=False):
+        """
+        `settle_short` (owner, 27 Nov 2026, the rep app's "Close Invoice — 4.00 Settlement Discount"): the last invoice the
+        money reaches, left short by no more than the company's limit, is closed there — the few rupees to Settlement
+        Discount, as a receipt in the office does. Never for a cheque, never above the limit (a rep has no override).
+        """
         amount = q4(amount)
         if amount <= 0:
             raise DomainError("Amount must be positive.")
@@ -2857,6 +2862,17 @@ class RepCollectionService:
                 if take > 0:
                     allocs.append((inv, take))
                     remaining -= take
+        short = Decimal("0")
+        if settle_short and allocs:
+            last, took = allocs[-1]
+            short = q4(last.total - last.paid_amount - took)
+            if short > 0:
+                if method == "cheque":
+                    raise DomainError("A cheque cannot close an invoice short — keep the rest due.", code="settlement_not_allowed", status_code=422)
+                limit = Decimal(str(get_current_tenant().setting("settlement_discount_limit") or 0))
+                if short > limit:
+                    raise DomainError(f"{last.number} would be left Rs {short:,.2f} short — more than the Rs {limit:,.0f} a settlement discount may close. Keep it due.",
+                                      code="settlement_not_allowed", status_code=422)
         col = RepCollection.objects.create(number=next_number("rep_collection"), rep=rep, customer=customer, date=date or timezone.localdate(), amount=amount, method=method, reference=reference, notes=notes, recorded_by=get_current_user() if getattr(get_current_user(), "is_authenticated", False) else None, gps_lat=(gps or {}).get("lat"), gps_lng=(gps or {}).get("lng"), gps_accuracy_m=_accuracy(gps))
         col.allocations = [{"invoice": str(inv.pk), "number": inv.number, "amount": str(amt)} for inv, amt in allocs]
         for inv, amt in allocs:
@@ -2866,6 +2882,14 @@ class RepCollectionService:
         from apps.accounting.services import PostingService
 
         col.journal = PostingService.post_rep_collection(col)
+        if short > 0:
+            last = allocs[-1][0]
+            last.paid_amount += short
+            last.settled_amount = (last.settled_amount or 0) + short
+            last.status = "paid"
+            last.save(update_fields=["paid_amount", "settled_amount", "status"])
+            col.allocations[-1]["settlement"] = str(short)
+            PostingService.post_rep_settlement_discount(col, last, short)
         col.save(update_fields=["allocations", "journal"])
         AuditService.log("rep_collection.recorded", col, after={"rep": rep.name, "customer": customer.name, "amount": str(amount)})
         emit("payment.received", payment=col)

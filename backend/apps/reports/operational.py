@@ -449,6 +449,21 @@ def settlement_discounts(date_from=None, date_to=None, customer=None, **_):
                      "sale_person": names.get(str(rep_id), person) if rep_id else person, "invoice_total": str(inv.total if inv is not None else Z),
                      "received": str(a.amount), "settlement": str(a.settlement),
                      "by": (a.payment.collected_by.full_name or a.payment.collected_by.username) if a.payment.collected_by_id else ""})
+    # a rep closing one short in the app (27 Nov 2026): the collection is its receipt
+    from apps.sales.models import RepCollection
+
+    cols_qs = _window(RepCollection.objects.exclude(status="cancelled").select_related("customer", "rep", "recorded_by"), "date", date_from, date_to)
+    if customer:
+        cols_qs = cols_qs.filter(customer_id=customer)
+    for c in cols_qs.order_by("date", "number"):
+        for a in c.allocations or []:
+            if Decimal(str(a.get("settlement") or 0)) <= 0:
+                continue
+            inv = SalesInvoice.objects.filter(pk=a.get("invoice")).first()
+            rows.append({"date": c.date, "receipt": c.number, "customer": c.customer.name, "invoice": a.get("number", ""), "sale_person": c.rep.name,
+                         "invoice_total": str(inv.total if inv is not None else Z), "received": str(a.get("amount") or 0), "settlement": str(a["settlement"]),
+                         "by": c.rep.name})
+    rows.sort(key=lambda r: (r["date"], r["receipt"]))
     return {"columns": ["date", "receipt", "customer", "invoice", "sale_person", "invoice_total", "received", "settlement", "by"], "rows": rows,
             "totals": {"received": str(sum((Decimal(r["received"]) for r in rows), Z)), "settlement": str(sum((Decimal(r["settlement"]) for r in rows), Z))},
             "column_labels": {"receipt": "Receipt No", "invoice": "Invoice No", "sale_person": "Sale Person", "invoice_total": "Invoice Total",

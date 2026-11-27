@@ -23,6 +23,13 @@ def _reset_throttles():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_google_routes(settings):
+    """No test may call Google: a trip start or a delivery plans a route, and the server's .env holds real keys."""
+    settings.GOOGLE_ROUTES_API_KEY = ""
+    settings.GOOGLE_MAPS_API_KEY = ""
+
+
 @pytest.fixture
 def admin_user(db):
     from apps.accounts.models import User

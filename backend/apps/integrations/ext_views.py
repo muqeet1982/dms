@@ -856,7 +856,9 @@ class ExtCollectionsView(ExtBase):
         blocked = GeoFenceService.guard(rep=rep, gps=d.get("gps"), action="collection", customer=customer)
         if blocked:
             return blocked
-        col = RepCollectionService.record(rep=rep, customer=customer, amount=d["amount"], method=d.get("method", "cash"), reference=d.get("reference", ""), allocations=d.get("allocations"), notes=d.get("notes", ""), gps=d.get("gps"))
+        # "Close Invoice — 4.00 Settlement Discount" (owner, 27 Nov 2026): the last invoice the money reaches, closed short
+        settle_short = str(d.get("settle_short", "")).lower() in ("1", "true", "yes")
+        col = RepCollectionService.record(rep=rep, customer=customer, amount=d["amount"], method=d.get("method", "cash"), reference=d.get("reference", ""), allocations=d.get("allocations"), notes=d.get("notes", ""), gps=d.get("gps"), settle_short=settle_short)
         return Response(RepCollectionSerializer(col).data, status=201)
 
 
@@ -1238,6 +1240,40 @@ class ExtShiftActionView(ExtBase):
             reason = d.get("reason") if d.get("reason") in dict(RepShift.END_REASONS) else "rep"
             shift = ShiftService.end(shift, at=d.get("at"), gps=d.get("gps"), reason=reason)
         return Response({"shift": _shift_body(shift, get_current_tenant())})
+
+
+class ExtShopInvoicesView(ExtBase):
+    """
+    `GET /ext/v1/customers/{pk}/invoices?open=1` — a shop's invoices for the rep who has it, oldest first (owner, 27 Nov
+    2026: Collect Cash showed "No open invoices" for a shop that owed, because a rep may not read the office's invoice
+    list). A branch answers for its whole account: branches share one balance. `settlement_limit` is how short an invoice
+    may be closed with `settle_short` on POST /ext/v1/collections.
+    """
+
+    def get(self, request, pk):
+        from apps.sales.models import SalesInvoice
+
+        try:
+            self.perm(request, "external.view_customer_outstanding")
+        except DomainError:
+            self.perm(request, "external.record_collection")
+        customer, _location = self.resolve_shop(request, pk)
+        if customer is None:
+            raise DomainError("That shop is not assigned to you.", status_code=404)
+        qs = SalesInvoice.objects.filter(customer=customer).exclude(status__in=["draft", "cancelled"])
+        if str(request.query_params.get("open", "")).lower() in ("1", "true", "yes"):
+            qs = qs.filter(status__in=["posted", "partially_paid", "overdue"])
+        limit = str(Decimal(str(get_current_tenant().setting("settlement_discount_limit") or 0)))
+        today = timezone.localdate()
+        rows = []
+        for inv in qs.order_by("date", "created_at")[:200]:
+            balance = inv.total - inv.paid_amount
+            if str(request.query_params.get("open", "")).lower() in ("1", "true", "yes") and balance <= 0:
+                continue
+            late = (today - inv.due_date).days if inv.due_date and balance > 0 and inv.due_date < today else 0
+            rows.append({"id": str(inv.id), "number": inv.number, "date": inv.date, "due_date": inv.due_date, "total": str(inv.total),
+                         "paid": str(inv.paid_amount), "balance": str(balance), "days_overdue": late, "status": inv.status, "settlement_limit": limit})
+        return Response({"results": rows, "settlement_limit": limit})
 
 
 class ExtShopOrdersView(ExtBase):

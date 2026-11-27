@@ -13,6 +13,7 @@ urlpatterns = [
     path("orders/<str:pk>/cancel", v.ExtOrderCancelView.as_view()),
     path("customers", v.ExtCustomersView.as_view()),
     path("customers/<str:pk>/orders", v.ExtShopOrdersView.as_view()),
+    path("customers/<str:pk>/invoices", v.ExtShopInvoicesView.as_view()),
     path("customers/<str:pk>/location", v.ExtCustomerPinView.as_view()),
     path("customers/similar", v.ExtCustomerMatchView.as_view()),
     path("products", v.ExtProductsView.as_view()),

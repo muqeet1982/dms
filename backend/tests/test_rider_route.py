@@ -61,7 +61,8 @@ def _stops(api, trip_id):
 
 @pytest.fixture
 def no_google(settings):
-    settings.GOOGLE_MAPS_API_KEY = ""
+    """conftest already keeps every test off Google; said again here so these tests read on their own."""
+    settings.GOOGLE_ROUTES_API_KEY = settings.GOOGLE_MAPS_API_KEY = ""
 
 
 def test_encoded_polyline_matches_googles_own_example():
@@ -91,7 +92,7 @@ def test_the_trip_starts_from_the_rider_and_the_stops_go_in_the_best_order(api, 
 
 
 def test_googles_road_route_is_used_when_the_key_allows_it(api, tenant, settings, monkeypatch):
-    settings.GOOGLE_MAPS_API_KEY = "test-key"
+    settings.GOOGLE_ROUTES_API_KEY = "test-key"
     trip, _shops = _setup(api, tenant, [FAR, NEAR, MIDDLE])
     sent = {}
 
@@ -123,7 +124,7 @@ def test_googles_road_route_is_used_when_the_key_allows_it(api, tenant, settings
 def test_google_refusing_never_stops_the_trip(api, tenant, settings, monkeypatch):
     import urllib.error
 
-    settings.GOOGLE_MAPS_API_KEY = "test-key"
+    settings.GOOGLE_ROUTES_API_KEY = "test-key"
     trip, _shops = _setup(api, tenant, [FAR, NEAR])
 
     def refuse(req, timeout=None):
