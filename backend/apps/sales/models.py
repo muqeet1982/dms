@@ -173,6 +173,8 @@ class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
     # the part of paid_amount that came from returns (credit notes), not money: paid_amount stays the settled
     # total so every balance (total - paid) keeps working; cash_paid = paid_amount - credited_amount
     credited_amount = models.DecimalField(**MONEY)
+    # let go by a receipt that closed it a few rupees short: Settlement Discount, not money (owner, 27 Nov 2026)
+    settled_amount = models.DecimalField(**MONEY)
     status = models.CharField(max_length=20, choices=STATUS, default="draft", db_index=True)
     journal = models.ForeignKey("accounting.JournalEntry", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     cost_centre = models.ForeignKey("accounting.CostCentre", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -191,8 +193,8 @@ class SalesInvoice(OtherTaxTotalsMixin, DocumentModel):
 
     @property
     def cash_paid(self):
-        """Money actually received — the settled amount less what returns settled."""
-        return self.paid_amount - self.credited_amount
+        """Money actually received — the settled amount less what returns and a settlement discount settled."""
+        return self.paid_amount - self.credited_amount - (self.settled_amount or 0)
 
 
 class SalesInvoiceLine(OtherTaxLineMixin, TaxLineMixin, TenantModel):

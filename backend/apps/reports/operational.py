@@ -426,6 +426,35 @@ def items_not_sold(days=30, supplier=None, show=None, **_):
             "export_columns": ["label", "item_code", *cols[1:]], "print_params": {"Not sold in the last": f"{days} days"}}
 
 
+def settlement_discounts(date_from=None, date_to=None, customer=None, **_):
+    """
+    Every few rupees let go to close an invoice (owner, 27 Nov 2026: 604 billed, 600 paid): the receipt, the customer, the
+    invoice, what was received and what was let go to Settlement Discount, and who took the money. A cancelled receipt's
+    is gone with it.
+    """
+    from apps.accounting.models import PaymentAllocation
+    from apps.sales.models import SalesInvoice
+
+    qs = _window(PaymentAllocation.objects.filter(settlement__gt=0, document_type="sales_invoice").exclude(payment__status="cancelled")
+                 .select_related("payment", "payment__collected_by"), "payment__date", date_from, date_to)
+    if customer:
+        qs = qs.filter(payment__partner_id=str(customer))
+    invoices = {str(i.pk): i for i in SalesInvoice.objects.filter(pk__in=[a.document_id for a in qs]).select_related("customer", *[f[len("invoice__"):] for f in SALE_PERSON_RELATED])}
+    names = _rep_names()
+    rows = []
+    for a in qs.order_by("payment__date", "payment__number"):
+        inv = invoices.get(a.document_id)
+        rep_id, person = _sale_person(inv) if inv is not None else (None, "")
+        rows.append({"date": a.payment.date, "receipt": a.payment.number, "customer": a.payment.partner_name, "invoice": a.document_number,
+                     "sale_person": names.get(str(rep_id), person) if rep_id else person, "invoice_total": str(inv.total if inv is not None else Z),
+                     "received": str(a.amount), "settlement": str(a.settlement),
+                     "by": (a.payment.collected_by.full_name or a.payment.collected_by.username) if a.payment.collected_by_id else ""})
+    return {"columns": ["date", "receipt", "customer", "invoice", "sale_person", "invoice_total", "received", "settlement", "by"], "rows": rows,
+            "totals": {"received": str(sum((Decimal(r["received"]) for r in rows), Z)), "settlement": str(sum((Decimal(r["settlement"]) for r in rows), Z))},
+            "column_labels": {"receipt": "Receipt No", "invoice": "Invoice No", "sale_person": "Sale Person", "invoice_total": "Invoice Total",
+                              "settlement": "Settlement Discount", "by": "Received By"}}
+
+
 def _pct_off(pct, discount, subtotal):
     """A document's discount as a %: its own Discount %, else the discount over the subtotal (a product's own discount)."""
     if pct:

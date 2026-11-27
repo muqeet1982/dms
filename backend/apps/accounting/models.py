@@ -271,6 +271,8 @@ class PaymentAllocation(TenantModel):
     document_id = models.CharField(max_length=64)
     document_number = models.CharField(max_length=40, blank=True)
     amount = models.DecimalField(**MONEY)
+    # what the receipt let go to close the invoice — 604 billed, 600 paid, 4 here (owner, 27 Nov 2026); not money
+    settlement = models.DecimalField(**MONEY)
 
 
 class Expense(DocumentModel):
@@ -339,6 +341,8 @@ class PostingRule(TenantModel):
         ("st_withheld", "Sales tax withheld by customers"),
         # income tax collected from the buyer on the invoice and deposited by the seller (owner, 31 Oct 2026)
         ("advance_tax_out", "Advance income tax payable (236G/236H)"),
+        # a customer's few rupees short, let go when the receipt closes the invoice (owner, 27 Nov 2026) — its own head
+        ("settlement_discount", "Settlement discount"),
     ]
     role = models.CharField(max_length=30, choices=ROLES)
     document_type = models.CharField(max_length=30, default="*")

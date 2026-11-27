@@ -198,6 +198,8 @@ class Tenant(models.Model):
         # how a manufacturer claim settles: "manual" (receipt or net-off by hand) or "auto_net_off" — the
         # owner's rule: the Keune payable minuses the moment the claim posts
         "claim_settlement": "manual",
+        # the most a receipt may let go to close an invoice without the owner or the right (owner, 27 Nov 2026)
+        "settlement_discount_limit": 50,
         # salon discount sharing (owner, 14 Nov 2026): a salon line sold below the T.P — the distributor bears this fixed %
         # of the R.P, the company (the manufacturer) the rest of the discount; at or above the T.P the distributor bears it all
         "salon_distributor_pct": 3,

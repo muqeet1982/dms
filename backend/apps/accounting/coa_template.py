@@ -64,6 +64,7 @@ COA = [
     ("4-01-001-0001", "Sales – Products", "income", "4-01-001", "sales"),
     ("4-01-001-0002", "Sales Returns", "income", "4-01-001", "contra"),
     ("4-01-001-0003", "Discounts Allowed", "income", "4-01-001", "contra"),
+    ("4-01-001-0004", "Settlement Discount", "income", "4-01-001", "contra"),
     ("4-02", "Other Income", "income", "4"),
     ("4-02-001", "Other Income", "income", "4-02"),
     ("4-02-001-0001", "Scheme / Incentive from Manufacturer", "income", "4-02-001", ""),
@@ -118,7 +119,7 @@ POSTING_MAP = {
     "opening_equity": "3-01-001-0005", "retained_earnings": "3-01-001-0003", "current_year_profit": "3-01-001-0004", "bank_charges": "5-03-001-0006", "other_income": "4-02-001-0003", "bad_debts": "5-04-001-0002",
     "manufacturer_incentive": "4-02-001-0001",
     "fed_out": "2-01-002-0002", "extra_tax_out": "2-01-002-0002", "further_tax_out": "2-01-002-0002", "st_withheld": "1-01-005-0005",
-    "advance_tax_out": "2-01-002-0004",
+    "advance_tax_out": "2-01-002-0004", "settlement_discount": "4-01-001-0004",
 }
 
 SYSTEM_CODES = set(POSTING_MAP.values())

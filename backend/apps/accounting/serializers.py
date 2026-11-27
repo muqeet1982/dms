@@ -155,8 +155,9 @@ class CashAccountSerializer(serializers.ModelSerializer):
 class PaymentAllocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentAllocation
-        fields = ["id", "document_type", "document_id", "document_number", "amount"]
+        fields = ["id", "document_type", "document_id", "document_number", "amount", "settlement"]
         read_only_fields = ["id", "document_number"]
+        extra_kwargs = {"settlement": {"required": False}}
 
 
 class PaymentSerializer(serializers.ModelSerializer):

@@ -427,7 +427,7 @@ class PaymentViewSet(DocumentViewSet):
             needed = extra_perm("payments", "receive") if d["direction"] == "in" else extra_perm("payments", "pay")
             if not m.has_perm(needed):
                 raise DomainError("You cannot receive payments." if d["direction"] == "in" else "You cannot make payments.", code="forbidden", status_code=403)
-        allocations = [{"document_type": a["document_type"], "document_id": a["document_id"], "amount": a["amount"]} for a in d.pop("allocations", [])]
+        allocations = [{"document_type": a["document_type"], "document_id": a["document_id"], "amount": a["amount"], "settlement": a.get("settlement") or 0} for a in d.pop("allocations", [])]
         claim_deductions = self.request.data.get("claim_deductions") or []
         if claim_deductions and not (m.has_perm("sales.settle_company_claim") or m.is_owner):
             raise DomainError("You cannot settle company discount claims.", code="forbidden", status_code=403)
@@ -436,6 +436,7 @@ class PaymentViewSet(DocumentViewSet):
             bank_account=d.get("bank_account"), cash_account=d.get("cash_account"), allocations=allocations or None, cheque_no=d.get("cheque_no", ""), cheque_date=d.get("cheque_date"), cheque_bank=d.get("cheque_bank", ""),
             reference=d.get("reference", ""), notes=d.get("notes", ""), withholding_tax=d.get("withholding_tax"), withholding_amount=d.get("withholding_amount", 0), trip=d.get("trip"), delivery_note=d.get("delivery_note"), collected_by=d.get("collected_by"),
             claim_deductions=claim_deductions or None, other_account=d.get("other_account"),
+            settle_over_limit=bool(m.is_owner or m.has_perm("cash.settlement_over_limit")),
         )
 
     def perform_update(self, serializer):
@@ -490,8 +491,12 @@ class PaymentViewSet(DocumentViewSet):
             other = Account.objects.filter(pk=p["other_account"]).first()
         acct = PostingService.resolve_partner_account(p.get("direction", "in"), p.get("partner_type", "customer"), p.get("partner_id") or None, other)
         locked = p.get("partner_type", "customer") != "other"
+        m = request.membership
         return Response({"account": f"{acct.code} {acct.name}", "account_id": str(acct.id), "locked": locked,
-                         "why": "allocating to invoices/bills must move this control account, or the ledger and the document balances drift apart" if locked else "your choice of head"})
+                         "why": "allocating to invoices/bills must move this control account, or the ledger and the document balances drift apart" if locked else "your choice of head",
+                         # how much a receipt may let go to close an invoice, and whether this user may let more go (owner, 27 Nov 2026)
+                         "settlement_limit": str(request.tenant.setting("settlement_discount_limit") or 0) if getattr(request, "tenant", None) else "0",
+                         "settle_over_limit": bool(m and (m.is_owner or m.has_perm("cash.settlement_over_limit")))})
 
     @action(detail=True, methods=["get"])
     def print(self, request, pk=None):

@@ -409,7 +409,12 @@ class PostingService:
             lines = [Line(money, debit=net, description=f"Receipt {payment.number}")]
             if payment.withholding_amount:
                 lines.append(Line(account_for("withholding_receivable", "payment"), debit=payment.withholding_amount, description="Withholding tax deducted by customer", tax_type=payment.withholding_tax))
-            lines.append(Line(partner_acct, credit=payment.amount, description=f"Receipt {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id))
+            # what the receipt let go to close an invoice, to its own head (owner, 27 Nov 2026)
+            settled = sum((a.settlement or 0 for a in payment.allocations.all()), Decimal("0"))
+            if settled:
+                numbers = ", ".join(a.document_number for a in payment.allocations.all() if a.settlement)
+                lines.append(Line(account_for("settlement_discount", "payment"), debit=settled, description=f"Settlement discount {numbers} — {payment.number}"))
+            lines.append(Line(partner_acct, credit=payment.amount + settled, description=f"Receipt {payment.number} {payment.reference}", partner_type=jp, partner_id=payment.partner_id))
         else:
             # paying a supplier may deduct manufacturer discount claims: the payable is settled for cash +
             # deductions, and the deducted part clears the claims receivable instead of the money account
@@ -727,7 +732,7 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
-    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None, other_account=None, auto_allocate=True):
+    def record(*, direction, partner_type, partner_id="", partner_name="", amount, method="cash", date_=None, bank_account=None, cash_account=None, allocations=None, cheque_no="", cheque_date=None, cheque_bank="", reference="", notes="", withholding_tax=None, withholding_amount=Decimal("0"), trip=None, delivery_note=None, collected_by=None, claim_deductions=None, other_account=None, auto_allocate=True, settle_over_limit=False):
         amount = q4(amount)
         if amount <= 0:
             raise DomainError("Amount must be positive.")
@@ -801,8 +806,14 @@ class PaymentService:
             balance = doc.total - doc.paid_amount
             if amt > balance + Decimal("0.01"):
                 raise DomainError(f"Allocation {amt} exceeds balance {balance} of {doc.number}.")
-            PaymentAllocation.objects.create(payment=pay, document_type=a["document_type"], document_id=str(doc.pk), document_number=doc.number, amount=amt)
-            PaymentService._apply(doc, a["document_type"], amt)
+            settle = q4(a.get("settlement") or 0)
+            if settle:
+                PaymentService._check_settlement(pay, a["document_type"], doc, amt, settle, balance, settle_over_limit)
+            PaymentAllocation.objects.create(payment=pay, document_type=a["document_type"], document_id=str(doc.pk), document_number=doc.number, amount=amt, settlement=settle)
+            PaymentService._apply(doc, a["document_type"], amt + settle)
+            if settle:
+                doc.settled_amount = (doc.settled_amount or 0) + settle
+                doc.save(update_fields=["settled_amount"])
             remaining -= amt
         pay.unallocated = max(remaining, Decimal("0"))
         pay.journal = PostingService.post_payment(pay)
@@ -812,6 +823,27 @@ class PaymentService:
 
         emit("payment.received" if direction == "in" else "payment.made", payment=pay)
         return pay
+
+    @staticmethod
+    def _check_settlement(pay, doc_type, doc, amt, settle, balance, over_limit_allowed):
+        """
+        A receipt may let a customer's last few rupees go to close an invoice — 604 billed, 600 paid, 4 to Settlement
+        Discount (owner, 27 Nov 2026). Only on a customer's invoice, only what closes it, never on a cheque (a bounce
+        would leave the discount behind: let it go once the cheque clears), and above the limit (Settings, Rs 50) only
+        for the owner or a user given the right.
+        """
+        if settle < 0:
+            raise DomainError("A settlement discount cannot be negative.", status_code=400)
+        if pay.direction != "in" or doc_type != "sales_invoice":
+            raise DomainError("A settlement discount closes a customer's invoice on a receipt.", code="settlement_not_here", status_code=400)
+        if pay.method == "cheque":
+            raise DomainError("No settlement discount on a cheque — record it when the cheque has cleared.", code="settlement_cheque", status_code=400)
+        if abs(amt + settle - balance) > Decimal("0.01"):
+            raise DomainError(f"The settlement discount closes {doc.number}: {balance:,.2f} due, {amt:,.2f} received — {balance - amt:,.2f} to let go, not {settle:,.2f}.",
+                              code="settlement_not_closing", status_code=400)
+        limit = Decimal(str(get_current_tenant().setting("settlement_discount_limit") or 0))
+        if settle > limit and not over_limit_allowed:
+            raise DomainError(f"A settlement discount above Rs {limit:,.0f} needs the owner or the right to allow it.", code="settlement_over_limit", status_code=403)
 
     @staticmethod
     def _load(doc_type, doc_id):
@@ -853,6 +885,50 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
+    def settle_remaining(inv, *, over_limit_allowed=False, reason=""):
+        """
+        Close an invoice already paid a few rupees short (owner, 27 Nov 2026: "check current invoice and its payment … if
+        same reason for partial, then close them and update accounting"): what is left goes to Settlement Discount, on the
+        last receipt against it and at its date — so cancelling that receipt brings it back, as one taken at the receipt does.
+        """
+        from apps.sales.models import SalesInvoice
+
+        inv = SalesInvoice.objects.select_for_update().get(pk=inv.pk)
+        left = q4(inv.total - inv.paid_amount)
+        if inv.status in ("draft", "cancelled") or left <= 0:
+            raise DomainError(f"{inv.number} has nothing left to settle.", code="nothing_left", status_code=400)
+        alloc = (PaymentAllocation.objects.select_for_update().filter(document_type="sales_invoice", document_id=str(inv.pk), payment__direction="in")
+                 .exclude(payment__status="cancelled").select_related("payment").order_by("-payment__date", "-payment__created_at").first())
+        if alloc is None:
+            raise DomainError(f"No money has been received on {inv.number} — a settlement discount closes an invoice paid short.", code="settlement_no_receipt", status_code=400)
+        pay = alloc.payment
+        if pay.method == "cheque" and pay.cheque_status != "cleared":
+            raise DomainError(f"{pay.number} is a cheque not cleared yet — settle once it clears.", code="settlement_cheque", status_code=400)
+        limit = Decimal(str(get_current_tenant().setting("settlement_discount_limit") or 0))
+        if left > limit and not over_limit_allowed:
+            raise DomainError(f"A settlement discount above Rs {limit:,.0f} needs the owner or the right to allow it.", code="settlement_over_limit", status_code=403)
+        alloc.settlement = (alloc.settlement or 0) + left
+        alloc.save(update_fields=["settlement"])
+        PaymentService._apply(inv, "sales_invoice", left)
+        inv.settled_amount = (inv.settled_amount or 0) + left
+        inv.save(update_fields=["settled_amount"])
+        ar = inv.customer.account if inv.customer.account_id else account_for("ar", "payment")
+        je = PostingService.post([
+            Line(account_for("settlement_discount", "payment"), debit=left, description=f"Settlement discount {inv.number} — {pay.number}"),
+            Line(ar, credit=left, description=f"Settlement discount {inv.number} — {pay.number}", partner_type="customer", partner_id=inv.customer_id),
+        ], date_=pay.date, memo=f"Settlement discount {inv.number} — {pay.number}", source=pay)
+        AuditService.log("invoice.settlement_discount", inv, after={"amount": str(left), "receipt": pay.number, "journal": je.number, "reason": reason})
+        return inv
+
+    @staticmethod
+    def _unsettle(doc, allocation):
+        """A cancelled receipt's settlement discount is owed again."""
+        if allocation.settlement:
+            doc.settled_amount = max((doc.settled_amount or 0) - allocation.settlement, Decimal("0"))
+            doc.save(update_fields=["settled_amount"])
+
+    @staticmethod
+    @transaction.atomic
     def cancel(payment, reason=""):
         if payment.status == "cancelled":
             raise DomainError("Already cancelled.")
@@ -861,7 +937,8 @@ class PaymentService:
         if payment.cheque_status != "bounced":
             for a in payment.allocations.all():
                 doc = PaymentService._load(a.document_type, a.document_id)
-                PaymentService._apply(doc, a.document_type, -a.amount)
+                PaymentService._unsettle(doc, a)
+                PaymentService._apply(doc, a.document_type, -(a.amount + (a.settlement or 0)))
             if payment.journal_id:
                 PostingService.reverse(payment.journal, memo=f"Cancelled {payment.number}: {reason}")
             # a cleared cheque also moved the bank: that comes off too, or the cheque account is left holding it
@@ -898,7 +975,8 @@ class PaymentService:
         if event == "bounced":
             for a in payment.allocations.all():
                 doc = PaymentService._load(a.document_type, a.document_id)
-                PaymentService._apply(doc, a.document_type, -a.amount)
+                PaymentService._unsettle(doc, a)
+                PaymentService._apply(doc, a.document_type, -(a.amount + (a.settlement or 0)))
             payment.allocations.all().delete()
             payment.unallocated = Decimal("0")
             payment.save(update_fields=["unallocated"])

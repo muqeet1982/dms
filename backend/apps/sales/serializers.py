@@ -357,6 +357,17 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     delivery_status = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     order_status = serializers.CharField(source="order.status", read_only=True, default="")
+    settlement_limit = serializers.SerializerMethodField()
+
+    def get_settlement_limit(self, obj):
+        """How much a settlement discount may let go without the owner (Settings, Rs 50) — the invoice page offers to close
+        one paid that little short (owner, 27 Nov 2026)."""
+        from apps.core.tenancy import get_current_tenant
+
+        if "_settle_limit" not in self.context:
+            t = get_current_tenant()
+            self.context["_settle_limit"] = str(t.setting("settlement_discount_limit") or 0) if t else "0"
+        return self.context["_settle_limit"]
 
     def get_delivery_status(self, obj):
         """Where the goods actually are — the invoice's own status stays the payment state."""
@@ -406,7 +417,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesInvoice
-        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "customer_advance_tax_rate", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "order_status", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
+        fields = ["id", "number", "version", "gst_pct", "credited_amount", "cash_paid", "customer_advance_tax_rate", "credit_applications", "returns_count", "customer", "customer_name", "customer_code", "order", "order_number", "order_status", "delivery_note", "delivery_note_number", "picklist", "picklist_number", "trip", "trip_number", "rep", "rep_name", "sales_person", "date", "due_date", "subtotal", "discount", "discount_pct", "company_claims_total", "tax1_type", "tax1_name", "tax1_total", "tax2_type", "tax2_name", "tax2_total", "fed_total", "extra_tax_total", "further_tax_total", "wht_total", "advance_tax_rate", "advance_tax_total", "force_tax_type", "force_tax_rate", "fbr", "fbr_setup", "total", "paid_amount", "settled_amount", "settlement_limit", "balance", "status", "delivery_status", "journal", "journal_number", "notes", "lines", "created_at"]
         read_only_fields = fields
 
 

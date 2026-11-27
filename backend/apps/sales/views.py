@@ -403,6 +403,7 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
         "payments": "sales.view_invoice",
         "stats": "sales.view_invoice",
         "pdf": "sales.view_invoice",
+        "settle_remaining": "cash.receive_payment",
     })
     filterset_fields = ["status", "customer", "order", "rep", "date"]
     search_fields = ["number", "customer__name", "customer__code", "order__number"]
@@ -479,6 +480,15 @@ class SalesInvoiceViewSet(ExportableMixin, mixins.UpdateModelMixin, viewsets.Rea
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         return Response(SalesInvoiceSerializer(InvoiceService.cancel(self.get_object(), request.data.get("reason", ""))).data)
+
+    @action(detail=True, methods=["post"], url_path="settle-remaining")
+    def settle_remaining(self, request, pk=None):
+        """Close an invoice paid a few rupees short with a settlement discount (owner, 27 Nov 2026)."""
+        from apps.accounting.services import PaymentService
+
+        m = request.membership
+        inv = PaymentService.settle_remaining(self.get_object(), over_limit_allowed=bool(m and (m.is_owner or m.has_perm("cash.settlement_over_limit"))), reason=request.data.get("reason", ""))
+        return Response(SalesInvoiceSerializer(inv, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):

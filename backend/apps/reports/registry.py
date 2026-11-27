@@ -89,6 +89,7 @@ REPORTS = {
                                     {"name": "pay_type", "type": "select", "label": "Cash / Credit", "options": ["", "Cash", "Credit"]},
                                     {"name": "rep", "type": "rep", "label": "Sale Person"}, {"name": "customer", "type": "customer"}],
                          "query": ops.pending_payments, "perm": OPS},
+    "settlement_discounts": {"title": "Settlement discounts", "area": "receivables", "params": DATE_RANGE + [{"name": "customer", "type": "customer"}], "query": ops.settlement_discounts, "perm": OPS},
     "overdue_list": {"title": "Overdue invoices", "area": "receivables", "params": [], "query": ops.overdue_list, "perm": OPS},
     "cheque_register": {"title": "Cheque register", "area": "receivables", "params": [{"name": "cheque_status", "type": "select", "options": ["", "pending", "deposited", "cleared", "bounced"]}], "query": ops.cheque_register, "perm": OPS},
     "credit_utilisation": {"title": "Credit limit utilisation", "area": "receivables", "params": [], "query": ops.credit_utilisation, "perm": OPS},
@@ -120,7 +121,7 @@ REPORTS = {
 # The Reports page opens every report on today; these period statements open on the month so far (owner, 24 Nov
 # 2026), and so does Sales by Sale Person (owner, 25 Nov). Only the page's starting dates: the API without dates is unchanged.
 OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary", "sales_tax_register", "advance_tax_register",
-                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep"}   # Products by Sale Person opens on today (owner, 27 Nov 2026)
+                  "expense_by_category", "gross_margin_by_supplier", "sales_by_rep", "settlement_discounts"}   # Products by Sale Person opens on today (owner, 27 Nov 2026)
 assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
 # These ask which columns to leave out before they print or download (owner, 25 Nov 2026: Sales by Sale Person and the
 # daily sheet a name on it opens).
