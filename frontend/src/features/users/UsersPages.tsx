@@ -44,7 +44,7 @@ export function UserFormPage() {
   const preview = usePreviewAccess(form?.roles || [], Boolean(form));
   if (id && q.isLoading) return <Spinner />;
   // Role ids arrive as strings on the membership but as numbers in the role list, so every comparison is on String().
-  if (!form) { setForm(q.data ? { full_name: q.data.full_name, email: q.data.email || "", phone: q.data.phone || "", roles: (q.data.roles || []).map(String), warehouses: q.data.warehouses, status: q.data.status, login_surface: q.data.login_surface || "both", rep_mode: q.data.supplier_rep ? "keep" : "existing", rep_id: null, rep_supplier: null } : { full_name: "", email: "", phone: "", roles: [], warehouses: [], password: "", password_confirm: "", send_invite: false, login_surface: "both", rep_mode: "existing", rep_id: null, rep_supplier: null }); return <Spinner />; }
+  if (!form) { setForm(q.data ? { full_name: q.data.full_name, email: q.data.email || "", phone: q.data.phone || "", roles: (q.data.roles || []).map(String), warehouses: q.data.warehouses, status: q.data.status, login_surface: q.data.login_surface || "both", on_crew_lists: q.data.on_crew_lists !== false, rep_mode: q.data.supplier_rep ? "keep" : "existing", rep_id: null, rep_supplier: null } : { full_name: "", email: "", phone: "", roles: [], warehouses: [], password: "", password_confirm: "", send_invite: false, login_surface: "both", rep_mode: "existing", rep_id: null, rep_supplier: null }); return <Spinner />; }
   const u = q.data;
   const roleRows: any[] = roles.data || [];
   // `needs_rep` is the server's own reading of the selection, so the rep control appears on exactly the
@@ -74,7 +74,7 @@ export function UserFormPage() {
     }
     if (page.can("manage_access") && hasField && !repChosen) { setRepError("Pick the rep this login belongs to, or the supplier they sell for, before saving."); return toast.error("A field role needs a rep record."); }
     try {
-      const body: any = { full_name: form.full_name, email: form.email || null, phone: form.phone || null };
+      const body: any = { full_name: form.full_name, email: form.email || null, phone: form.phone || null, on_crew_lists: form.on_crew_lists !== false };
       if (page.can("manage_access")) {
         body.roles = form.roles;
         body.warehouses = form.warehouses;
@@ -133,6 +133,7 @@ export function UserFormPage() {
             <option value="web">Web only</option>
           </select>
         </Field>}
+        <Field label="Delivery crew lists" col="col-md-6"><div className="form-check form-switch mt-2"><input className="form-check-input" type="checkbox" id="on-crew" checked={form.on_crew_lists !== false} onChange={(e) => setForm({ ...form, on_crew_lists: e.target.checked })} /><label className="form-check-label" htmlFor="on-crew">Show as Delivery Person and Helper</label></div></Field>
         {page.can("manage_access") && <Field label="Warehouse scope" col="col-md-6" hint="Leave all unchecked for access to every warehouse"><div className="d-flex flex-wrap gap-3">{warehouses.data?.map((w) => <div className="form-check" key={w.id}><input className="form-check-input" type="checkbox" id={`w-${w.id}`} checked={form.warehouses.includes(w.id)} onChange={(e) => setForm({ ...form, warehouses: e.target.checked ? [...form.warehouses, w.id] : form.warehouses.filter((x: string) => x !== w.id) })} /><label htmlFor={`w-${w.id}`} className="form-check-label">{w.name}</label></div>)}</div></Field>}
       </div><div className="d-flex gap-2 justify-content-end"><button className="btn btn-light" onClick={() => nav(-1)}>Cancel</button>{(id ? page.edit : page.add) && <button className="btn btn-primary" onClick={save}>Save user</button>}</div></div></div>
       {(id || page.can("manage_access")) && <AccessPanel roleIds={form.roles} savedRoleIds={u?.roles || []} access={access.data} preview={preview.data} hasField={hasField} repLabel={keepingRep ? u.rep_name : form.rep_mode === "new" && form.rep_supplier ? "a new rep record on save" : form.rep_mode === "existing" && form.rep_id ? "the rep picked above" : ""} repChosen={repChosen} />}

@@ -103,6 +103,9 @@ class TenantMembership(models.Model):
     # where this login may sign in: the mobile app, the web, or both (the owner sets it per user)
     LOGIN_SURFACES = [("both", "App and web"), ("app", "Mobile app only"), ("web", "Web only")]
     login_surface = models.CharField(max_length=4, choices=LOGIN_SURFACES, default="both")
+    # listed in a trip's Delivery person and Helper dropdowns (owner, 27 Nov 2026: "remove asif malik and kashif malik from
+    # helper / delivery person dropdowns" — the owner and a superadmin, who never ride a van)
+    on_crew_lists = models.BooleanField(default=True)
     joined_at = models.DateTimeField(auto_now_add=True)
     permissions_version = models.PositiveIntegerField(default=1)
 

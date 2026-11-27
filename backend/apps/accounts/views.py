@@ -523,8 +523,11 @@ class PeoplePickViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = "user_id"
 
     def get_queryset(self):
-        return (TenantMembership.objects.filter(tenant=self.request.tenant, status="active").select_related("user")
-                .prefetch_related("groups__profile").order_by("user__full_name"))
+        qs = TenantMembership.objects.filter(tenant=self.request.tenant, status="active")
+        if self.action == "list":
+            # someone taken off the crew lists is not offered; a trip that already names them still reads their name
+            qs = qs.filter(on_crew_lists=True)
+        return qs.select_related("user").prefetch_related("groups__profile").order_by("user__full_name")
 
     def _row(self, m):
         return {"id": str(m.user_id), "user_id": str(m.user_id), "full_name": m.user.full_name, "email": m.user.email,
@@ -543,7 +546,7 @@ class PeoplePickViewSet(viewsets.ReadOnlyModelViewSet):
 
 class TenantUserViewSet(ExportableMixin, viewsets.ModelViewSet):
     permission_classes = [IsTenantUser]
-    export_fields = ["full_name", "email", "phone", "role_names", "user_type", "rep_name", "status", "login_surface", "last_login", "joined_at"]
+    export_fields = ["full_name", "email", "phone", "role_names", "user_type", "rep_name", "status", "login_surface", "on_crew_lists", "last_login", "joined_at"]
     serializer_class = TenantUserSerializer
     perm_map = page_perms("users", {
         "activate": "users.change_user",
@@ -637,7 +640,22 @@ class TenantUserViewSet(ExportableMixin, viewsets.ModelViewSet):
         if rep is not None and rep.user_id is None:
             rep.user = membership.user
             rep.save(update_fields=["user"])
+        self._own_fields(membership, d)
         serializer.instance = membership
+
+    def _own_fields(self, membership, d):
+        """Where this login signs in (it was sent and never kept: 27 Nov 2026) and whether the crew lists offer them."""
+        changed = []
+        if d.get("login_surface") and d["login_surface"] != membership.login_surface:
+            if not has_tenant_perm(self.request, extra_perm("users", "manage_access")):
+                raise DomainError("You can edit this user, but not change where they sign in.", code="forbidden", status_code=403)
+            membership.login_surface = d["login_surface"]
+            changed.append("login_surface")
+        if "on_crew_lists" in d and d["on_crew_lists"] != membership.on_crew_lists:
+            membership.on_crew_lists = d["on_crew_lists"]
+            changed.append("on_crew_lists")
+        if changed:
+            membership.save(update_fields=changed)
 
     def perform_update(self, serializer):
         d = serializer.validated_data
@@ -648,6 +666,7 @@ class TenantUserViewSet(ExportableMixin, viewsets.ModelViewSet):
         roles = self._roles(d.get("role_profiles"))
         rep = self._field_access(serializer.instance, roles, d) if roles is not None else None
         membership = UserService.update_membership(serializer.instance, full_name=u.get("full_name"), email=u.get("email"), phone=u.get("phone"), roles=roles, warehouses=self._warehouses(d.get("warehouses")), status=d.get("status"))
+        self._own_fields(membership, d)
         if rep is not None and membership.supplier_rep_id != rep.pk:
             membership.supplier_rep = rep
             membership.save(update_fields=["supplier_rep"])
