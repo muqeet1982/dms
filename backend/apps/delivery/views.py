@@ -113,15 +113,24 @@ def _dispatch_sheet_pdf(request, trip):
 
 
 def _driver_scope(request, qs, field="driver"):
-    """Drivers with a login only see their own trips."""
+    """
+    Delivery staff see only the trips they are on — as its driver, its delivery person or its helper (owner, 27 Nov 2026:
+    the Delivery Rider "will collect all the order he need to deliver only"; until then a delivery person with no driver
+    record saw every trip). A rep sees the trips that carry them; office users see every trip.
+    """
     m = getattr(request, "membership", None)
     if m is None or m.is_owner or m.has_perm("delivery.view_all_trips"):
         return qs
-    drivers = Driver.objects.filter(user=request.user).values_list("id", flat=True)
+    at = field[: -len("driver")]   # "" on a trip, "trip__" on a delivery note
+    drivers = list(Driver.objects.filter(user=request.user).values_list("id", flat=True))
+    own = Q(**{f"{at}delivery_rep": request.user}) | Q(**{f"{at}helper": request.user})
     if drivers:
-        return qs.filter(**{f"{field}__in": list(drivers)})
+        return qs.filter(own | Q(**{f"{at}driver__in": drivers}))
     if m.supplier_rep_id:
-        return qs.filter(**{f"{'rep' if field == 'driver' else field.replace('driver', 'rep')}": m.supplier_rep_id})
+        return qs.filter(**{f"{at}rep": m.supplier_rep_id})
+    # the phone app's delivery mode: may confirm a delivery, may not change an order
+    if m.has_perm("delivery.complete_delivery") and not m.has_perm("sales.change_sales_order"):
+        return qs.filter(own)
     return qs
 
 
