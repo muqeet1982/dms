@@ -103,8 +103,32 @@ def test_at_least_one_column_stays(api, excel_on, world):
     assert api.get("/api/v1/reports/sales_by_rep", _params(on, format="xlsx", hide_columns="nothing_by_this_name")).status_code == 200
 
 
-def test_only_these_two_reports_ask(api, tenant):
-    assert {r["key"] for r in api.get("/api/v1/reports").data if r["pick_columns"]} == {"sales_by_rep", "rep_daily_sheet", "product_by_rep", "stock_valuation"}
+def test_every_report_has_the_switch(api, tenant):
+    """Owner, 27 Nov 2026: "add column selection for all reports"."""
+    assert all(r["pick_columns"] for r in api.get("/api/v1/reports").data)
+
+
+def test_a_column_only_the_file_carries_can_be_left_out(api, excel_on, world):
+    """Sales by Sale Person's Excel carries the sale person's name beside the label; the switch offers it too."""
+    w = world
+    _billed(api, excel_on, w, w["rep"], "4", "cash")
+    on = timezone.localdate()
+    data = api.get("/api/v1/reports/product_by_rep", _params(on)).data
+    extra = [c for c in data.get("export_columns") or [] if c not in data["columns"]]
+    assert extra, "this report's file has a column the table does not"
+    r = api.get("/api/v1/reports/product_by_rep", _params(on, format="csv", hide_columns=",".join(extra)))
+    assert r.status_code == 200
+    head = r.content.decode("utf-8-sig").splitlines()[0]
+    assert all((data.get("column_labels") or {}).get(c, c.replace("_", " ").title()) not in head for c in extra), head
+
+
+def test_a_view_link_alone_is_not_a_file(api, excel_on, world):
+    from apps.reports.exporters import without_columns
+    from apps.core.exceptions import DomainError
+
+    result = {"columns": ["number", "view"], "rows": [{"number": "1", "view": "View"}], "links": {"view": {"to": "/x/", "id": "id"}}}
+    with pytest.raises(DomainError):
+        without_columns(result, ["number"])
 
 
 def test_a_row_whose_cost_nets_to_nothing_reads_zero(api, excel_on, world):

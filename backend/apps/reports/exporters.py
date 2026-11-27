@@ -151,7 +151,9 @@ def without_columns(result, hide):
     out = {**result, "columns": [c for c in cols if c not in hide]}
     if result.get("export_columns"):
         out["export_columns"] = [c for c in result["export_columns"] if c not in hide]
-    if not out["columns"] or out.get("export_columns") == []:
+    # a link or a download button alone prints nothing (to_pdf leaves them out)
+    printable = [c for c in out["columns"] if c not in (result.get("downloads") or {}) and not (c == "view" and "view" in (result.get("links") or {}))]
+    if not printable or out.get("export_columns") == []:
         raise DomainError("Keep at least one column.", status_code=400, code="no_columns")
     if result.get("header_groups"):
         groups, at = [], 0

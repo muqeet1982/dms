@@ -66,7 +66,7 @@ const orderColumns: Column<any>[] = [
   { key: "number", header: "Order #", sortKey: "number", render: (o) => <><span className="fw-semibold text-dark">{o.number}</span> <i className={`ti ${o.source === "rep_app" ? "ti-device-mobile text-success" : "ti-world text-info"} fs-12`} title={o.source === "rep_app" ? "Taken on the mobile app" : "Entered on the web"} /><LocationCheck check={o.location_check} compact /></> },
   { key: "order_date", header: "Date", sortKey: "order_date", render: (o) => date(o.order_date) },
   { key: "customer_name", header: "Customer", render: (o) => <><div>{o.customer_name}</div><div className="text-muted fs-11">{o.customer_code}</div></> },
-  { key: "sales_person", header: "Sales person", render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
+  { key: "sales_person", header: "Sales person", fields: ["rep_name"], render: (o) => o.sales_person || o.rep_name || <span className="text-muted">—</span> },
   { key: "trip_number", header: "Trip", render: (o) => o.trip_number || "—" },
   { key: "total", header: "Total", num: true, sortKey: "total", render: (o) => <span className="fw-semibold">{money(o.total)}</span> },
   { key: "payment_mode", header: "Payment", render: (o) => <PaymentMode mode={o.payment_mode} /> },

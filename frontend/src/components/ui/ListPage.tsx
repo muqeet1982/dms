@@ -4,7 +4,9 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { usePage } from "@/lib/perms";
+import { labelCase } from "@/lib/format";
 import { PageHeader } from "./Bits";
+import { ColumnSwitch, loadHidden, saveHidden } from "./ColumnSwitch";
 import { Column, DataTable, Pagination } from "./DataTable";
 import { EntitySelect, Select } from "./EntitySelect";
 
@@ -68,8 +70,9 @@ export function FilterBar({ filters, values, onChange, searchPlaceholder = "Sear
  * The filters, the search and the ordering go with it, so the file and the screen cannot disagree — the page
  * number deliberately does not: nobody wants page 2 of their export.
  */
-export function ListExports({ endpoint, title, query }: { endpoint: string; title: string; query: Record<string, any> }) {
-  const params = { ...query, page: undefined, page_size: undefined, title };
+export function ListExports({ endpoint, title, query, hide = [] }: { endpoint: string; title: string; query: Record<string, any>; hide?: string[] }) {
+  // the file's columns switched off on the page are left out of it too (owner, 27 Nov 2026)
+  const params = { ...query, page: undefined, page_size: undefined, title, ...(hide.length ? { hide_columns: hide.join(",") } : {}) };
   const file = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return (
     <div className="btn-group">
@@ -82,8 +85,46 @@ export function ListExports({ endpoint, title, query }: { endpoint: string; titl
       <button className="btn btn-outline-success" title="Download as a spreadsheet" onClick={() => api.download(`${endpoint}/export`, `${file}.xlsx`, { ...params, format: "xlsx" })}>
         <i className="ti ti-file-spreadsheet me-1" />Excel
       </button>
+      <button className="btn btn-outline-secondary" title="Download as CSV" onClick={() => api.download(`${endpoint}/export`, `${file}.csv`, { ...params, format: "csv" })}>
+        <i className="ti ti-file-type-csv me-1" />CSV
+      </button>
     </div>
   );
+}
+
+/**
+ * Which of the file's columns each column on the screen stands for: one a column names (`fields`), else the field of its
+ * own name, else the same thing by another ending (Customer on the screen is customer_name and customer_code in the
+ * file). A file column no screen column stands for is offered in the switch on its own.
+ */
+const stem = (k: string) => k.replace(/_(name|code|sku|number|no|display)$/, "");
+function fileOwners(columns: Column<any>[], fileKeys: string[]) {
+  const owner: Record<string, string> = {};
+  for (const c of columns) for (const k of c.fields || []) if (fileKeys.includes(k) && !owner[k]) owner[k] = c.key;
+  for (const k of fileKeys) if (!owner[k] && columns.some((c) => !c.fields && c.key === k)) owner[k] = k;
+  for (const k of fileKeys) { const c = !owner[k] && columns.find((c) => !c.fields && stem(c.key) === stem(k)); if (c) owner[k] = c.key; }
+  return owner;
+}
+
+/** The Columns switch of one list: what it hides on the table and which file columns go with it. */
+function useListColumns<T>(endpoint: string, title: string, columns: Column<T>[], exports: boolean) {
+  const file = useQuery({ queryKey: ["list-columns", endpoint], queryFn: () => api.get(`${endpoint}/export`, { format: "columns" }), enabled: exports, staleTime: 10 * 60_000, retry: false });
+  const fileCols: { key: string; label: string }[] = file.data?.columns || [];
+  const fileKeys = fileCols.map((c) => c.key);
+  const onScreen = columns.filter((c) => !c.hidden);
+  const owner = fileOwners(onScreen, fileKeys);
+  const fileOnly = fileCols.filter((c) => !owner[c.key]);
+  const store = `list.hide.${endpoint}.${title}`;
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const valid = new Set([...onScreen.map((c) => c.key), ...fileOnly.map((c) => c.key)]);
+  const hidden = (picked ?? loadHidden(store)).filter((k) => valid.has(k));
+  const setHidden = (hide: string[]) => { setPicked(hide); saveHidden(store, hide); };
+  const choices = [
+    ...onScreen.map((c) => ({ key: c.key, label: typeof c.header === "string" && c.header.trim() ? labelCase(c.header) : labelCase(c.key) })),
+    ...fileOnly.map((c) => ({ key: c.key, label: c.label, fileOnly: true })),
+  ];
+  const hideInFile = fileKeys.filter((k) => hidden.includes(owner[k] || k));
+  return { choices, hidden, setHidden, hideInFile, table: columns.map((c) => (hidden.includes(c.key) ? { ...c, hidden: true } : c)) };
 }
 
 export function ListPage<T extends { id?: string }>({ title, crumbs, endpoint, columns, filters, searchPlaceholder, createTo, createLabel = "Add", rowLink, actions, stats, defaultOrdering, extraQuery, children, emptyText, canCreate = true, page, rowClass, exports = true }: {
@@ -96,15 +137,18 @@ export function ListPage<T extends { id?: string }>({ title, crumbs, endpoint, c
 }) {
   const mayAdd = page ? usePage(page).add : true;
   const list = useListQuery<T>(endpoint, { defaultOrdering, extraQuery });
+  const cols = useListColumns(endpoint, title, columns, exports);
   return (
     <>
-      <PageHeader title={title} crumbs={crumbs || [{ label: title }]} actions={<>{exports && <ListExports endpoint={endpoint} title={title} query={list.query} />}{actions}{createTo && canCreate && mayAdd && <Link to={createTo} className="btn btn-primary"><i className="ti ti-plus me-1" />{createLabel}</Link>}</>} />
+      <PageHeader title={title} crumbs={crumbs || [{ label: title }]} actions={<>{exports && <ListExports endpoint={endpoint} title={title} query={list.query} hide={cols.hideInFile} />}{actions}{createTo && canCreate && mayAdd && <Link to={createTo} className="btn btn-primary"><i className="ti ti-plus me-1" />{createLabel}</Link>}</>} />
       {stats}
       {children}
       <FilterBar filters={filters} values={list.filters} onChange={(p) => list.set(p)} search={list.search} onSearch={(s) => list.set({ search: s })} searchPlaceholder={searchPlaceholder} />
+      {/* every list has the Columns switch, above the table on the right (owner, 27 Nov 2026) */}
+      {cols.choices.length > 1 && <div className="d-flex justify-content-end mb-2"><ColumnSwitch columns={cols.choices} hidden={cols.hidden} onChange={cols.setHidden} /></div>}
       <div className="card">
         <div className="card-body p-0">
-          <DataTable paginate={false} columns={columns} rows={list.data?.results} loading={list.isLoading} rowLink={rowLink} ordering={list.ordering} onSort={(k) => list.set({ ordering: k })} emptyText={emptyText} rowClass={rowClass} />
+          <DataTable paginate={false} columns={cols.table} rows={list.data?.results} loading={list.isLoading} rowLink={rowLink} ordering={list.ordering} onSort={(k) => list.set({ ordering: k })} emptyText={emptyText} rowClass={rowClass} />
           {list.data && <Pagination page={list.data.page} pages={list.data.pages} count={list.data.count} pageSize={list.pageSize} onPage={(p) => list.set({ page: p }, false)} onPageSize={(n) => list.set({ page_size: n })} />}
         </div>
       </div>

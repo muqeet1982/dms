@@ -20,23 +20,40 @@ def _flatten(value):
     return value
 
 
-def _printable(record):
+def _uuid_like(v):
+    return isinstance(v, uuid.UUID) or (isinstance(v, str) and len(v) == 36 and v.count("-") == 4)
+
+
+def _is_plumbing(v):
+    return isinstance(v, dict) or _uuid_like(v) or (isinstance(v, (list, tuple)) and any(not isinstance(x, str) or _uuid_like(x) for x in v))
+
+
+def _printable_keys(records):
     """
-    One serialised row, reduced to what a person would want in a spreadsheet.
+    The fields of a list's rows a person would want in a spreadsheet, judged on its first rows.
 
     Ids, versions and anything nested go: a column of UUIDs helps nobody, and the readable version of a link is
     already there beside it as `customer_name`. What is left keeps the serializer's order, which is the order the
     screen shows.
     """
     skip_exact = {"id", "version", "tenant", "created_by", "updated_by", "deleted_at", "lines", "attachments"}
-    out = {}
-    for key, value in record.items():
-        if key in skip_exact or key.endswith("_id") or isinstance(value, (dict, list, uuid.UUID)):
-            continue   # a link's id (posted_by, period) — its readable name is its own column
-        if isinstance(value, str) and len(value) == 36 and value.count("-") == 4:
-            continue  # a UUID that happens to be spelled out as a field of its own
-        out[key.replace("_", " ").strip().title()] = value
-    return out
+
+    def kind(value):
+        # a link's id (posted_by, period) — its readable name is its own column; a UUID spelled out as a field of its own;
+        # a list of names or numbers reads as one cell (rep_names, grn_numbers), a list of ids or records does not
+        if _is_plumbing(value):
+            return "plumbing"
+        return "empty" if isinstance(value, (list, tuple)) and not value else "ok"
+
+    sample = records[:50]
+    keep = []
+    for key in sample[0] if sample else {}:
+        if key in skip_exact or key.endswith("_id"):
+            continue
+        kinds = {kind(r.get(key)) for r in sample}
+        if "plumbing" not in kinds and kinds != {"empty"}:
+            keep.append(key)
+    return keep
 
 
 class ExportableMixin:
@@ -50,31 +67,44 @@ class ExportableMixin:
 
     EXPORT_LIMIT = 5000
 
+    def export_columns(self, data):
+        """The file's columns as (field, heading): the viewset's own pick, else the serializer's fields minus the plumbing."""
+        picked = getattr(self, "export_fields", None)
+        named = getattr(self, "export_labels", {})
+        keys = list(picked) if picked else _printable_keys(data)
+        return [(k, named.get(k) or k.replace("_", " ").strip().title()) for k in keys]
+
     @action(detail=False, methods=["get"])
     def export(self, request):
-        from django.http import HttpResponse
+        return self.export_file(request, self.filter_queryset(self.get_queryset()))
+
+    def export_file(self, request, qs):
+        from django.http import HttpResponse, JsonResponse
 
         from apps.reports.exporters import to_csv, to_pdf, to_xlsx
 
-        qs = self.filter_queryset(self.get_queryset())[: self.EXPORT_LIMIT]
-        data = self.get_serializer(qs, many=True).data
-        # A viewset that says which columns it wants gets those, in that order. Without one the serializer's
-        # fields are used as they come, minus the plumbing — fine for a settings table, noisy for a document.
-        picked = getattr(self, "export_fields", None)
-        if picked:
-            named = getattr(self, "export_labels", {})
-            rows = [{named.get(k) or k.replace("_", " ").strip().title(): _flatten(r.get(k)) for k in picked} for r in data]
-        else:
-            rows = [_printable(r) for r in data]
-        title = request.query_params.get("title") or self.__class__.__name__.replace("ViewSet", "")
-        # a named column keeps its own casing ("GST %", not the exporter's "Gst %")
-        result = {"columns": list(rows[0].keys()) if rows else [], "rows": rows,
-                  "column_labels": {v: v for v in getattr(self, "export_labels", {}).values()}}
         fmt = request.query_params.get("format", "csv")
+        # the list's Columns switch names the file's columns too (owner, 27 Nov 2026: column selection "for all table and
+        # pdf or print or csv excel"): a few rows are enough to know them
+        data = self.get_serializer(qs[:50] if fmt == "columns" else qs[: self.EXPORT_LIMIT], many=True).data
+        columns = self.export_columns(data)
+        if fmt == "columns":
+            return JsonResponse({"columns": [{"key": k, "label": label} for k, label in columns]})
+        hide = {c for c in request.query_params.get("hide_columns", "").split(",") if c}
+        columns = [(k, label) for k, label in columns if k not in hide]
+        if hide and not columns:
+            raise DomainError("Keep at least one column.", status_code=400, code="no_columns")
+        # a column chosen from a sample: a row further down holding an id there gets a blank, never the id
+        clean = (lambda v: v) if getattr(self, "export_fields", None) else (lambda v: "" if _is_plumbing(v) else v)
+        rows = [{k: _flatten(clean(r.get(k))) for k, _ in columns} for r in data]
+        title = request.query_params.get("title") or self.__class__.__name__.replace("ViewSet", "")
+        # each column keeps its own heading ("GST %", not the exporter's "Gst %")
+        result = {"columns": [k for k, _ in columns], "rows": rows, "column_labels": dict(columns)}
         if fmt == "xlsx":
             from apps.core.plan_limits import effective_features
 
-            if not effective_features(request.tenant).get("excel_export"):
+            # a company's plan decides; the platform's own lists have no company behind them
+            if getattr(request, "tenant", None) is not None and not effective_features(request.tenant).get("excel_export"):
                 raise DomainError("Excel export is not enabled for your plan.", status_code=403)
             data, ct, ext = to_xlsx(result, title), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
         elif fmt == "pdf":

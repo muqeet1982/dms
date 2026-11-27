@@ -35,11 +35,11 @@ export function InvoicesPage({ tax = false }: { tax?: boolean }) {
   const stats = useQuery({ queryKey: ["invoice-stats", tax, shown], queryFn: () => api.get("/api/v1/invoices/stats", { ...shown, tax: tax ? 1 : 0 }), placeholderData: (prev: any) => prev });
   const cols: Column<any>[] = [
     { key: "number", header: "Invoice #", sortKey: "number", render: (i) => <span className="fw-semibold text-dark">{i.number}</span> },
-    { key: "date", header: "Date", sortKey: "date", render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
+    { key: "date", header: "Date", sortKey: "date", fields: ["date", "due_date"], render: (i) => <>{date(i.date)}{i.due_date && i.due_date !== i.date && <div className="text-muted fs-11">due {date(i.due_date)}</div>}</> },
     // the discount as a pill beside the name (owner, 26 Nov 2026, "10% off"): the invoice's %, else what a product's own discount came to
     { key: "customer_name", header: "Customer", render: (i) => <>{i.customer_name}{discountPctOf(i) > 0 && <span className="badge bg-success-light text-success fs-11 ms-2">{discountPctOf(i)}% off</span>}<div className="text-muted fs-11">{i.customer_code}</div></> },
     { key: "order_number", header: "Order / DN", render: (i) => <>{i.order_number}<div className="text-muted fs-11">{i.delivery_note_number}</div></> },
-    { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
+    { key: "sales_person", header: "Sales person", fields: ["rep_name"], render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> },
     { key: "total", header: "Total", num: true, sortKey: "total", render: (i) => money(i.total) },
     // a return is not a payment (owner, 30 Oct 2026): Paid is money received; what returns settled shows under it
     { key: "paid_amount", header: "Paid", num: true, render: (i) => <>{money(i.cash_paid ?? i.paid_amount)}{Number(i.credited_amount) > 0 && <div className="fs-11 text-warning">returned {money(i.credited_amount)}</div>}{Number(i.settled_amount) > 0 && <div className="fs-11 text-info">settlement discount {money(i.settled_amount)}</div>}</> },
@@ -620,7 +620,7 @@ export function RepCollectionsPage() {
   const [form, setForm] = useState<any>({ rep: null, customer: null, amount: "", method: "cash", reference: "", notes: "" });
   const unsettled = useQuery({ queryKey: ["rep-unsettled"], queryFn: () => api.get("/api/v1/rep-collections/unsettled"), enabled: collectionsPage.can("settle") });
   const cols: Column<any>[] = [
-    { key: "number", header: "#", render: (c) => <span className="fw-semibold text-dark">{c.number}</span> }, { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "customer_name", header: "Customer" },
+    { key: "number", header: "#", render: (c) => <span className="fw-semibold text-dark">{c.number}</span> }, { key: "date", header: "Date", render: (c) => date(c.date) }, { key: "sales_person", header: "Sales person", fields: ["rep_name"], render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "customer_name", header: "Customer" },
     { key: "method", header: "Method", render: (c) => <>{c.method}{c.reference ? <div className="text-muted fs-11">{c.reference}</div> : null}</> }, { key: "allocations", header: "Invoices", render: (c) => c.allocations.map((a: any) => a.number).join(", ") || "advance" },
     { key: "amount", header: "Amount", num: true, render: (c) => money(c.amount) }, { key: "status", header: "Status", render: (c) => <><StatusBadge status={c.status} />{c.settlement_number && <div className="fs-11 text-muted">{c.settlement_number}</div>}</> },
   ];
@@ -651,7 +651,7 @@ export function RepSettlementsPage() {
   const cashAccounts = useOptions("/api/v1/accounting/cash-accounts");
   const unsettled = useQuery({ queryKey: ["rep-unsettled", rep], queryFn: () => api.get("/api/v1/rep-collections/unsettled", { rep: rep || undefined }), enabled: open });
   const cols: Column<any>[] = [
-    { key: "number", header: "#", render: (s) => <span className="fw-semibold text-dark">{s.number}</span> }, { key: "date", header: "Date", render: (s) => date(s.date) }, { key: "sales_person", header: "Sales person", render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "received_by_name", header: "Received by" },
+    { key: "number", header: "#", render: (s) => <span className="fw-semibold text-dark">{s.number}</span> }, { key: "date", header: "Date", render: (s) => date(s.date) }, { key: "sales_person", header: "Sales person", fields: ["rep_name"], render: (i: any) => i.sales_person || i.rep_name || <span className="text-muted">—</span> }, { key: "received_by_name", header: "Received by" },
     { key: "collection_numbers", header: "Collections", render: (s) => s.collection_numbers?.map((c: any) => `${c.number} (${c.customer})`).join(", ") }, { key: "amount", header: "Amount", num: true, render: (s) => money(s.amount) }, { key: "journal_number", header: "Journal" },
   ];
   const total = (unsettled.data?.collections || []).filter((c: any) => selected.includes(c.id)).reduce((s: number, c: any) => s + Number(c.amount), 0);

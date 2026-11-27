@@ -123,11 +123,10 @@ REPORTS = {
 OPENS_ON_MONTH = {"profit_and_loss", "trial_balance", "cash_flow", "tax_summary", "sales_tax_register", "advance_tax_register",
                   "expense_by_category", "gross_margin_by_supplier", "sales_by_rep", "settlement_discounts"}   # Products by Sale Person opens on today (owner, 27 Nov 2026)
 assert OPENS_ON_MONTH <= set(REPORTS), OPENS_ON_MONTH - set(REPORTS)
-# These ask which columns to leave out before they print or download (owner, 25 Nov 2026: Sales by Sale Person and the
-# daily sheet a name on it opens).
-PICK_COLUMNS = {"sales_by_rep", "rep_daily_sheet", "product_by_rep", "stock_valuation"}
+# Every report has the Columns switch: a column left out is off the table and every file (owner, 25 Nov 2026 for Sales by
+# Sale Person; 27 Nov for all reports). `pick_columns` stays in the catalog for older clients.
 
 
 def catalog():
     return [{"key": k, "title": v["title"], "area": v["area"], "params": v["params"], "permission": v["perm"], "feature": v.get("feature"),
-             "saved_filters": v.get("saved_filters", True), "opens_on": "month" if k in OPENS_ON_MONTH else "today", "pick_columns": k in PICK_COLUMNS} for k, v in REPORTS.items()]
+             "saved_filters": v.get("saved_filters", True), "opens_on": "month" if k in OPENS_ON_MONTH else "today", "pick_columns": True} for k, v in REPORTS.items()]

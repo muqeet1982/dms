@@ -15,6 +15,7 @@ from apps.accounts.page_permissions import page_perms
 from apps.core.audit import AuditService
 from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, has_tenant_perm, require_perm
+from apps.core.viewsets import ExportableMixin
 
 from .models import Attachment, AuditLog, City, DeviceToken, Notification, NotificationPreference, NumberSequence
 from .notifications import NOTIFICATION_TYPES
@@ -78,7 +79,7 @@ class AttachmentViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.R
         serializer.save(name=f.name, size=f.size, content_type=getattr(f, "content_type", ""), uploaded_by=self.request.user)
 
 
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+class AuditLogViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsTenantUser]
     serializer_class = AuditLogSerializer
     required_perm = "users.view_activity"

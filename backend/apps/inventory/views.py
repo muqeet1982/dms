@@ -12,7 +12,7 @@ from apps.core.exceptions import DomainError
 from apps.core.pagination import LedgerCursorPagination
 from apps.accounts.page_permissions import extra_perm, page_perms
 from apps.core.permissions import IsTenantUser, require_perm
-from apps.core.viewsets import DocumentViewSet, TenantModelViewSet, warehouse_scope
+from apps.core.viewsets import DocumentViewSet, ExportableMixin, TenantModelViewSet, warehouse_scope
 from apps.core.plan_limits import PlanLimitService
 
 from .models import Batch, Bin, InventoryAlert, ReasonCode, StockAdjustment, StockCount, StockLevel, StockMovement, StockTransfer, Warehouse
@@ -119,7 +119,7 @@ class ReasonCodeViewSet(TenantModelViewSet):
         return qs
 
 
-class StockLevelViewSet(viewsets.ReadOnlyModelViewSet):
+class StockLevelViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     """Stock by warehouse/bin/batch. ?group=variant collapses batches."""
 
     permission_classes = [IsTenantUser]
@@ -449,7 +449,7 @@ class ValuationView(APIView):
         return Response(StockService.valuation(wh))
 
 
-class InventoryAlertViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+class InventoryAlertViewSet(ExportableMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
     permission_classes = [IsTenantUser]
     serializer_class = InventoryAlertSerializer
     perm_map = page_perms("stock_alerts", {"refresh": "inventory.view_alert", "reorder": "inventory.view_alert", "counts": "inventory.view_alert"})

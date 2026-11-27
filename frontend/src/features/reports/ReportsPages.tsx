@@ -1,5 +1,5 @@
 import { DateInput } from "@/components/ui/DateInput";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -10,6 +10,7 @@ import { Alert, PageHeader, Spinner, StatCard } from "@/components/ui/Bits";
 import { EntitySelect } from "@/components/ui/EntitySelect";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Pagination } from "@/components/ui/DataTable";
+import { ColumnSwitch, loadHidden, saveHidden } from "@/components/ui/ColumnSwitch";
 
 // columns that hold codes, not amounts, however they look (a UPC, an NTN, a phone number) — exporters.IDENT_COL
 export const IDENT_COL = /(^|_)(code|sku|upc|barcode|ntn|strn|cnic|phone|mobile|whatsapp|number|no|batch|reference|ref)(_|$)/i;
@@ -51,36 +52,8 @@ function RepSelect({ value, onChange }: { value: string; onChange: (v: string) =
 
 type Out = "print" | "pdf" | "xlsx" | "csv";
 
-/** The columns left out of a report — on the page and in every file (owner, 26 Nov 2026: "columns selection … should also
- *  effect the table … give this option above table at right side"; until then it asked only before a download). Kept per
- *  browser, per report. */
+// the columns left out of a report, kept per browser, per report (components/ui/ColumnSwitch)
 const hiddenKey = (reportKey?: string) => `report.hide.${reportKey}`;
-function loadHidden(reportKey?: string): string[] {
-  try { const v = JSON.parse(localStorage.getItem(hiddenKey(reportKey)) || "[]"); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
-}
-
-function ColumnSwitch({ columns, hidden, onChange }: { columns: { key: string; label: string }[]; hidden: string[]; onChange: (hide: string[]) => void }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [open]);
-  const left = columns.filter((c) => !hidden.includes(c.key)).length;
-  return (
-    <div className="position-relative" ref={box}>
-      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setOpen(!open)}><i className="ti ti-columns me-1" />Columns <span className="badge bg-light text-dark ms-1">{left}/{columns.length}</span></button>
-      {open && <div className="card shadow position-absolute end-0 mt-1" style={{ zIndex: 1050, width: 300 }}><div className="card-body p-2">
-        <div className="d-flex gap-2 mb-2"><button type="button" className="btn btn-sm btn-light" onClick={() => onChange([])}>Select all</button><button type="button" className="btn btn-sm btn-light" onClick={() => onChange(columns.slice(1).map((c) => c.key))}>Clear all</button></div>
-        <div style={{ maxHeight: 360, overflowY: "auto" }}>{columns.map((c) => { const on = !hidden.includes(c.key); return (
-          <div className="form-check" key={c.key}><input className="form-check-input" type="checkbox" id={`col-${c.key}`} checked={on} disabled={on && left <= 1}
-            onChange={(e) => onChange(e.target.checked ? hidden.filter((k) => k !== c.key) : [...hidden, c.key])} /><label className="form-check-label" htmlFor={`col-${c.key}`}>{c.label}</label></div>); })}</div>
-      </div></div>}
-    </div>
-  );
-}
 
 export function ReportViewPage() {
   const { key } = useParams();
@@ -108,10 +81,12 @@ export function ReportViewPage() {
   const cols: string[] = q.data?.columns || [];
   // a column under a heading is named with it: "Developer 60 ml", "Keratin Straight Pack"
   const colHeads: string[] = (q.data?.header_groups || []).flatMap((g: any) => Array(g.span).fill(g.label || ""));
-  const pickable = cols.map((c, i) => ({ key: c, label: `${colHeads[i] || ""} ${q.data?.column_labels?.[c] ?? titleCase(c)}`.trim() }));
-  // the columns switched off (a report that offers the switch): off the table, its totals and every file
-  const hidden = spec.pick_columns ? (hiddenBy[spec.key] ?? loadHidden(spec.key)).filter((c) => cols.includes(c)) : [];
-  const setHidden = (hide: string[]) => { setHiddenBy({ ...hiddenBy, [spec.key]: hide }); try { localStorage.setItem(hiddenKey(spec.key), JSON.stringify(hide)); } catch { /* private window: not remembered */ } };
+  // every report has the switch (owner, 27 Nov 2026); a column only the files carry (a code beside the name) is in it too
+  const fileOnly: string[] = (q.data?.export_columns || []).filter((c: string) => !cols.includes(c));
+  const pickable = [...cols.map((c, i) => ({ key: c, label: `${colHeads[i] || ""} ${q.data?.column_labels?.[c] ?? titleCase(c)}`.trim() })), ...fileOnly.map((c) => ({ key: c, label: q.data?.column_labels?.[c] ?? titleCase(c), fileOnly: true }))];
+  // the columns switched off: off the table, its totals and every file
+  const hidden = (hiddenBy[spec.key] ?? loadHidden(hiddenKey(spec.key))).filter((c) => cols.includes(c) || fileOnly.includes(c));
+  const setHidden = (hide: string[]) => { setHiddenBy({ ...hiddenBy, [spec.key]: hide }); saveHidden(hiddenKey(spec.key), hide); };
   const shown = cols.filter((c) => !hidden.includes(c));
   // a heading over several columns spans the ones left (the daily sheet's families)
   const groupOf: number[] = (q.data?.header_groups || []).flatMap((g: any, gi: number) => Array(g.span).fill(gi));
@@ -147,7 +122,7 @@ export function ReportViewPage() {
       {q.data?.totals && !q.data.totals_in_rows && !q.data.summary?.length && Object.keys(q.data.totals).length > 0 && <div className="d-flex flex-wrap gap-2 mb-3">{Object.entries(q.data.totals).filter(([k]) => !hidden.includes(k)).map(([k, v]) => <div key={k} className="border rounded bg-white px-3 py-2"><div className="fs-11 text-muted">{q.data.column_labels?.[k] ?? titleCase(k)}</div><div className={`fw-bold ${k === "balanced" ? (v ? "text-success" : "text-danger") : ""}`}>{fmtCell(v, k)}</div></div>)}</div>}
       {/* a report can lead with a few figures (Pending payments, 24 Nov 2026) */}
       {q.data?.summary?.length ? <div className="row g-3 mb-3">{q.data.summary.map((c: any) => <div className="col-6 col-md" key={c.label}><StatCard label={labelCase(c.label)} value={money(c.value)} sub={c.sub ?? (c.count != null ? `${c.count} invoice${c.count === 1 ? "" : "s"}` : undefined)} icon={c.tone === "danger" ? "ti-alert-triangle" : c.tone === "warning" ? "ti-calendar-due" : "ti-coins"} color={c.tone || "primary"} /></div>)}</div> : null}
-      {spec.pick_columns && cols.length > 0 && <div className="d-flex justify-content-end mb-2"><ColumnSwitch columns={pickable} hidden={hidden} onChange={setHidden} /></div>}
+      {cols.length > 0 && <div className="d-flex justify-content-end mb-2"><ColumnSwitch columns={pickable} hidden={hidden} onChange={setHidden} /></div>}
       <div className="card"><div className="card-body p-0">{q.isLoading ? <Spinner /> : <div className="table-responsive"><table className={`table table-sm table-hover report-table mb-0 ${q.data.header_groups && !q.data.plain_header ? "report-grouped" : ""}`}><thead className={q.data.header_groups && !q.data.plain_header ? "" : "table-light"}>{q.data.header_groups && (() => { const seps: number[] = []; let at = 0; shownGroups.forEach((g: any) => { if (at > 0 && g.span > 1) seps.push(at); at += g.span; }); (q.data as any)._seps = seps; return <tr className="rg-top">{shownGroups.map((g: any, i: number) => <th key={i} colSpan={g.span} className={`text-center ${g.span > 1 && i > 0 ? "rg-sep" : ""}`}>{g.label}</th>)}</tr>; })()}<tr className={q.data.header_groups ? "rg-sub" : ""}>{shown.map((c, i) => <th key={c} className={`${numCols.has(c) ? "num" : ""} ${((q.data as any)._seps || []).includes(i) ? "rg-sep" : ""}`}>{q.data.column_labels?.[c] ?? titleCase(c)}</th>)}</tr></thead>
         <tbody>{q.data?.rows.slice((Math.min(page, pageCount) - 1) * size, Math.min(page, pageCount) * size).map((r: any, i: number) => <tr key={i} className={r.is_group ? "fw-semibold table-light" : ""}>{shown.map((c, ci) => <td key={c} className={`${numCols.has(c) ? "num" : ""} ${q.data.faint_zeros && isNum(r[c]) && Number(r[c]) === 0 ? "opacity-25" : ""} ${((q.data as any)._seps || []).includes(ci) ? "rg-sep" : ""} ${({ success: "text-success", danger: "text-danger", bold: "fw-bold" } as any)[q.data.column_styles?.[c]] || ""}`} style={c === "name" && r.level ? { paddingLeft: 8 + (r.level - 1) * 16 } : undefined}>{q.data.downloads?.[c] && r[q.data.downloads[c].url] ? <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2" onClick={() => api.download(r[q.data.downloads[c].url])}><i className="ti ti-file-type-pdf me-1" />{r[c]}</button> : q.data.links?.[c] && (r[q.data.links[c].href] || r[q.data.links[c].id]) ? <Link target="_blank" rel="noopener noreferrer" to={q.data.links[c].href ? r[q.data.links[c].href] : `${q.data.links[c].to}${r[q.data.links[c].id]}${q.data.links[c].query ? `?${q.data.links[c].query}` : ""}`}>{c === "view" ? <><i className="ti ti-eye me-1" />{r[c]}</> : fmtCell(r[c], c)}</Link> : c === "journal" && r.journal_id ? <Link to={`/app/accounting/journals/${r.journal_id}`}>{r[c]}</Link> : c === "name" && r.account_id && !r.is_group ? <Link to={`/app/accounting/accounts/${r.account_id}`}>{r[c]}</Link> : c === q.data.drill?.column && r.key && r.key !== "None" ? <Link to={`/app/reports/${q.data.drill.report}?${new URLSearchParams({ ...params, [q.data.drill.param]: r.key }).toString()}`}>{fmtCell(r[c], c)}</Link> : fmtCell(r[c], c)}{q.data.notes?.[c] && r[q.data.notes[c]] ? <div className="text-muted fs-11">{r[q.data.notes[c]]}</div> : null}</td>)}</tr>)}{q.data && !q.data.rows.length && <tr><td colSpan={shown.length || 1} className="text-muted text-center py-4">No data for these parameters</td></tr>}</tbody></table></div>}
         {(q.data?.rows.length || 0) > size && <Pagination page={Math.min(page, pageCount)} pages={pageCount} count={q.data.rows.length} pageSize={size} onPage={setPage} onPageSize={(n) => { setSize(n); setPage(1); }} />}</div></div>

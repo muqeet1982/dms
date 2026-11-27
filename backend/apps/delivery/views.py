@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from apps.accounts.page_permissions import extra_perm, page_perms
 from apps.core.exceptions import DomainError
 from apps.core.permissions import IsTenantUser, has_tenant_perm, require_perm
-from apps.core.viewsets import DocumentViewSet, TenantModelViewSet, warehouse_scope
+from apps.core.viewsets import DocumentViewSet, ExportableMixin, TenantModelViewSet, warehouse_scope
 from apps.sales.models import SalesOrder
 
 from .models import DeliveryNote, DeliveryTrip, Driver, PickList, Vehicle, VehicleLog
@@ -406,7 +406,7 @@ class TripViewSet(DocumentViewSet):
         return Response({"today": qs.filter(date=today).count(), "out_for_delivery": qs.filter(status="out_for_delivery").count(), "planned": qs.filter(status__in=["planned", "loading"]).count(), "to_close": qs.filter(status="completed").count(), "cash_on_trips": str(qs.filter(status__in=["out_for_delivery", "completed"]).aggregate(s=__import__("django.db.models", fromlist=["Sum"]).Sum("cash_collected"))["s"] or 0)})
 
 
-class DeliveryNoteViewSet(viewsets.ReadOnlyModelViewSet):
+class DeliveryNoteViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsTenantUser]
     serializer_class = DeliveryNoteSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]

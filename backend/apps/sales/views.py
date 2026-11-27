@@ -51,7 +51,7 @@ class SalesOrderViewSet(DocumentViewSet):
     perm_map = page_perms(
         "sales_orders",
         {
-            "inbox": "sales.view_order_inbox",
+            "inbox": "sales.view_order_inbox", "inbox_export": "sales.view_order_inbox",
             "stats": "sales.view_sales_order",
             "submit": "sales.add_sales_order",
             "review": extra_perm("sales_inbox", "confirm"),
@@ -173,6 +173,11 @@ class SalesOrderViewSet(DocumentViewSet):
         qs = self.filter_queryset(self.get_queryset().filter(status__in=["submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"]).order_by("created_at"))
         page = self.paginate_queryset(qs)
         return self.get_paginated_response(SalesOrderListSerializer(page, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="inbox/export")
+    def inbox_export(self, request):
+        """The inbox as a file, like every list (owner, 27 Nov 2026)."""
+        return self.export_file(request, self.filter_queryset(self.get_queryset().filter(status__in=["submitted", "under_review", "on_hold", "on_hold_credit", "on_hold_stock"]).order_by("created_at")))
 
     @action(detail=False, methods=["get"])
     def stats(self, request):

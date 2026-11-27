@@ -20,6 +20,7 @@ from apps.core.models import AuditLog
 from apps.core.permissions import IsPlatformAdmin
 from apps.core.plan_limits import effective_features
 from apps.core.serializers import AuditLogSerializer
+from apps.core.viewsets import ExportableMixin
 
 from .models import AddOn, Announcement, Coupon, FeatureFlag, LegalDocument, MessageTemplate, NotificationLog, Plan, PlatformInvoice, PlatformPayment, PlatformSetting, Subscription, SupportTicket, Tenant, TicketMessage
 from .serializers import (
@@ -47,7 +48,7 @@ def require_platform_perm(codename):
     return deco
 
 
-class PlatformViewSet(viewsets.ModelViewSet):
+class PlatformViewSet(ExportableMixin, viewsets.ModelViewSet):
     permission_classes = [IsPlatformAdmin]
     platform_perm = None
 
@@ -263,6 +264,11 @@ class TenantViewSet(PlatformViewSet):
         ev = SubscriptionEvent.objects.filter(subscription__tenant=self.get_object()).select_related("actor")[:200]
         return Response(SubscriptionEventSerializer(ev, many=True).data)
 
+    @action(detail=False, methods=["get"], url_path="export")
+    def list_export(self, request):
+        """The companies list as a file, like every list; a company's own data is `<id>/export` below."""
+        return self.export_file(request, self.filter_queryset(self.get_queryset()))
+
     @action(detail=True, methods=["get"])
     def export(self, request, pk=None):
         from .export import export_tenant_zip
@@ -465,8 +471,11 @@ class PlatformPaymentViewSet(PlatformViewSet):
         pay = BillingService.reject_payment(self.get_object(), actor=request.user, reason=request.data.get("reason", ""))
         return Response(PlatformPaymentSerializer(pay, context={"request": request}).data)
 
-    @action(detail=False, methods=["get"], url_path="export")
-    def export_csv(self, request):
+    @action(detail=False, methods=["get"])
+    def export(self, request):
+        # the list's Print, PDF, Excel and CSV name their format; the page's own Payments CSV does not
+        if request.query_params.get("format"):
+            return self.export_file(request, self.filter_queryset(self.get_queryset()))
         import csv
         import io
 
@@ -498,7 +507,7 @@ class MessageTemplateViewSet(PlatformViewSet):
         return Response({"subject": subject, "body": body})
 
 
-class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
+class NotificationLogViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsPlatformAdmin]
     serializer_class = NotificationLogSerializer
     queryset = NotificationLog.objects.all()
@@ -540,7 +549,7 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         return Response(TicketMessageSerializer(msg).data, status=201)
 
 
-class PlatformAuditViewSet(viewsets.ReadOnlyModelViewSet):
+class PlatformAuditViewSet(ExportableMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsPlatformAdmin]
     serializer_class = AuditLogSerializer
     filterset_fields = ["action", "model", "tenant", "actor"]

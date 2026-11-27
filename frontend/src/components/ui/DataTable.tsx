@@ -14,7 +14,9 @@ function autoNum<T>(c: Column<T>, rows: T[] | undefined) {
   return raw.length > 0 && raw.every(figure);
 }
 
-export type Column<T> = { key: string; header: ReactNode; render?: (row: T) => ReactNode; className?: string; num?: boolean; sortKey?: string; hidden?: boolean };
+export type Column<T> = { key: string; header: ReactNode; render?: (row: T) => ReactNode; className?: string; num?: boolean; sortKey?: string; hidden?: boolean;
+  /** the file columns this one stands for, when its own key does not say (a list's Columns switch, ListPage) */
+  fields?: string[] };
 
 export function DataTable<T extends { id?: string }>({ columns, rows, loading, rowLink, onRowClick, emptyText, ordering, onSort, footer, small, rowClass, paginate = true }: {
   columns: Column<T>[]; rows: T[] | undefined; paginate?: boolean; loading?: boolean; rowLink?: (r: T) => string | undefined; onRowClick?: (r: T) => void; emptyText?: ReactNode; ordering?: string; onSort?: (k: string) => void; footer?: ReactNode; small?: boolean; rowClass?: (r: T) => string;

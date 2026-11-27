@@ -17,6 +17,7 @@ from apps.core.exceptions import DomainError
 from apps.core.notifications import send_email, send_sms
 from apps.core.permissions import IsTenantUser, has_tenant_perm, require_perm
 from apps.core.plan_limits import effective_features, effective_limits
+from apps.core.viewsets import ExportableMixin
 
 from .models import GroupProfile, OneTimeCode, QrLoginToken, TenantMembership, UserSession
 from .page_permissions import extra_perm, extra_perm_or, page_perms
@@ -540,8 +541,9 @@ class PeoplePickViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(self._row(self.get_object()))
 
 
-class TenantUserViewSet(viewsets.ModelViewSet):
+class TenantUserViewSet(ExportableMixin, viewsets.ModelViewSet):
     permission_classes = [IsTenantUser]
+    export_fields = ["full_name", "email", "phone", "role_names", "user_type", "rep_name", "status", "login_surface", "last_login", "joined_at"]
     serializer_class = TenantUserSerializer
     perm_map = page_perms("users", {
         "activate": "users.change_user",
