@@ -106,11 +106,14 @@ class PurchaseOrderViewSet(DocumentViewSet):
         rows = None if lines is None else [{"variant": l["variant"], "packaging": l.get("packaging"), "qty": l.get("qty") or 0, "unit_price": l["unit_price"], "discount_pct": l.get("discount_pct", 0), "price_per_packaging": l.get("price_per_packaging", False)} for l in lines]
         if rows is not None:
             self._check_prices(rows)
-        super().perform_update(serializer)
-        if rows is not None:
-            PurchaseOrderService.write_lines(po, rows)
-        else:
-            PurchaseOrderService.recompute(po)
+        from django.db import transaction
+
+        with transaction.atomic():   # the header and its rows are saved together, or neither is
+            super().perform_update(serializer)
+            if rows is not None:
+                PurchaseOrderService.write_lines(po, rows)
+            else:
+                PurchaseOrderService.recompute(po)
 
     @action(detail=True, methods=["post"])
     @require_perm("purchasing.approve_purchase_order")

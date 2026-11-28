@@ -68,6 +68,22 @@ class POListSerializer(serializers.ModelSerializer):
         fields = ["id", "number", "version", "supplier", "supplier_name", "warehouse", "warehouse_name", "date", "expected_date", "status", "currency", "subtotal", "discount", "tax1_total", "tax2_total", "freight", "total", "supplier_ref", "reference", "notes", "lines_count", "grns_count", "units_due", "created_by_name", "approved_by", "approved_by_name", "approved_at", "created_at", "updated_at"]
 
 
+class _GoneLine(str):
+    """An order line id the order no longer has: the order was saved again while this receipt was being keyed."""
+
+
+class _OrderLineField(serializers.PrimaryKeyRelatedField):
+    """An order line by its id — or, when that id is gone, kept for the receipt to find the line again by its item."""
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return None
+        try:
+            return super().to_internal_value(data)
+        except serializers.ValidationError:
+            return _GoneLine(str(data))
+
+
 class GRNLineSerializer(serializers.ModelSerializer):
     variant_name = serializers.CharField(source="variant.name", read_only=True)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
@@ -80,6 +96,7 @@ class GRNLineSerializer(serializers.ModelSerializer):
     bin_name = serializers.SerializerMethodField()
     # "the rest is not coming" — closes the order line this receipt came from
     close_line = serializers.BooleanField(write_only=True, required=False, default=False)
+    po_line = _OrderLineField(queryset=PurchaseOrderLine.objects.all(), required=False, allow_null=True)
 
     def get_bin_name(self, obj):
         return f"{obj.bin.warehouse.code} / {obj.bin.code}" if obj.bin_id else ""
@@ -123,6 +140,28 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
         """
         return [{"id": str(b.pk), "number": b.number, "status": b.status, "date": b.bill_date, "total": str(b.total)}
                 for b in obj.bills.all()]
+
+    def validate(self, attrs):
+        """
+        A line whose order line is gone (TDN-PO-00014, 28 Nov 2026: the order saved again while the receipt was open)
+        takes the order's line for the same item now — packing first — so the keyed receipt saves instead of being
+        refused line by line. Only when the order no longer has the item at all is it refused.
+        """
+        attrs = super().validate(attrs)
+        po = attrs.get("po") or (self.instance.po if self.instance is not None else None)
+        taken = set()
+        for l in attrs.get("lines") or []:
+            if not isinstance(l.get("po_line"), _GoneLine):
+                continue
+            rows = list(po.lines.filter(variant=l["variant"]).order_by("sequence", "created_at")) if po is not None else []
+            packaging = l.get("packaging")
+            pick = (next((r for r in rows if r.pk not in taken and r.packaging_id == (packaging.pk if packaging else None)), None)
+                    or next((r for r in rows if r.pk not in taken), None) or (rows[0] if rows else None))
+            if pick is None:
+                raise serializers.ValidationError({"lines": [f"{l['variant'].name} is no longer on {po.number if po else 'the order'} — reload the page."]})
+            taken.add(pick.pk)
+            l["po_line"] = pick
+        return attrs
 
     class Meta:
         model = GoodsReceipt

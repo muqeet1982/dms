@@ -92,13 +92,52 @@ class PurchaseOrderService:
         return out
 
     @staticmethod
+    @transaction.atomic
     def write_lines(po, lines):
-        po.lines.all().delete()
+        """
+        The order's rows as they now are. A row that stays keeps its id, so a receiving screen already open against the
+        order — and every receipt made from it — still points at it (TDN-PO-00014, 28 Nov 2026: saved again while it was
+        being received, and its receipt was refused line by line; deleting and re-making every row also cut any earlier
+        receipt off from the order). A row is matched by item and packing, then by item. A row taken off, or cut below
+        what already arrived, is refused once goods were received against it — checked before anything is written.
+        """
+        existing = list(po.lines.select_related("variant").order_by("sequence", "created_at"))
+        used = set()
+
+        def match(variant, packaging):
+            for same_packing in (True, False):
+                for e in existing:
+                    if e.pk in used or e.variant_id != variant.pk:
+                        continue
+                    if same_packing and e.packaging_id != (packaging.pk if packaging else None):
+                        continue
+                    return e
+            return None
+
+        plan = []
         for i, l in enumerate(lines):
             packaging = l.get("packaging")
             qty = _base_qty(l["qty"], packaging)
             unit_price = Decimal(l["unit_price"]) / (packaging.qty_in_base if packaging else 1) if l.get("price_per_packaging") else Decimal(l["unit_price"])
-            PurchaseOrderLine.objects.create(po=po, variant=l["variant"], packaging=packaging, qty_ordered=qty, unit_price=q4(unit_price), discount_pct=l.get("discount_pct", 0) or 0, sequence=i)
+            row = match(l["variant"], packaging)
+            if row is not None:
+                used.add(row.pk)
+                if qty < row.qty_received:
+                    got = format(row.qty_received.normalize(), "f")
+                    raise DomainError(f"{row.variant.name}: {got} already received — the order cannot ask for fewer.", code="below_received")
+            plan.append((i, l, packaging, qty, unit_price, row))
+        dropped = [row for row in existing if row.pk not in used]
+        for row in dropped:
+            if row.qty_received > 0 or row.grn_lines.filter(grn__status="posted").exists():
+                raise DomainError(f"{row.variant.name} was already received on this order — it cannot come off it.", code="line_received")
+        for i, l, packaging, qty, unit_price, row in plan:
+            if row is None:
+                PurchaseOrderLine.objects.create(po=po, variant=l["variant"], packaging=packaging, qty_ordered=qty, unit_price=q4(unit_price), discount_pct=l.get("discount_pct", 0) or 0, sequence=i)
+            else:
+                row.packaging, row.qty_ordered, row.unit_price, row.discount_pct, row.sequence = packaging, qty, q4(unit_price), l.get("discount_pct", 0) or 0, i
+                row.save()
+        for row in dropped:
+            row.delete()
         PurchaseOrderService.recompute(po)
 
     @staticmethod
